@@ -43,7 +43,7 @@ BT Executor      py_trees; retry, re-align, fallback skill
     |
 Skills           approach / align / insert_scripted / insert_act / verify
     |
-World            MockWorld (Phase 0)  |  AIC Gazebo via adapters/aic (Phase 2)
+World            MockWorld (Phase 0)  |  AIC Gazebo via adapters/aic (Phase 1)
 
 Monitor          force, progress, timeout -> FailureClass     (reads world signals)
 Runtime          event log (SQLite), state = fold(events), tracing   (all layers write to it)
@@ -121,6 +121,12 @@ you are reading before trusting a reference.
   published in the sensor frame `ati/tool_link` and recomputed every control cycle
   (`aic_controller.cpp:1157-1160`, `:1275-1277`). Subtract it before applying any force
   threshold — this is exactly what the scorer does (`ScoringTier2.cc:423-429`, `:456`).
+- An `Observation` is published only when all three camera images arrive within 1 ms of each
+  other (`aic_adapter.cpp:127-150`): without camera images there are no observations at all, so
+  rendering cannot be switched off. Its `wrist_wrench` is the newest wrench at or before the
+  image time, so the F/T stream reaches the policy at the camera rate (`:213-224`).
+- `insert_cable` runs in its own thread, and a cancel request is accepted without telling the
+  policy: it receives no goal handle (`aic_model.py:183-185`, `:236-255`).
 - Ground truth (launch with `ground_truth:=true`) arrives as TF frames:
   port `task_board/{target_module_name}/{port_name}_link`,
   plug `{cable_name}/{plug_name}_link`, gripper `gripper/tcp`, reference `base_link`.
@@ -187,9 +193,15 @@ you are reading before trusting a reference.
 
 ## Status
 
+Phase goals, exit criteria and the capability map are in `docs/roadmap.md`. Phase specs are
+cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
+
 - [x] Phase 0 — ROS-free runtime core + mock world + eval CLI (ADRs 001–010: Decision and
-  Why still to be written by Shaun)
-- [ ] Phase 1 — AIC adapter: `RuntimePolicy` plugin, same eval on the real interface
-- [ ] Phase 2 — AIC Gazebo: scripted skills on ground truth, ACT as `insert_act`, fault injection
-- [ ] Phase 3 — LLM planner (validated trees, UNKNOWN-failure triage, human escalation)
+  Why still to be confirmed by Shaun)
+- [ ] Phase 1 — AIC adapter and scripted skills; the 3 sample-config tasks end to end with no
+  faults, recorded and replayable (`docs/briefs/phase-1-aic-adapter.md`)
+- [ ] Phase 2 — fault injection, ACT as `insert_act`, the A/B/C eval in Gazebo, reconciled with
+  the AIC score
+- [ ] Phase 3 — LLM planner: UNKNOWN triage, task-to-tree generation, escalation, and UNKNOWN
+  promotion validated by replay (`docs/briefs/phase-3-unknown-promotion.md`)
 - [ ] Phase 4 — eval report, README, demo video
