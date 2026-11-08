@@ -16,4 +16,12 @@ uv run ruff check           # lint
 uv run ruff format --check  # formatting
 ```
 
-The runtime CLI (`cellrt run | eval | replay`) arrives with the Phase 0 tickets (#1).
+Run one scenario on the mock world and replay it from its event log:
+
+```sh
+uv run cellrt run --scenario baseline --setting A --seed 0   # prints outcome and run id
+uv run cellrt replay baseline/A/0/a1                         # every step; add --signals for samples
+```
+
+Events go to `runs/cellrt.sqlite` by default (`--db` to change). `cellrt eval` arrives with the
+Phase 0 eval tickets (#1).

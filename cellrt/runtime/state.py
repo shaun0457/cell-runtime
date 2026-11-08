@@ -1,0 +1,78 @@
+"""Runtime state is a pure fold over the event log."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from typing import Literal
+
+from cellrt.runtime.events import (
+    Event,
+    RunFinished,
+    RunStarted,
+    SignalSampled,
+    SkillCancelled,
+    SkillFinished,
+    SkillStarted,
+)
+
+Status = Literal["pending", "running", "succeeded", "failed", "aborted"]
+_OUTCOME_STATUS: Mapping[str, Status] = {
+    "success": "succeeded",
+    "failed": "failed",
+    "aborted": "aborted",
+}
+
+
+@dataclass(frozen=True)
+class RunState:
+    run_id: str | None = None
+    status: Status = "pending"
+    current_skill: str | None = None
+    skill_attempts: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    steps: int = 0
+    last_signal: SignalSampled | None = None
+    started_ts: float | None = None
+    finished_ts: float | None = None
+
+
+def apply(state: RunState, event: Event) -> RunState:
+    """The next state after `event`. Pure: no I/O, no clock, `state` is not modified."""
+    match event.payload:
+        case RunStarted():
+            return replace(state, run_id=event.run_id, status="running", started_ts=event.ts)
+        case SkillStarted(skill=skill):
+            attempts = dict(state.skill_attempts)
+            attempts[skill] = attempts.get(skill, 0) + 1
+            return replace(
+                state,
+                current_skill=skill,
+                skill_attempts=MappingProxyType(attempts),
+                steps=state.steps + 1,
+            )
+        case SkillFinished() | SkillCancelled():
+            return replace(state, current_skill=None)
+        case SignalSampled() as signal:
+            return replace(state, last_signal=signal)
+        case RunFinished(outcome=outcome):
+            return replace(
+                state,
+                status=_OUTCOME_STATUS[outcome],
+                current_skill=None,
+                finished_ts=event.ts,
+            )
+        case _:
+            return state
+
+
+def fold(events: Iterable[Event]) -> RunState:
+    state = RunState()
+    for event in events:
+        state = apply(state, event)
+    return state
+
+
+def state_at(events: Sequence[Event], seq: int) -> RunState:
+    """State right after the event numbered `seq` (the basis for a future fork-from-step-N)."""
+    return fold(e for e in events if e.seq <= seq)
