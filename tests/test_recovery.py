@@ -141,6 +141,7 @@ def test_an_unknown_failure_is_not_recovered(tmp_path: Path) -> None:
             "stall_depth_mm": [3.0, 5.0],
             "force_n": [6.0, 9.0],
             "torque_nm": [0.4, 0.8],
+            "yaw_deg": [5.0, 15.0],
         },
     )
 

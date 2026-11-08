@@ -100,6 +100,7 @@ class YawMismatchSpec(BaseModel):
     stall_depth_mm: DepthRange
     force_n: MagnitudeRange
     torque_nm: MagnitudeRange
+    yaw_deg: MagnitudeRange
 
 
 FaultSpec = Annotated[
@@ -167,6 +168,7 @@ def materialize(specs: list[FaultSpec], rng: random.Random) -> list[Fault]:
                         stall_depth_mm=_draw(rng, spec.stall_depth_mm),
                         force_n=_draw(rng, spec.force_n),
                         torque_nm=_draw(rng, spec.torque_nm),
+                        yaw_deg=_draw(rng, spec.yaw_deg),  # drawn last: earlier draws unchanged
                     )
                 )
     return faults

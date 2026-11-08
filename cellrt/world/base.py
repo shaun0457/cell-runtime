@@ -48,11 +48,16 @@ class Signals:
 
 @dataclass(frozen=True)
 class Velocity:
-    """Cartesian velocity command in mm/s (like the AIC twist / ACT action)."""
+    """Cartesian velocity command (like the AIC twist / ACT action).
+
+    `vx`, `vy`, `vz` in mm/s; `wz`, the twist about the insertion axis, in deg/s. The AIC twist
+    uses m/s and rad/s: the Phase 1 adapter converts.
+    """
 
     vx: float = 0.0
     vy: float = 0.0
     vz: float = 0.0
+    wz: float = 0.0
 
 
 HOLD = Velocity()

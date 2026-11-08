@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 
 from cellrt.world.base import HOLD, Velocity
-from cellrt.world.faults import PoseShift
+from cellrt.world.faults import PoseShift, YawMismatch
 from cellrt.world.mock_world import MockParams, MockWorld
 
 
@@ -24,4 +24,31 @@ def test_a_pose_shift_moves_the_port_on_its_first_attempts_only() -> None:
     world.command(HOLD)
 
     assert world.signals().xy_offset_mm == (6.0, 0.0)
+    assert [t.active for t in world.take_fault_transitions()] == [True, False]
+
+
+def test_a_yaw_mismatch_wedges_the_plug_until_it_is_twisted_into_line() -> None:
+    # Port rotated -10°: the torque must say "twist negative"; twisting the wrong way keeps the
+    # plug wedged, twisting the right way frees it.
+    yaw = YawMismatch("yaw#0", stall_depth_mm=2.0, force_n=7.0, torque_nm=0.5, yaw_deg=-10.0)
+    params = MockParams(start_height_mm=0.5, initial_xy_range_mm=0.0, xy_noise_mm=0.0)
+    world = MockWorld(random.Random(0), params, [yaw])
+
+    def run(cmd: Velocity, steps: int) -> None:
+        world.command(cmd)
+        for _ in range(steps):
+            world.step(params.dt)
+
+    run(Velocity(vz=-10.0), 8)
+    assert world.signals().height_mm == -2.0
+    assert world.signals().torque_nm == -0.5
+
+    run(Velocity(vz=-10.0, wz=30.0), 10)  # wrong way: now 25° off
+    assert world.signals().height_mm == -2.0
+    assert world.signals().torque_nm == -0.5
+
+    run(Velocity(wz=-30.0), 17)  # back to 0.5° off: within the 1° tolerance
+    run(Velocity(vz=-10.0), 4)
+    assert world.signals().height_mm < -2.0
+    assert world.signals().torque_nm == 0.0
     assert [t.active for t in world.take_fault_transitions()] == [True, False]

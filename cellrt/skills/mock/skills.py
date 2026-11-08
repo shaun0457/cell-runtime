@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from cellrt.monitor.profiles import MonitorProfile
@@ -172,6 +173,49 @@ class InsertScripted:
                 ctx.progress(1.0)
                 return SkillResult(ok=True, detail={"depth_mm": s.depth_mm})
             ctx.world.command(Velocity(vz=-speed))
+            ctx.progress(s.depth_mm / self.expected_depth_mm)
+            await ctx.clock.sleep(ctx.period_s)
+
+
+@dataclass(frozen=True)
+class InsertAct:
+    """Stand-in for the learned ACT insert policy (Phase 2 runs the real one as this skill).
+
+    Its failure profile differs from `insert_scripted`: it descends at half the speed, so a tight
+    fit stays under the force limit, and when the plug wedges it twists with the torque until
+    the torque is gone, which frees a yaw mismatch. It does not correct XY.
+    """
+
+    name: str = "insert_act"
+    monitor_profile: MonitorProfile = "insertion"
+    timeout_s: float = 20.0
+    speed_mm_s: float = 2.0
+    twist_deg_s: float = 30.0
+    torque_threshold_nm: float = 0.1
+    expected_depth_mm: float = 8.0
+    depth_tolerance_mm: float = 0.1
+
+    def preconditions(self, state: RunState) -> bool:
+        return True
+
+    async def run(self, ctx: SkillContext) -> SkillResult:
+        speed = float(ctx.params.get("speed_mm_s", self.speed_mm_s))
+        speed *= float(ctx.params.get("speed_scale", 1.0))
+        target = self.expected_depth_mm - self.depth_tolerance_mm
+        twisted_deg = 0.0  # as commanded, for the result detail; the world may clamp it
+        while True:
+            s = ctx.world.signals()
+            if s.depth_mm >= target:
+                ctx.world.command(HOLD)
+                ctx.progress(1.0)
+                detail = {"depth_mm": s.depth_mm, "twisted_deg": round(twisted_deg, 6)}
+                return SkillResult(ok=True, detail=detail)
+            if s.wrench_valid and abs(s.torque_nm) > self.torque_threshold_nm:
+                twist = math.copysign(self.twist_deg_s, s.torque_nm)
+                ctx.world.command(Velocity(wz=twist))  # stop descending while twisting
+                twisted_deg += twist * ctx.period_s
+            else:
+                ctx.world.command(Velocity(vz=-speed))
             ctx.progress(s.depth_mm / self.expected_depth_mm)
             await ctx.clock.sleep(ctx.period_s)
 

@@ -39,7 +39,11 @@ Persistence is expressed per kind: a duration for timed faults (`controller_stal
 `sensor_dropout`); faults triggered by the plug's state (`pose_shift`, `obstacle`, `tight_fit`,
 `yaw_mismatch`) take effect when the plug reaches them. Obstacles and pose shifts persist for a
 seeded number of attempts (insertions into the port, descents past the trigger height); see
-ADR 007 for why retries need it.
+ADR 007 for why retries need it. A yaw mismatch persists until the plug is twisted to within
+1° of the port (seeded misalignment 5–15°); only `insert_act` twists, following the torque's
+sign, so B cannot clear it; setting C is meant to clear it by switching to `insert_act`
+(ADR 008). Twisting 30° takes as long as the 1 s stall window, so larger misalignments read as
+a stall even for `insert_act`; the seeded range stays well below that.
 - Pros: the same seed reproduces exactly; across seeds a bounded retry budget sometimes suffices
   and sometimes does not, so B and C show partial recovery.
 - Cons: ranges need tuning to get a readable spread; "persistence" means different things for

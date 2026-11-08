@@ -107,13 +107,15 @@ class PoseShift:
 
 @dataclass(frozen=True)
 class YawMismatch:
-    """The plug is rotated against the port: it wedges at `stall_depth_mm` and twists instead of
-    going deeper. Force stays moderate and torque is high, which no Monitor rule describes."""
+    """The plug is rotated `yaw_deg` against the port: it wedges at `stall_depth_mm` and twists
+    instead of going deeper. Force stays moderate and torque is high, which no Monitor rule
+    describes. Twisting the plug to within the world's yaw tolerance frees it."""
 
     fault_id: str
     stall_depth_mm: float
     force_n: float
     torque_nm: float
+    yaw_deg: float
     kind: str = "yaw_mismatch"
     label: FailureClass = FailureClass.UNKNOWN
 
@@ -123,6 +125,7 @@ class YawMismatch:
             "stall_depth_mm": self.stall_depth_mm,
             "force_n": self.force_n,
             "torque_nm": self.torque_nm,
+            "yaw_deg": self.yaw_deg,
         }
 
 

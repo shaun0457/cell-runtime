@@ -29,6 +29,9 @@ class MockParams:
     hole_tolerance_mm: float = 1.0
     full_depth_mm: float = 8.0
     max_speed_mm_s: float = 30.0
+    max_twist_deg_s: float = 45.0
+    # A plug rotated by less than this against the port goes in (the chamfer guides it).
+    yaw_tolerance_deg: float = 1.0
     contact_stiffness_n_per_mm: float = 5.0
     friction_base_n: float = 2.0
     friction_n_per_mm_s: float = 1.0
@@ -59,6 +62,7 @@ class MockWorld:
         r = p.initial_xy_range_mm
         self._xy = (rng.uniform(-r, r), rng.uniform(-r, r))
         self._cmd = HOLD
+        self._plug_yaw_deg = 0.0
         self._force = 0.0
         self._torque = 0.0
         self._steps = 0
@@ -94,6 +98,7 @@ class MockWorld:
         self._wrench_valid = "sensor_dropout" not in active
         cmd = HOLD if "controller_stall" in active else self._cmd
         vx, vy, vz = (_clamp(v, p.max_speed_mm_s) for v in (cmd.vx, cmd.vy, cmd.vz))
+        self._plug_yaw_deg += _clamp(cmd.wz, p.max_twist_deg_s) * dt
         if self._height > 0:  # lateral motion only outside the port
             self._xy = (self._xy[0] + vx * dt, self._xy[1] + vy * dt)
         previous_height = self._height
@@ -114,6 +119,9 @@ class MockWorld:
                 if self._entries <= obstacle.attempts:
                     floor = max(floor, -obstacle.depth_mm)
             for yaw in self._yaw_mismatches:
+                if abs(self._yaw_error(yaw)) <= p.yaw_tolerance_deg:
+                    self._clear(yaw)  # twisted into line: the plug goes in
+                    continue
                 if self._target_height <= -yaw.stall_depth_mm and -yaw.stall_depth_mm > floor:
                     self._wedge(yaw)
                     return
@@ -164,7 +172,11 @@ class MockWorld:
         self._engage(yaw)
         self._height = self._target_height = -yaw.stall_depth_mm
         self._force = yaw.force_n
-        self._torque = yaw.torque_nm
+        # The port twists the plug towards alignment: the torque's sign says which way.
+        self._torque = math.copysign(yaw.torque_nm, self._yaw_error(yaw))
+
+    def _yaw_error(self, yaw: YawMismatch) -> float:
+        return yaw.yaw_deg - self._plug_yaw_deg
 
     def _update_timed_faults(self, t: float) -> set[str]:
         """Kinds of the timed faults active at world time `t`; records activation and clearing."""

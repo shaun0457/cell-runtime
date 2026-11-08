@@ -265,7 +265,9 @@ the planner adds over B. Phase 2 tests this against failures we did not design.
   messages, so in Phase 1 the Monitor must see every wrench sample (or sum the real dt), not
   only the samples at the control rate.
 - Known misreads: a stalled controller during insertion reads as UNKNOWN, not TIMEOUT; an
-  insert skill moving up for more than 1 s reads as stalled; several insertion faults at once
+  insert skill moving up for more than 1 s reads as stalled; a slow insert (`insert_act`, 2 mm/s)
+  that meets an obstacle reads as UNKNOWN, because force builds too slowly to pass the 10 N stuck
+  threshold before the 1 s stall rule fires; several insertion faults at once
   are not modelled.
 - Implementation status: everything above is in place. The 20-seed A/B sweep gave the same success counts
   before and after the cross-skill windows, the Monitor-before-done change, taring and the
