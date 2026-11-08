@@ -6,6 +6,11 @@ cannot finish within `stall_wall_s` of real time stops the run as `sim_clock_sta
 is paused, or runs so slowly it is as good as paused); sim time going backwards (a Gazebo reset)
 stops it as `sim_time_reset`. Sensors and poses are read once per step, at its end, so the
 Monitor and the log see one consistent sample.
+
+Stops (ADR 012): the goal's state is checked when the world is built and on every poll while a
+step waits, so a cancel stops the run within one step (`goal_cancel_requested`, `goal_aborted`,
+`node_deactivated`). A node call that raises during a step stops it as `node_error`; its text is
+dropped. All of these raise `WorldStopped`, which the runner turns into its one stop.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from adapters.aic.convert import Pose, motion_command, plug_to_port_mm, tared_ma
 from adapters.aic.node import NodePort
 from cellrt.executor.runner import STEP_TOLERANCE_S
 from cellrt.runtime.task import Task
-from cellrt.world.base import Command, Signals, WorldStopped
+from cellrt.world.base import HOLD, Command, Signals, WorldStopped
 
 # A 50 ms step that takes longer than this in real time means a real-time factor below 0.005.
 SIM_STALL_WALL_S = 10.0
@@ -72,9 +77,16 @@ class AicWorld:
         self._frames = Frames.for_task(task)
         self._stall_wall_s = stall_wall_s
         self._poll_wall_s = poll_wall_s
-        self._sim_s = node.sim_now_s()
-        self._geometry = self._read_geometry()
-        self._signals = self._read_signals()
+        self._hold_failed = False
+        try:
+            self._check_goal()  # fail fast, before reading anything else
+            self._sim_s = node.sim_now_s()
+            self._geometry = self._read_geometry()
+            self._signals = self._read_signals()
+        except WorldStopped:
+            raise
+        except Exception:
+            raise WorldStopped("node_error") from None
 
     # World --------------------------------------------------------------------------------------
 
@@ -82,14 +94,54 @@ class AicWorld:
         return self._signals
 
     def command(self, cmd: Command) -> None:
-        state = self._node.controller_state()
-        self._node.send(motion_command(cmd, None if state is None else state.tcp))
+        try:
+            state = self._node.controller_state()
+            self._node.send(motion_command(cmd, None if state is None else state.tcp))
+        except Exception:
+            if cmd is not HOLD:  # the executor's HOLD; a skill's own zero twist still raises
+                raise  # the skill raises, and the run aborts with the exception's type
+            # HOLD is sent by the executor after a skill ends; nobody can be told here, so the
+            # next step stops the run instead.
+            self._hold_failed = True
 
     def step(self, dt: float) -> float:
+        if self._hold_failed:
+            raise WorldStopped("node_error")
+        return self._wait(dt, check_goal=True)
+
+    # for the adapter ----------------------------------------------------------------------------
+
+    def settle(self, dt: float) -> float:
+        """A step for the stop confirmation: it ignores the goal's state (the check runs after
+        a cancel too) and reads no TF or wrench, so a run stopped for missing ground truth can
+        still be confirmed. Bounded by `stall_wall_s` like a step."""
+        return self._wait(dt, check_goal=False, read=False)
+
+    def tcp_speed_mm_s(self) -> float | None:
+        """The measured linear TCP speed, or None without a finite reading."""
+        try:
+            state = self._node.controller_state()
+        except Exception:
+            return None
+        if state is None or not math.isfinite(state.tcp_speed_mm_s):
+            return None
+        return state.tcp_speed_mm_s
+
+    def _wait(self, dt: float, *, check_goal: bool, read: bool = True) -> float:
+        try:
+            return self._wait_for_sim_time(dt, check_goal, read)
+        except WorldStopped:
+            raise
+        except Exception:
+            raise WorldStopped("node_error") from None  # upstream text stays out of the log
+
+    def _wait_for_sim_time(self, dt: float, check_goal: bool, read: bool) -> float:
         node = self._node
         start = last = self._sim_s
         waited_from = node.wall_now_s()
         while True:  # bounded by stall_wall_s of real time
+            if check_goal:
+                self._check_goal()
             now = node.sim_now_s()
             if now < last:
                 raise WorldStopped("sim_time_reset")
@@ -100,9 +152,15 @@ class AicWorld:
                 raise WorldStopped("sim_clock_stalled")
             node.wall_sleep(self._poll_wall_s)
         self._sim_s = now
-        self._geometry = self._read_geometry()
-        self._signals = self._read_signals()
+        if read:
+            self._geometry = self._read_geometry()
+            self._signals = self._read_signals()
         return now - start
+
+    def _check_goal(self) -> None:
+        reason = self._node.goal_stop_reason()
+        if reason is not None:
+            raise WorldStopped(reason)
 
     # for AIC skills -----------------------------------------------------------------------------
 

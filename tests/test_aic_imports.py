@@ -11,7 +11,7 @@ from pathlib import Path
 
 ADAPTER_DIR = Path(__file__).resolve().parents[1] / "adapters" / "aic"
 HEAVY = ("torch", "lerobot", "numpy")
-ROS = ("rclpy", "tf2_ros", "geometry_msgs", "aic_model", "aic_control_interfaces")
+ROS = ("rclpy", "tf2_ros", "geometry_msgs", "action_msgs", "aic_model", "aic_control_interfaces")
 
 
 def _module_level_imports(path: Path) -> set[str]:

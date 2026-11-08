@@ -14,9 +14,10 @@ Outcome = Literal["success", "failed", "aborted"]
 # The version of the event payloads a run was written with, recorded on `run_started`. Version 1
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
-# `run_started.geometry_source`. Bump it when a payload changes shape (a test hashes every
-# payload's schema per version), and keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 4
+# `run_started.geometry_source`; 5 added `hold_checked`. Bump it when a payload changes shape
+# (a test hashes every payload's schema per version), and keep older rows readable: new fields
+# get defaults.
+SCHEMA_VERSION = 5
 
 
 class _Payload(BaseModel):
@@ -189,6 +190,18 @@ class RunFinished(_Payload):
     duration: float
 
 
+class HoldChecked(_Payload):
+    """Whether the arm came to rest after the run's last HOLD: the linear TCP speed under the
+    threshold for enough consecutive samples before the deadline (a world that measures speed;
+    the AIC cell). Recorded just before `run_finished`."""
+
+    type: Literal["hold_checked"] = "hold_checked"
+    result: Literal["hold_confirmed", "hold_unconfirmed"]
+    max_speed_mm_s: float = Field(ge=0, allow_inf_nan=False)  # the fastest sample seen
+    samples: int = Field(ge=0)
+    waited_s: float = Field(ge=0, allow_inf_nan=False)  # clock time the check took
+
+
 Payload = Annotated[
     RunStarted
     | FaultInjected
@@ -206,6 +219,7 @@ Payload = Annotated[
     | PlannerDecided
     | PlannerOutputRejected
     | BtNodeChanged
+    | HoldChecked
     | RunFinished,
     Field(discriminator="type"),
 ]

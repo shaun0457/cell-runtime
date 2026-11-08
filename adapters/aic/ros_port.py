@@ -3,6 +3,10 @@
 
 Callbacks run on aic_model's MultiThreadedExecutor while the policy thread reads, so each feed
 keeps only its newest message behind a lock; the policy body reads a snapshot at step ends.
+
+The goal handle is the one aic_model stores on the node before it starts the policy thread
+(`aic_model.py:179-181` @ `3ab0653`). It is read once, here: after a cancel the node's execute
+loop sets its attribute back to None (`:281-307`), so it cannot be read later.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import threading
 import time
 from typing import Any
 
+from action_msgs.msg import GoalStatus
 from aic_control_interfaces.msg import ControllerState, MotionUpdate, TrajectoryGenerationMode
 from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3, Wrench, WrenchStamped
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -30,6 +35,11 @@ class RosNodePort:
     def __init__(self, node: Any, move_robot: Any) -> None:
         self._node = node
         self._move_robot = move_robot
+        goal = getattr(node, "goal_handle", None)
+        readable = all(hasattr(goal, a) for a in ("status", "is_active"))
+        # Without a readable handle or the node's lifecycle flag a cancel cannot be seen: the
+        # run fails fast as `aic_goal_handle_unavailable`.
+        self._goal = goal if readable and hasattr(node, "is_active") else None
         self._tf = node._tf_buffer  # the TF buffer aic_model's Policy examples use
         self._lock = threading.Lock()
         self._wrench: WrenchReading | None = None
@@ -69,6 +79,23 @@ class RosNodePort:
     def wall_sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
+    def goal_stop_reason(self) -> str | None:
+        goal = self._goal
+        if goal is None:
+            return "aic_goal_handle_unavailable"
+        try:
+            # By status, not `is_cancel_requested`: once the node's execute loop has called
+            # `canceled()` (`aic_model.py:276-277`), that flag reads False again.
+            if goal.status in (GoalStatus.STATUS_CANCELING, GoalStatus.STATUS_CANCELED):
+                return "goal_cancel_requested"
+            if not goal.is_active:  # aborted by cancel_task (`:156-160`), or ended otherwise
+                return "goal_aborted"
+            if not self._node.is_active:
+                return "node_deactivated"
+        except Exception:
+            return "goal_handle_unreadable"  # mid-run; the clock may still be fine
+        return None
+
     def transform(self, frame: str) -> convert.Pose | None:
         try:
             tf = self._tf.lookup_transform(convert.BASE_FRAME, frame, Time()).transform
@@ -101,10 +128,12 @@ class RosNodePort:
     def _on_state(self, msg: ControllerState) -> None:
         p, q = msg.tcp_pose.position, msg.tcp_pose.orientation
         f, t = msg.fts_tare_offset.wrench.force, msg.fts_tare_offset.wrench.torque
+        v = msg.tcp_velocity.linear
         snapshot = ControllerSnapshot(
             tcp=convert.Pose(position=(p.x, p.y, p.z), orientation=(q.w, q.x, q.y, q.z)),
             tare_force=(f.x, f.y, f.z),
             tare_torque=(t.x, t.y, t.z),
+            tcp_speed_mm_s=convert.mm(convert.magnitude((v.x, v.y, v.z))),
         )
         with self._lock:
             self._state = snapshot
