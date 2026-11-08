@@ -21,6 +21,9 @@ from cellrt.skills.registry import SkillRegistry
 MAX_RAW_CHARS = 500
 # Text longer than this is rejected before it is parsed.
 MAX_INPUT_CHARS = 16_000
+# JSON nested deeper than this is rejected before it is parsed (a decision is one level deep).
+# Parsing deep input would hit a recursion limit that differs between platforms.
+MAX_JSON_DEPTH = 8
 # Names an error location may show; anything else (a key the planner made up) is "<extra>".
 # With duplicates dropped, this keeps the set of possible error codes small and fixed.
 _KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "abort"})
@@ -70,9 +73,11 @@ def validate_decision(
     if isinstance(raw, str):
         if len(raw) > MAX_INPUT_CHARS:
             return Rejection(shown, ("<root>: too_long",))
+        if _json_depth(raw) > MAX_JSON_DEPTH:
+            return Rejection(shown, ("<root>: too_deep",))
         try:
             data = json.loads(raw)
-        except (ValueError, RecursionError):  # deep nesting raises RecursionError
+        except ValueError:
             return Rejection(shown, ("<root>: not_json",))
     try:
         decision = DECISION_ADAPTER.validate_python(data)
@@ -86,6 +91,28 @@ def validate_decision(
         if decision.skill not in options:
             return Rejection(shown, ("skill: not_an_option_for_this_step",))
     return decision
+
+
+def _json_depth(text: str) -> int:
+    """The deepest bracket nesting in `text`, brackets inside JSON strings not counted."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif ch in "]}":
+            depth -= 1
+    return deepest
 
 
 def _shown(raw: object) -> str:

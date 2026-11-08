@@ -23,7 +23,9 @@ Current shape:
   `abort(reason)`; pydantic, `extra="forbid"`, discriminator `kind`) or a `Rejection` holding the
   raw text (cut to 500 characters) and error codes (`field: type`; a key the planner made up
   shows as `<extra>`, so nothing the planner wrote is echoed in a code). Text over 16,000
-  characters is rejected unparsed; validation never raises (deep nesting, a hostile `repr`).
+  characters, or nested more than 8 brackets deep, is rejected unparsed (`too_long`,
+  `too_deep`): parsing deep input would hit a recursion limit that differs by platform.
+  Validation never raises (a hostile `repr` included).
   A switch must name a registered skill, not the failed one, and one of the step's options.
   An abort reason is at most 200 printable characters: it becomes the run's outcome reason.
 - Only insert steps get a planner in Phase 0; their options are the other registered insert

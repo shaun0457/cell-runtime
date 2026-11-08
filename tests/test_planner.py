@@ -15,7 +15,7 @@ from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.planner.base import FailureContext
-from cellrt.planner.schemas import MAX_INPUT_CHARS, MAX_RAW_CHARS
+from cellrt.planner.schemas import MAX_INPUT_CHARS, MAX_JSON_DEPTH, MAX_RAW_CHARS
 from cellrt.runtime.events import Event, PlannerOutputRejected
 from cellrt.runtime.state import RunState
 from cellrt.runtime.store import EventStore
@@ -127,7 +127,7 @@ MALFORMED: dict[str, object] = {
     "a reason with a line break": {"kind": "abort", "reason": "stop\nrun_finished success"},
     "text over the input limit": _padded_retry(MAX_INPUT_CHARS + 1),
     "JSON nested too deep to parse": "[" * 3000 + "]" * 3000,
-    "an object nested too deep to print": _nested_list(3000),
+    "a deeply nested object": _nested_list(3000),
     "an object whose repr raises": _HostileRepr(),
 }
 
@@ -195,12 +195,33 @@ def test_rejections_never_echo_what_the_planner_wrote(store: EventStore) -> None
     assert "secret-token-123" not in str([e.payload for e in hostile])
 
 
-def test_json_nested_too_deep_is_rejected_as_not_json(store: EventStore) -> None:
-    planner = FakePlanner(["[" * 3000 + "]" * 3000])
+def _retry_nested(depth: int) -> str:
+    """A retry with an extra field nested so the whole text is `depth` brackets deep."""
+    inner = "[" * (depth - 1) + "]" * (depth - 1)
+    return '{"kind": "retry", "x": ' + inner + "}"
 
-    [r] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=planner))
 
-    assert r.errors == ["<root>: not_json"]
+def test_json_is_parsed_up_to_the_depth_limit_and_rejected_past_it(store: EventStore) -> None:
+    at_limit = FakePlanner([_retry_nested(MAX_JSON_DEPTH)])
+    past_limit = FakePlanner([_retry_nested(MAX_JSON_DEPTH + 1)])
+    # Brackets inside a string are text, not nesting.
+    in_string = FakePlanner(['{"kind": "abort", "reason": "' + "[{" * 50 + '"}'])
+    # An escaped quote does not end the string, so the brackets after it are still text.
+    escaped = FakePlanner(['{"kind": "abort", "reason": "a\\"' + "[" * 20 + '"}'])
+
+    [parsed] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=at_limit))
+    [deep] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=past_limit))
+    text = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=in_string)
+    after_escape = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=escaped)
+
+    assert parsed.errors == ["retry.<extra>: extra_forbidden"]
+    assert deep.errors == ["<root>: too_deep"]
+    assert text[-1].payload.reason.startswith(
+        "insert_scripted failed: UNKNOWN (planner aborted: [{"
+    )
+    assert after_escape[-1].payload.reason.startswith(
+        'insert_scripted failed: UNKNOWN (planner aborted: a"[['
+    )
 
 
 @dataclass
