@@ -139,9 +139,11 @@ def test_eval_rejects_bad_options(tmp_path: Path) -> None:
     too_many = _cellrt("eval", "--seeds", str(MAX_SEEDS + 1), "--db", db)
 
     assert unknown.returncode == 1 and "unknown setting 'X'" in unknown.stderr
-    assert no_seeds.returncode != 0
-    assert no_k.returncode != 0
-    assert too_many.returncode != 0 and "--seeds" in too_many.stderr
+    # 2 is a usage error, raised while parsing options, before anything runs. (The message is
+    # not checked: it may be coloured, which splits the option name with escape codes.)
+    assert no_seeds.returncode == 2
+    assert no_k.returncode == 2
+    assert too_many.returncode == 2
     assert not Path(db).exists()  # nothing ran
 
 
