@@ -59,7 +59,7 @@ def test_run_eval_runs_every_scenario_setting_and_seed_in_order(tmp_path: Path) 
     path.write_text(TWO_SCENARIOS, encoding="utf-8")
 
     with EventStore(tmp_path / "e.sqlite") as store:
-        run_ids = run_eval(load_scenarios(path), ["A", "C"], seeds=2, store=store)
+        run_ids = run_eval(load_scenarios(path), ["A", "C"], seeds=2, store=store).run_ids
 
     assert run_ids == [
         "baseline/A/0/a1", "baseline/A/1/a1", "baseline/C/0/a1", "baseline/C/1/a1",

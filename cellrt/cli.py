@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from cellrt.eval.metrics import compute_metrics
 from cellrt.eval.report import render_confusion, render_table
-from cellrt.eval.runner import run_eval, run_unit
+from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.trees import SETTINGS
 from cellrt.replay import replay_lines
@@ -66,8 +66,16 @@ def eval_(
             _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
     loaded = _load(scenarios)
     with EventStore(db) as store:
-        run_ids = run_eval(loaded, chosen, seeds, store)  # type: ignore[arg-type]
-        table = compute_metrics((store.events(r) for r in run_ids), k)
+        runs = run_eval(loaded, chosen, seeds, store)  # type: ignore[arg-type]
+        table = compute_metrics((store.events(r) for r in runs.run_ids), k)
+    # On stderr, so the table on stdout is the same whether or not the eval was resumed.
+    typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
+    if runs.gave_up:
+        typer.echo(
+            f"gave up on {len(runs.gave_up)} units interrupted {MAX_ATTEMPTS} times"
+            f" (not in the table): {', '.join(runs.gave_up)}",
+            err=True,
+        )
     for line in [*render_table(table), "", *render_confusion(table)]:
         typer.echo(line)
 

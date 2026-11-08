@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import hashlib
 import json
 import random
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from cellrt.eval.faults import materialize
 from cellrt.eval.scenarios import Scenario
@@ -28,11 +31,67 @@ from cellrt.skills.mock import mock_registry
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.mock_world import MockParams, MockWorld
 
+# A unit interrupted this many times under one configuration is given up on, so a unit that
+# crashes the eval every time cannot block the units after it on every restart.
+MAX_ATTEMPTS = 3
+# The core package: its source is part of every run's configuration.
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
 
 @dataclass(frozen=True)
 class RunResult:
     run_id: str
     outcome: Outcome
+
+
+@dataclass(frozen=True)
+class EvalRuns:
+    run_ids: list[str]  # one finished run per unit, in eval order
+    ran: int  # units run now
+    skipped: int  # units already finished under the same configuration
+    gave_up: list[str]  # units ("scenario/setting/seed") interrupted MAX_ATTEMPTS times
+
+
+@dataclass(frozen=True)
+class _UnitConfig:
+    """Everything a unit runs with besides scenario and seed, defaults filled in."""
+
+    registry: SkillRegistry
+    params: MockParams
+    recovery: RecoveryConfig
+    monitor: MonitorConfig
+    planner: Planner | None
+
+    @classmethod
+    def resolve(
+        cls,
+        setting: Setting,
+        registry: SkillRegistry | None,
+        params: MockParams | None,
+        recovery: RecoveryConfig | None,
+        monitor: MonitorConfig | None,
+        planner: Planner | None,
+    ) -> _UnitConfig:
+        if planner is not None and setting != "C":
+            raise ValueError(f"a planner is used only in setting C, not {setting!r}")
+        return cls(
+            registry or mock_registry(),
+            params or MockParams(),
+            recovery or RecoveryConfig(),
+            monitor or MonitorConfig(),
+            (planner or RulePlanner()) if setting == "C" else None,
+        )
+
+    def hash(self, scenario: Scenario, setting: Setting) -> str:
+        return config_hash(
+            scenario,
+            setting,
+            self.params,
+            self.recovery,
+            self.monitor,
+            self.registry,
+            self.planner,
+        )
 
 
 def run_unit(
@@ -47,26 +106,18 @@ def run_unit(
     monitor: MonitorConfig | None = None,
     planner: Planner | None = None,
 ) -> RunResult:
-    """Run one unit. Setting C asks `planner` (the rule planner by default) about UNKNOWN."""
-    if planner is not None and setting != "C":
-        raise ValueError(f"a planner is used only in setting C, not {setting!r}")
+    """Run one unit as its next attempt. Setting C asks `planner` (the rule planner by
+    default) about UNKNOWN."""
+    config = _UnitConfig.resolve(setting, registry, params, recovery, monitor, planner)
+    return _run_next_attempt(scenario, setting, seed, store, config)
+
+
+def _run_next_attempt(
+    scenario: Scenario, setting: Setting, seed: int, store: EventStore, config: _UnitConfig
+) -> RunResult:
     attempt = store.next_attempt(scenario.id, setting, seed)
     run_id = f"{scenario.id}/{setting}/{seed}/a{attempt}"
-    return asyncio.run(
-        _run(
-            run_id,
-            scenario,
-            setting,
-            seed,
-            attempt,
-            store,
-            registry or mock_registry(),
-            params or MockParams(),
-            recovery or RecoveryConfig(),
-            monitor or MonitorConfig(),
-            (planner or RulePlanner()) if setting == "C" else None,
-        )
-    )
+    return asyncio.run(_run(run_id, scenario, setting, seed, attempt, store, config))
 
 
 def run_eval(
@@ -74,15 +125,48 @@ def run_eval(
     settings: Sequence[Setting],
     seeds: int,
     store: EventStore,
-) -> list[str]:
-    """Run every (scenario, setting, seed) for seeds 0..seeds-1, one after another, in that
-    order; return the run ids. Each unit gets a fresh attempt (resuming is a later ticket)."""
-    return [
-        run_unit(scenario, setting, seed, store).run_id
-        for scenario in scenarios
-        for setting in settings
-        for seed in range(seeds)
-    ]
+    *,
+    registry: SkillRegistry | None = None,
+    params: MockParams | None = None,
+    recovery: RecoveryConfig | None = None,
+    monitor: MonitorConfig | None = None,
+    planner: Planner | None = None,
+) -> EvalRuns:
+    """Every (scenario, setting, seed) for seeds 0..seeds-1, one after another, in that order.
+
+    Resumable: a unit that already has a finished attempt under the same configuration (code
+    included) is skipped, and its first such attempt counts; any other unit runs as its next
+    attempt, so one that was interrupted starts again from the beginning, unless it has been
+    interrupted MAX_ATTEMPTS times under this configuration. Nothing is deleted from the log.
+    A setting given twice runs once.
+    """
+    finished: dict[tuple[str, str, int, str], str] = {}
+    interrupted: Counter[tuple[str, str, int, str]] = Counter()
+    for run in store.runs():  # oldest attempt first: keep the first finished one
+        key = (run.scenario_id, run.setting, run.seed, run.config_hash)
+        if run.finished:
+            finished.setdefault(key, run.run_id)
+        else:
+            interrupted[key] += 1
+    run_ids: list[str] = []
+    gave_up: list[str] = []
+    ran = 0
+    for scenario in scenarios:
+        for setting in dict.fromkeys(settings):
+            config = _UnitConfig.resolve(
+                setting, registry, params, recovery, monitor, planner if setting == "C" else None
+            )
+            digest = config.hash(scenario, setting)
+            for seed in range(seeds):
+                key = (scenario.id, setting, seed, digest)
+                if (done := finished.get(key)) is not None:
+                    run_ids.append(done)
+                elif interrupted[key] >= MAX_ATTEMPTS:
+                    gave_up.append(f"{scenario.id}/{setting}/{seed}")
+                else:
+                    run_ids.append(_run_next_attempt(scenario, setting, seed, store, config).run_id)
+                    ran += 1
+    return EvalRuns(run_ids=run_ids, ran=ran, skipped=len(run_ids) - ran, gave_up=gave_up)
 
 
 async def _run(
@@ -92,12 +176,10 @@ async def _run(
     seed: int,
     attempt: int,
     store: EventStore,
-    registry: SkillRegistry,
-    params: MockParams,
-    recovery: RecoveryConfig,
-    monitor: MonitorConfig,
-    planner: Planner | None,
+    config: _UnitConfig,
 ) -> RunResult:
+    registry, params, recovery = config.registry, config.params, config.recovery
+    monitor, planner = config.monitor, config.planner
     clock = SimClock()
     # Keyed by scenario and seed only, never the setting: every setting faces the same world and
     # the same faults. Separate streams, so adding a fault does not change the world's noise.
@@ -111,9 +193,7 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config_hash(
-                scenario, setting, params, recovery, monitor, registry, planner
-            ),
+            config_hash=config.hash(scenario, setting),
         )
     )
     env = ExecEnv(
@@ -152,7 +232,8 @@ def config_hash(
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
-    counts the planner's type and budget (not how an instance of that type is set up).
+    counts the planner's type and budget (not how an instance of that type is set up). The core
+    source counts too, so changed code never reuses an old result.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -161,6 +242,7 @@ def config_hash(
         "recovery": None if setting == "A" else recovery.as_dict(),
         "monitor": monitor.as_dict(),
         "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
+        "code": code_fingerprint(),
         "planner": None
         if planner is None
         else {
@@ -170,6 +252,17 @@ def config_hash(
     }
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]
+
+
+@functools.cache
+def code_fingerprint(root: Path = PACKAGE_ROOT) -> str:
+    """A hash of every `.py` file under `root`: paths (POSIX, relative) and contents, with line
+    endings normalised, so a checkout on Windows and one on Linux give the same value."""
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py"), key=lambda p: p.relative_to(root).as_posix()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    return digest.hexdigest()[:16]
 
 
 def _skill_config(skill: Skill) -> dict[str, object]:

@@ -39,5 +39,13 @@ in success), unsafe runs (time with tared force over 20 N, summed over the run, 
 the AIC penalty; read from the signals, not from the Monitor), mean time over 20 N, mean steps
 and duration, planner calls per task, and Monitor classification accuracy. Below it, a confusion
 matrix of verdicts against the injected faults, with false alarms (`none`) and misses. A rate
-with nothing to measure is shown as `-`. Every run of `eval` adds new attempts; skipping units
-that already finished comes with #10.
+with nothing to measure is shown as `-`.
+
+`eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
+(scenario, setting, seed) that already finished under the same configuration is skipped, and
+one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
+attempts stay in the store and `cellrt replay` still prints them; the table uses finished runs
+only, so a resumed eval prints the same table as one that was never interrupted. Change the
+code under `cellrt/` or a parameter, and every affected unit runs again (the configuration hash
+covers both). A unit interrupted 3 times under the same configuration is given up on and
+reported on stderr, so a unit that crashes every time cannot block the rest.
