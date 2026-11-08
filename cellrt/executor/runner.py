@@ -44,6 +44,8 @@ async def run_task(
                 return "success", "task complete"
             if crashed := _raised(root):
                 return "aborted", crashed
+            if stopped := _planner_aborted(root):
+                return "aborted", stopped
             return "failed", _failure_reason(root)
         await drain(env)
         env.world.step(env.period_s)
@@ -126,6 +128,14 @@ def _raised(root: py_trees.behaviour.Behaviour) -> str | None:
     for node in root.iterate():
         if isinstance(node, SkillBehaviour) and node.error:
             return f"{node.skill.name} raised {node.error}"
+    return None
+
+
+def _planner_aborted(root: py_trees.behaviour.Behaviour) -> str | None:
+    """Why the run is aborted if the planner gave up or its output was rejected, else None."""
+    for node in root.iterate():
+        if isinstance(node, Recovering) and node.aborted and node.failure_reason:
+            return node.failure_reason
     return None
 
 

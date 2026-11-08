@@ -9,6 +9,7 @@ from typing import Literal
 
 from cellrt.runtime.events import (
     Event,
+    PlannerCalled,
     RecoveryStarted,
     RunFinished,
     RunStarted,
@@ -33,9 +34,11 @@ class RunState:
     current_skill: str | None = None
     skill_attempts: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     steps: int = 0
-    # Recoveries started so far: the budgets of setting B are checked against these.
+    # Recoveries started so far: the budgets of settings B and C are checked against these.
     recoveries_by_class: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     recoveries_total: int = 0
+    # Planner calls so far: setting C's planner budget is checked against this.
+    planner_calls: int = 0
     last_signal: SignalSampled | None = None
     started_ts: float | None = None
     finished_ts: float | None = None
@@ -63,6 +66,8 @@ def apply(state: RunState, event: Event) -> RunState:
                 recoveries_by_class=MappingProxyType(counts),
                 recoveries_total=state.recoveries_total + 1,
             )
+        case PlannerCalled():
+            return replace(state, planner_calls=state.planner_calls + 1)
         case SkillFinished() | SkillCancelled():
             return replace(state, current_skill=None)
         case SignalSampled() as signal:

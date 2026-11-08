@@ -16,6 +16,8 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
 from cellrt.executor.trees import Setting, build_tree
 from cellrt.monitor.classifier import MonitorConfig
+from cellrt.planner.base import Planner
+from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import Outcome, RunFinished, RunStarted
 from cellrt.runtime.recorder import Recorder
@@ -42,7 +44,11 @@ def run_unit(
     params: MockParams | None = None,
     recovery: RecoveryConfig | None = None,
     monitor: MonitorConfig | None = None,
+    planner: Planner | None = None,
 ) -> RunResult:
+    """Run one unit. Setting C asks `planner` (the rule planner by default) about UNKNOWN."""
+    if planner is not None and setting != "C":
+        raise ValueError(f"a planner is used only in setting C, not {setting!r}")
     attempt = store.next_attempt(scenario.id, setting, seed)
     run_id = f"{scenario.id}/{setting}/{seed}/a{attempt}"
     return asyncio.run(
@@ -57,6 +63,7 @@ def run_unit(
             params or MockParams(),
             recovery or RecoveryConfig(),
             monitor or MonitorConfig(),
+            (planner or RulePlanner()) if setting == "C" else None,
         )
     )
 
@@ -72,6 +79,7 @@ async def _run(
     params: MockParams,
     recovery: RecoveryConfig,
     monitor: MonitorConfig,
+    planner: Planner | None,
 ) -> RunResult:
     clock = SimClock()
     # Keyed by scenario and seed only, never the setting: every setting faces the same world and
@@ -86,7 +94,9 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config_hash(scenario, setting, params, recovery, monitor, registry),
+            config_hash=config_hash(
+                scenario, setting, params, recovery, monitor, registry, planner
+            ),
         )
     )
     env = ExecEnv(
@@ -96,8 +106,9 @@ async def _run(
         period_s=params.dt,
         fault_source=world,
         monitor_config=monitor,
+        time_limit_s=scenario.task.time_limit,
     )
-    root = build_tree(setting, registry, env, recovery)
+    root = build_tree(setting, registry, env, recovery, planner)
     outcome, reason = await run_task(root, env, scenario.task)
     recorder.emit(
         RunFinished(
@@ -118,11 +129,13 @@ def config_hash(
     recovery: RecoveryConfig,
     monitor: MonitorConfig,
     registry: SkillRegistry,
+    planner: Planner | None = None,
 ) -> str:
     """Everything that defines the run besides the seed: a changed scenario is a different run.
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
-    every skill counts with all its parameters, its Monitor profile included.
+    every skill counts with all its parameters, its Monitor profile included; setting C also
+    counts the planner's type and budget (not how an instance of that type is set up).
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -131,6 +144,12 @@ def config_hash(
         "recovery": None if setting == "A" else recovery.as_dict(),
         "monitor": monitor.as_dict(),
         "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
+        "planner": None
+        if planner is None
+        else {
+            "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
+            "budget": recovery.planner_budget,
+        },
     }
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]

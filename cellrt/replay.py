@@ -11,6 +11,9 @@ from cellrt.runtime.events import (
     FaultCleared,
     FaultInjected,
     MonitorVerdict,
+    PlannerCalled,
+    PlannerDecided,
+    PlannerOutputRejected,
     PreconditionFailed,
     RecoveryStarted,
     RunFinished,
@@ -65,6 +68,12 @@ def describe(event: Event) -> str:
                 f"(class {p.count_for_class}, total {p.count_total})"
                 + (" [class from skill]" if p.source == "skill" else "")
             )
+        case PlannerCalled() as p:
+            return f"{p.skill} {p.failure_class} (call {p.call})"
+        case PlannerDecided() as p:
+            return f"{p.skill} -> {p.decision}"
+        case PlannerOutputRejected() as p:
+            return f"{p.skill} rejected: {', '.join(p.errors)}"
         case BtNodeChanged() as p:
             return f"{p.node} -> {p.status}"
         case RunFinished() as p:

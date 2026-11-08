@@ -13,6 +13,7 @@ command replaces HOLD in the same step.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -21,10 +22,15 @@ import py_trees
 from py_trees.common import Status
 
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
+from cellrt.planner.base import FailureContext, Planner
+from cellrt.planner.schemas import Decision, Rejection, validate_decision
 from cellrt.runtime.clock import SimClock, to_ns
 from cellrt.runtime.events import (
     CommandDropped,
     MonitorVerdict,
+    PlannerCalled,
+    PlannerDecided,
+    PlannerOutputRejected,
     PreconditionFailed,
     SkillCancelled,
     SkillFinished,
@@ -33,6 +39,7 @@ from cellrt.runtime.events import (
 )
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.base import Skill, SkillContext, SkillResult
+from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import HOLD, CommandLease, FaultSource, World, WorldView
 
 PROGRESS_STEP = 0.25
@@ -73,6 +80,8 @@ class ExecEnv:
     # Ground truth of injected faults, read only by the runner to record it.
     fault_source: FaultSource | None = None
     monitor_config: MonitorConfig = field(default_factory=MonitorConfig)
+    # The task's time limit on the clock, so the planner can be told how much time is left.
+    time_limit_s: float = math.inf
 
     def __post_init__(self) -> None:
         self.monitor = Monitor(self.period_s, self.monitor_config)
@@ -99,6 +108,8 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._progress_mark = 0.0
         self.failure: str | None = None
         self.failure_source: Literal["monitor", "skill"] | None = None
+        self.verdict: Verdict | None = None  # the Monitor's verdict, when it decided the failure
+        self.attempt = 0  # which run of the skill this is (1 for the first)
         self.note: str | None = None  # why it failed when there is no failure class
         self.error: str | None = None  # exception type, if the skill raised (a bug, not a failure)
 
@@ -107,6 +118,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._progress_mark = 0.0
         self.failure = None
         self.failure_source = None
+        self.verdict = None
         self.note = None
         self.error = None
 
@@ -174,6 +186,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
     def _record_verdict(self, verdict: Verdict) -> None:
         self.failure = verdict.failure_class.value
         self.failure_source = "monitor"
+        self.verdict = verdict
         self._env.recorder.emit(
             MonitorVerdict(
                 skill=self.skill.name,
@@ -201,6 +214,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
     def _start(self) -> None:
         env = self._env
         attempt = env.recorder.state.skill_attempts.get(self.skill.name, 0) + 1
+        self.attempt = attempt
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
         self._started_ns = env.clock.now_ns()
         env.monitor.reset(self.skill.monitor_profile)
@@ -225,6 +239,98 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         ):
             self._progress_mark = fraction
             self._env.recorder.emit(SkillProgress(skill=self.skill.name, fraction=fraction))
+
+
+class PlannerBehaviour(py_trees.behaviour.Behaviour):
+    """Bridge for one planner call, on the same task mechanism as skills.
+
+    `ask` sets the failure before the node runs. On its first tick it records `planner_called`
+    and starts `triage` as a task; when the task is done it validates the output: a valid
+    decision is recorded (`planner_decided`) and the node succeeds with `decision` set; anything
+    else, a planner that raised included, is recorded (`planner_output_rejected`) and the node
+    fails with `rejection` set.
+    """
+
+    def __init__(
+        self,
+        planner: Planner,
+        registry: SkillRegistry,
+        env: ExecEnv,
+        options: frozenset[str],
+        *,
+        name: str = "planner",
+    ) -> None:
+        super().__init__(name)
+        self._planner = planner
+        self._registry = registry
+        self.options = options  # skills a SwitchSkill may name for this step
+        self._env = env
+        self._task: asyncio.Task[object] | None = None
+        self._ctx: FailureContext | None = None
+        self.decision: Decision | None = None
+        self.rejection: Rejection | None = None
+
+    def ask(self, ctx: FailureContext) -> None:
+        self._ctx = ctx
+
+    def catalogue(self) -> dict[str, str]:
+        """Registered skills and the Monitor profile each declares, for the planner's context."""
+        return {n: self._registry.get(n).monitor_profile for n in sorted(self._registry.names())}
+
+    def initialise(self) -> None:
+        self._task = None
+        self.decision = None
+        self.rejection = None
+
+    def update(self) -> Status:
+        ctx = self._ctx
+        assert ctx is not None, "ask() must set the failure before the planner node runs"
+        if self._task is None:
+            call = self._env.recorder.state.planner_calls + 1
+            self._env.recorder.emit(
+                PlannerCalled(
+                    skill=ctx.skill,
+                    failure_class=ctx.failure_class,
+                    call=call,
+                    context=ctx.as_dict(),
+                )
+            )
+            self._task = self._env.tracker.spawn(self._planner.triage(ctx), name=self.name)
+            return Status.RUNNING
+        if not self._task.done():
+            return Status.RUNNING
+        task, self._task = self._task, None
+        try:
+            raw = task.result()
+        except Exception as exc:  # only the type: the text may hold anything
+            result: Decision | Rejection = Rejection(
+                "", (f"<root>: planner_raised {type(exc).__name__}",)
+            )
+        else:
+            try:
+                result = validate_decision(raw, self._registry, ctx.skill, self.options)
+            except Exception as exc:  # validation must not crash the run; only the type
+                result = Rejection("", (f"<root>: validator_raised {type(exc).__name__}",))
+        if isinstance(result, Rejection):
+            self.rejection = result
+            self._env.recorder.emit(
+                PlannerOutputRejected(skill=ctx.skill, raw=result.raw, errors=list(result.errors))
+            )
+            return Status.FAILURE
+        self.decision = result
+        self._env.recorder.emit(PlannerDecided(skill=ctx.skill, decision=result.model_dump()))
+        return Status.SUCCESS
+
+    def terminate(self, new_status: Status) -> None:
+        task, self._task = self._task, None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        elif not task.cancelled():
+            # Stopped before its result was read: mark the exception retrieved, so asyncio does
+            # not print it (with its text) when the task is collected.
+            task.exception()
 
 
 def _succeeded(task: asyncio.Task[SkillResult]) -> bool:

@@ -123,6 +123,33 @@ class RecoveryStarted(_Payload):
     source: Literal["monitor", "skill"] = "monitor"
 
 
+class PlannerCalled(_Payload):
+    """Setting C asks the planner about a failure (see `planner.base.FailureContext`)."""
+
+    type: Literal["planner_called"] = "planner_called"
+    skill: str
+    failure_class: str
+    call: int  # 1 for the task's first planner call
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlannerDecided(_Payload):
+    """The planner's output passed validation."""
+
+    type: Literal["planner_decided"] = "planner_decided"
+    skill: str
+    decision: dict[str, Any]
+
+
+class PlannerOutputRejected(_Payload):
+    """The planner's output failed validation; nothing it asked for runs."""
+
+    type: Literal["planner_output_rejected"] = "planner_output_rejected"
+    skill: str
+    raw: str  # cut to planner.schemas.MAX_RAW_CHARS
+    errors: list[str]
+
+
 class BtNodeChanged(_Payload):
     type: Literal["bt_node_changed"] = "bt_node_changed"
     node: str
@@ -150,6 +177,9 @@ Payload = Annotated[
     | CommandDropped
     | MonitorVerdict
     | RecoveryStarted
+    | PlannerCalled
+    | PlannerDecided
+    | PlannerOutputRejected
     | BtNodeChanged
     | RunFinished,
     Field(discriminator="type"),
