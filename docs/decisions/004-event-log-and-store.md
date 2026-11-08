@@ -50,3 +50,11 @@ reads; a change that cannot have a default would need a format version in `run_s
 ## Consequences
 
 What becomes easier, what becomes harder, what we will need to revisit.
+
+- Payloads change shape over time, and the store keeps every row forever. Since Phase 1 (#21)
+  `run_started` records `schema_version` (`SCHEMA_VERSION` in `runtime/events.py`). The field
+  is required, so no writer can forget it; the store's one read path (`parse_stored`) gives
+  rows written before it existed version 1. The rule that keeps old stores readable: a new
+  payload field gets a default. Payloads still forbid unknown fields, so a store written by
+  newer code is not readable by older code. The first change that cannot have a default will
+  need the reader to convert rows by their run's version; nothing does that yet.

@@ -1,0 +1,102 @@
+"""The event schema version: new runs record it, and stores written before it existed stay
+readable, so a payload change does not orphan recorded runs.
+
+The old rows below were copied as stored from a Phase 0 store (before `config_parts`,
+`xy_offset_mm` and `schema_version` existed).
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from cellrt.eval.metrics import compute_metrics, summarize_run
+from cellrt.eval.runner import run_unit
+from cellrt.eval.scenarios import Scenario
+from cellrt.replay import replay_lines
+from cellrt.runtime.events import SCHEMA_VERSION, RunStarted, SignalSampled, parse_stored
+from cellrt.runtime.store import EventStore
+from cellrt.runtime.task import Task
+
+OLD_RUN_ID = "yaw_mismatch/C/0/a1"
+OLD_RUN_STARTED = (
+    '{"type":"run_started","scenario_id":"yaw_mismatch","setting":"C","seed":0,"attempt":1,'
+    '"task":{"id":"insert-sfp-0","cable_type":"sfp","cable_name":"cable_0","plug_type":"sfp",'
+    '"plug_name":"plug","port_type":"sfp","port_name":"port_0",'
+    '"target_module_name":"nic_card_0","time_limit":60.0},"config_hash":"d5f8268b7252c504"}'
+)
+OLD_SIGNAL = (
+    '{"type":"signal_sampled","step":1,"height_mm":49.0,"depth_mm":0.0,"xy_error_mm":2.654394,'
+    '"raw_force_n":[0.0,0.0,6.108],"tare_offset_n":[0.0,0.0,6.0],"force_n":0.108,'
+    '"torque_nm":0.0,"wrench_valid":true}'
+)
+OLD_RUN_FINISHED = (
+    '{"type":"run_finished","outcome":"success","reason":"task complete","steps":5,'
+    '"duration":10.05}'
+)
+
+
+def _write_old_run(db: Path) -> None:
+    """Insert the old rows as they were stored, bypassing today's models."""
+    rows = [
+        (OLD_RUN_ID, 1, 0.0, 0.0, "run_started", OLD_RUN_STARTED),
+        (OLD_RUN_ID, 2, 0.05, 0.0, "signal_sampled", OLD_SIGNAL),
+        (OLD_RUN_ID, 3, 10.05, 0.0, "run_finished", OLD_RUN_FINISHED),
+    ]
+    with sqlite3.connect(db) as conn:
+        conn.executemany("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", rows)
+
+
+def test_a_new_run_records_the_current_schema_version(
+    store: EventStore, baseline: Scenario
+) -> None:
+    done = run_unit(baseline, "A", 0, store)
+    started = store.events(done.run_id)[0].payload
+
+    assert isinstance(started, RunStarted)
+    assert started.schema_version == SCHEMA_VERSION == 2
+
+
+def test_a_run_started_stored_before_versioning_reads_as_version_1() -> None:
+    started = parse_stored("run_started", OLD_RUN_STARTED)
+
+    assert isinstance(started, RunStarted)
+    assert started.schema_version == 1
+    assert started.config_parts == {}
+
+
+def test_an_old_signal_sample_without_later_optional_fields_still_parses() -> None:
+    sample = parse_stored("signal_sampled", OLD_SIGNAL)
+
+    assert isinstance(sample, SignalSampled)
+    assert sample.xy_offset_mm is None and sample.force_n == 0.108
+
+
+def test_replay_and_metrics_read_a_store_that_mixes_old_and_new_runs(
+    tmp_path: Path, baseline: Scenario
+) -> None:
+    db = tmp_path / "mixed.sqlite"
+    with EventStore(db) as store:
+        new_run = run_unit(baseline, "A", 0, store).run_id
+    _write_old_run(db)
+
+    with EventStore(db) as store:
+        old = store.events(OLD_RUN_ID)
+        new = store.events(new_run)
+        old_lines = list(replay_lines(old))
+        new_lines = list(replay_lines(new))
+        table = compute_metrics([old, new], k=1)
+
+    assert [e.payload.schema_version for e in (old[0], new[0])] == [1, SCHEMA_VERSION]
+    assert "yaw_mismatch" in old_lines[0] and "run_finished" in old_lines[-1]
+    assert "run_finished" in new_lines[-1]
+    assert summarize_run(old) is not None and summarize_run(new) is not None
+    assert {row.setting for row in table.rows} == {"A", "C"}
+
+
+def test_a_writer_must_state_the_schema_version() -> None:
+    with pytest.raises(ValidationError, match="schema_version"):
+        RunStarted(scenario_id="s", setting="A", seed=0, attempt=1, task=Task(), config_hash="h")

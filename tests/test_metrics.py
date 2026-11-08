@@ -7,6 +7,7 @@ import pytest
 from cellrt.eval.metrics import compute_metrics, pass_hat_k, summarize_run
 from cellrt.eval.report import render_gains
 from cellrt.runtime.events import (
+    SCHEMA_VERSION,
     Event,
     FaultCleared,
     FaultInjected,
@@ -28,7 +29,13 @@ def _log(
     """A run's events: run_started, then `steps` as (ts, payload), then run_finished if given."""
     run_id = f"{scenario}/{setting}/{seed}/a1"
     started = RunStarted(
-        scenario_id=scenario, setting=setting, seed=seed, attempt=1, task=Task(), config_hash="h"
+        scenario_id=scenario,
+        setting=setting,
+        seed=seed,
+        attempt=1,
+        task=Task(),
+        config_hash="h",
+        schema_version=SCHEMA_VERSION,
     )
     payloads = [(0.0, started), *steps]
     return [
@@ -205,7 +212,13 @@ def test_exactly_one_second_over_the_limit_is_not_yet_unsafe() -> None:
 def test_time_over_the_limit_counts_from_the_run_start_not_from_zero() -> None:
     # A later task of a trial: its clock starts at 32 s, and the first sample is over 20 N.
     started = RunStarted(
-        scenario_id="s1", setting="B", seed=0, attempt=1, task=Task(), config_hash="h"
+        scenario_id="s1",
+        setting="B",
+        seed=0,
+        attempt=1,
+        task=Task(),
+        config_hash="h",
+        schema_version=SCHEMA_VERSION,
     )
     payloads = [(32.0, started), (32.05, _signal(1, 25.0)), (33.0, _finish())]
     run = [
