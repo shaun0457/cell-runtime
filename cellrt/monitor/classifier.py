@@ -156,17 +156,16 @@ class Monitor:
         over_now = (s.wrench_valid and s.force_n > FORCE_LIMIT_N) or bool(s.force_over_limit_s)
         if self._profile == "unload" or not over_now or over_s < c.force_trigger_s - 1e-9:
             return None
-        return Verdict(
-            FailureClass.FORCE_LIMIT,
-            rule="force_over_limit",
-            evidence={
-                "force_n": s.force_n,
-                "limit_n": FORCE_LIMIT_N,
-                "over_s": over_s,
-                "trigger_s": c.force_trigger_s,
-                "budget_s": c.force_budget_s,
-            },
-        )
+        evidence: dict[str, Any] = {
+            "force_n": s.force_n,
+            "limit_n": FORCE_LIMIT_N,
+            "over_s": over_s,
+            "trigger_s": c.force_trigger_s,
+            "budget_s": c.force_budget_s,
+        }
+        if s.force_over_limit_s is not None:  # what this step added, from the F/T stream
+            evidence["step_over_s"] = s.force_over_limit_s
+        return Verdict(FailureClass.FORCE_LIMIT, rule="force_over_limit", evidence=evidence)
 
     def _stuck(self, s: Signals) -> Verdict | None:
         c = self.config

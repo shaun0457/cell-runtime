@@ -7,6 +7,10 @@ is paused, or runs so slowly it is as good as paused); sim time going backwards 
 stops it as `sim_time_reset`. Sensors and poses are read once per step, at its end, so the
 Monitor and the log see one consistent sample.
 
+Force (ADR 013): at each step end the world drains every wrench message since the last one. The
+newest finite reading is the sample's force; the scorer's rule over the drained readings,
+continued from the last reading of the step before, is its `force_over_limit_s`.
+
 Stops (ADR 012): the goal's state is checked when the world is built and on every poll while a
 step waits, so a cancel stops the run within one step (`goal_cancel_requested`, `goal_aborted`,
 `node_deactivated`). A node call that raises during a step stops it as `node_error`; its text is
@@ -18,7 +22,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from adapters.aic.convert import Pose, motion_command, plug_to_port_mm, tared_magnitude
+from adapters.aic.convert import Pose, motion_command, plug_to_port_mm
+from adapters.aic.force import TaredWrench, time_over_limit
 from adapters.aic.node import NodePort
 from cellrt.executor.runner import STEP_TOLERANCE_S
 from cellrt.runtime.task import Task
@@ -78,6 +83,8 @@ class AicWorld:
         self._stall_wall_s = stall_wall_s
         self._poll_wall_s = poll_wall_s
         self._hold_failed = False
+        self._last_reading: TaredWrench | None = None  # for the pair across a step boundary
+        self._newest: TaredWrench | None = None  # the newest finite reading
         try:
             self._check_goal()  # fail fast, before reading anything else
             self._sim_s = node.sim_now_s()
@@ -180,19 +187,26 @@ class AicWorld:
     def _read_signals(self) -> Signals:
         g = self._geometry
         height_mm, (dx, dy) = plug_to_port_mm(g.port, g.plug)
-        wrench = self._node.latest_wrench()
-        state = self._node.controller_state()
+        drained = self._node.drain_wrenches()
+        # After a drop the readings before the first kept one are gone: pairing it with the
+        # previous step's last reading would count the whole gap as time over the limit.
+        previous = self._last_reading if drained.dropped == 0 else None
+        over_s = time_over_limit(previous, drained.readings)
+        if drained.readings:
+            self._last_reading = drained.readings[-1]
+        # A reading with a NaN or an infinity never becomes the sample (the log rejects it);
+        # it still counts in the scorer's sum above, as it does in the scorer.
+        self._newest = next((r for r in reversed(drained.readings) if r.finite), self._newest)
+        newest = self._newest
+        valid = newest is not None and abs(self._sim_s - newest.stamp_s) <= WRENCH_FRESH_S + 1e-9
         zero = (0.0, 0.0, 0.0)
-        valid = False
-        torque = 0.0
-        if wrench is not None and state is not None:
-            valid = abs(self._sim_s - wrench.stamp_s) <= WRENCH_FRESH_S
-            torque = tared_magnitude(wrench.torque, state.tare_torque) if valid else 0.0
         return Signals(
             height_mm=round(height_mm, 6),
             xy_offset_mm=(round(dx, 6), round(dy, 6)),
-            raw_force_n=wrench.force if wrench is not None else zero,
-            tare_offset_n=state.tare_force if state is not None else zero,
-            torque_nm=round(torque, 6),
+            raw_force_n=newest.raw_force if newest is not None else zero,
+            tare_offset_n=newest.tare_force if newest is not None else zero,
+            torque_nm=round(newest.torque_nm, 6) if valid and newest is not None else 0.0,
             wrench_valid=valid,
+            force_over_limit_s=round(over_s, 9),
+            wrench_dropped=drained.dropped,
         )

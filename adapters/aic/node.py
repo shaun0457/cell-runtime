@@ -7,9 +7,12 @@ policy body (`run.run_goal`) sees only this protocol, so it runs on any OS.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from adapters.aic.convert import MotionCommand, Pose, Vec3
+
+if TYPE_CHECKING:
+    from adapters.aic.force import WrenchDrain
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,10 @@ class NodePort(Protocol):
         """`frame` in the base frame from TF, or None while it is not available."""
         ...
 
-    def latest_wrench(self) -> WrenchReading | None: ...
+    def drain_wrenches(self) -> WrenchDrain:
+        """Every wrench message since the last drain, tared with the tare newest at its arrival
+        (`force.WrenchFeed`), oldest first, and how many the bounded buffer dropped."""
+        ...
 
     def controller_state(self) -> ControllerSnapshot | None: ...
 

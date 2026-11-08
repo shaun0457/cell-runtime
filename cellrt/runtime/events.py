@@ -14,10 +14,11 @@ Outcome = Literal["success", "failed", "aborted"]
 # The version of the event payloads a run was written with, recorded on `run_started`. Version 1
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
-# `run_started.geometry_source`; 5 added `hold_checked`. Bump it when a payload changes shape
+# `run_started.geometry_source`; 5 added `hold_checked`; 6 added
+# `signal_sampled.wrench_dropped`. Bump it when a payload changes shape
 # (a test hashes every payload's schema per version), and keep older rows readable: new fields
 # get defaults.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class _Payload(BaseModel):
@@ -80,6 +81,9 @@ class SignalSampled(_Payload):
     # faster than it samples (AIC); None in the mock and in older logs (the step counts whole).
     # Never negative or NaN: either would make the live fold and its replay disagree.
     force_over_limit_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    # F/T readings the world had to drop in this step because its buffer was full (AIC); None
+    # in the mock and in older logs.
+    wrench_dropped: int | None = Field(default=None, ge=0)
 
 
 class SkillStarted(_Payload):
