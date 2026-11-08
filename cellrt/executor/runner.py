@@ -42,6 +42,8 @@ async def run_task(
             await _finish(env)
             if root.status == Status.SUCCESS:
                 return "success", "task complete"
+            if crashed := _raised(root):
+                return "aborted", crashed
             return "failed", _failure_reason(root)
         await drain(env)
         env.world.step(env.period_s)
@@ -115,6 +117,14 @@ def _record_status_changes(
         if statuses.get(id(node), Status.INVALID.value) != status:
             statuses[id(node)] = status
             env.recorder.emit(BtNodeChanged(node=node.name, status=status))
+
+
+def _raised(root: py_trees.behaviour.Behaviour) -> str | None:
+    """Why the run is aborted if a skill raised, else None."""
+    for node in root.iterate():
+        if isinstance(node, SkillBehaviour) and node.error:
+            return f"{node.skill.name} raised {node.error}"
+    return None
 
 
 def _failure_reason(root: py_trees.behaviour.Behaviour) -> str:

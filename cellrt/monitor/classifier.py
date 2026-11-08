@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
 
@@ -23,6 +23,10 @@ class FailureClass(StrEnum):
     TIMEOUT = "TIMEOUT"
     SENSOR_DROPOUT = "SENSOR_DROPOUT"
     UNKNOWN = "UNKNOWN"
+
+
+# Verdicts about safety: they override a skill's own "done" on the same tick.
+SAFETY_CLASSES = frozenset({FailureClass.SENSOR_DROPOUT, FailureClass.FORCE_LIMIT})
 
 
 @dataclass(frozen=True)
@@ -49,12 +53,22 @@ class MonitorConfig:
     stall_progress_mm: float = 0.2
     stall_window_s: float = 1.0
 
+    def as_dict(self) -> dict[str, object]:
+        """Plain, ordered values, for `config_hash`."""
+        return {
+            f.name: sorted(v) if isinstance(v := getattr(self, f.name), frozenset) else v
+            for f in fields(self)
+        }
+
 
 class Monitor:
     """Watches the signals of the running skill and returns a verdict once a rule matches.
 
-    The window covers only the current skill (`reset` clears it) and holds at most as many samples
-    as the longest rule needs.
+    Two bounded windows, each as long as its longest rule:
+    - safety (sensor validity, force limit) runs across skill boundaries, the way the AIC force
+      penalty counts time; it restarts after a safety verdict, so the skill that handles it gets
+      the full duration again;
+    - insertion (progress, XY) covers only the current skill (`reset` clears it).
     """
 
     def __init__(self, period_s: float, config: MonitorConfig | None = None) -> None:
@@ -65,9 +79,8 @@ class Monitor:
         self._stuck_n = self._held(c.stuck_window_s)
         self._pose_n = self._held(c.pose_error_s)
         self._stall_n = self._held(c.stall_window_s)
-        self._window: deque[Signals] = deque(
-            maxlen=max(self._dropout_n, self._force_n, self._stuck_n, self._pose_n, self._stall_n)
-        )
+        self._safety: deque[Signals] = deque(maxlen=max(self._dropout_n, self._force_n))
+        self._window: deque[Signals] = deque(maxlen=max(self._stuck_n, self._pose_n, self._stall_n))
         self._skill = ""
 
     def _held(self, seconds: float, *, strictly_longer: bool = False) -> int:
@@ -85,82 +98,114 @@ class Monitor:
         return round((samples - 1) * self._period_s, 6)
 
     def buffered(self) -> int:
-        """Samples currently held."""
-        return len(self._window)
+        """Samples currently held, in both windows."""
+        return len(self._safety) + len(self._window)
 
     def reset(self, skill: str) -> None:
         self._skill = skill
         self._window.clear()
 
     def observe(self, signals: Signals) -> Verdict | None:
-        self._window.append(signals)
-        waiting = self._skill in self.config.sensor_wait_skills
-        if not waiting and self._holds(lambda s: not s.wrench_valid, self._dropout_n):
-            return Verdict(
-                FailureClass.SENSOR_DROPOUT,
-                rule="wrench_invalid",
-                evidence={"invalid_s": self._span(self._dropout_n)},
-            )
-        c = self.config
-        if self._holds(lambda s: s.wrench_valid and s.force_n > c.force_limit_n, self._force_n):
-            return Verdict(
-                FailureClass.FORCE_LIMIT,
-                rule="force_over_limit",
-                evidence={
-                    "min_force_n": min(s.force_n for s in list(self._window)[-self._force_n :]),
-                    "limit_n": c.force_limit_n,
-                    "over_s": self._span(self._force_n),
-                },
-            )
-        if self._skill in c.insert_skills:
-            return self._insertion_verdict(signals)
-        return None
+        """The verdict for this sample, or None.
 
-    def _insertion_verdict(self, s: Signals) -> Verdict | None:
+        Every rule is checked, in priority order; the first match is the verdict and the others
+        are named in its evidence (`also_matched`).
+        """
+        self._safety.append(signals)
+        self._window.append(signals)
+        rules: list[Callable[[Signals], Verdict | None]] = [self._dropout, self._force_limit]
+        if self._skill in self.config.insert_skills:
+            rules += [self._stuck, self._pose_error, self._stalled]
+        matched = [v for rule in rules if (v := rule(signals))]
+        if not matched:
+            return None
+        verdict, *others = matched
+        if verdict.failure_class in SAFETY_CLASSES:
+            self._safety.clear()  # the skill that handles it gets the full duration again
+        if others:
+            evidence = {**verdict.evidence, "also_matched": [v.rule for v in others]}
+            verdict = Verdict(verdict.failure_class, verdict.rule, evidence)
+        return verdict
+
+    def _dropout(self, s: Signals) -> Verdict | None:
+        if self._skill in self.config.sensor_wait_skills:
+            return None
+        if not self._holds(lambda x: not x.wrench_valid, self._dropout_n, self._safety):
+            return None
+        return Verdict(
+            FailureClass.SENSOR_DROPOUT,
+            rule="wrench_invalid",
+            evidence={"invalid_s": self._span(self._dropout_n)},
+        )
+
+    def _force_limit(self, s: Signals) -> Verdict | None:
+        limit = self.config.force_limit_n
+        if not self._holds(
+            lambda x: x.wrench_valid and x.force_n > limit, self._force_n, self._safety
+        ):
+            return None
+        return Verdict(
+            FailureClass.FORCE_LIMIT,
+            rule="force_over_limit",
+            evidence={
+                "min_force_n": min(x.force_n for x in list(self._safety)[-self._force_n :]),
+                "limit_n": limit,
+                "over_s": self._span(self._force_n),
+            },
+        )
+
+    def _stuck(self, s: Signals) -> Verdict | None:
         c = self.config
         progress = self._progress(self._stuck_n)
-        if (
+        if not (
             progress is not None
             and progress < c.stuck_progress_mm
             and s.wrench_valid
             and s.force_n > c.stuck_force_n
             and s.xy_error_mm <= c.pose_tolerance_mm
         ):
-            return Verdict(
-                FailureClass.INSERT_STUCK,
-                rule="stuck_under_force",
-                evidence={
-                    "force_n": s.force_n,
-                    "progress_mm": round(progress, 6),
-                    "window_s": self._span(self._stuck_n),
-                    "xy_error_mm": round(s.xy_error_mm, 6),
-                },
-            )
-        if self._holds(lambda x: x.xy_error_mm > c.pose_tolerance_mm, self._pose_n):
-            return Verdict(
-                FailureClass.POSE_ERROR,
-                rule="xy_off_during_insert",
-                evidence={
-                    "xy_error_mm": round(s.xy_error_mm, 6),
-                    "tolerance_mm": c.pose_tolerance_mm,
-                    "held_s": self._span(self._pose_n),
-                },
-            )
+            return None
+        return Verdict(
+            FailureClass.INSERT_STUCK,
+            rule="stuck_under_force",
+            evidence={
+                "force_n": s.force_n,
+                "progress_mm": round(progress, 6),
+                "window_s": self._span(self._stuck_n),
+                "xy_error_mm": round(s.xy_error_mm, 6),
+            },
+        )
+
+    def _pose_error(self, s: Signals) -> Verdict | None:
+        tolerance = self.config.pose_tolerance_mm
+        if not self._holds(lambda x: x.xy_error_mm > tolerance, self._pose_n):
+            return None
+        return Verdict(
+            FailureClass.POSE_ERROR,
+            rule="xy_off_during_insert",
+            evidence={
+                "xy_error_mm": round(s.xy_error_mm, 6),
+                "tolerance_mm": tolerance,
+                "held_s": self._span(self._pose_n),
+            },
+        )
+
+    def _stalled(self, s: Signals) -> Verdict | None:
+        """Stalled during insertion; the verdict only when no rule before it explains why."""
         stalled = self._progress(self._stall_n)
-        if stalled is not None and stalled < c.stall_progress_mm:
-            # Stalled, but no rule above explains why.
-            return Verdict(
-                FailureClass.UNKNOWN,
-                rule="insert_stalled",
-                evidence={
-                    "progress_mm": round(stalled, 6),
-                    "window_s": self._span(self._stall_n),
-                    "force_n": s.force_n,
-                    "torque_nm": s.torque_nm,
-                    "xy_error_mm": round(s.xy_error_mm, 6),
-                },
-            )
-        return None
+        if stalled is None or stalled >= self.config.stall_progress_mm:
+            return None
+        return Verdict(
+            FailureClass.UNKNOWN,
+            rule="insert_stalled",
+            evidence={
+                "progress_mm": round(stalled, 6),
+                "window_s": self._span(self._stall_n),
+                "force_n": s.force_n,
+                "torque_nm": s.torque_nm,
+                "xy_error_mm": round(s.xy_error_mm, 6),
+            },
+        )
 
     def _progress(self, samples: int) -> float | None:
         """How far the plug went down over the last `samples` samples (None if too few yet)."""
@@ -168,10 +213,16 @@ class Monitor:
             return None
         return self._window[-samples].height_mm - self._window[-1].height_mm
 
-    def _holds(self, condition: Callable[[Signals], bool], samples: int) -> bool:
-        if len(self._window) < samples:
+    def _holds(
+        self,
+        condition: Callable[[Signals], bool],
+        samples: int,
+        window: deque[Signals] | None = None,
+    ) -> bool:
+        window = self._window if window is None else window
+        if len(window) < samples:
             return False
-        recent = list(self._window)[-samples:]
+        recent = list(window)[-samples:]
         return all(condition(s) for s in recent)
 
     def classify_timeout(self, elapsed_s: float, timeout_s: float) -> Verdict:

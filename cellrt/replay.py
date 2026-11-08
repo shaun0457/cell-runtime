@@ -60,6 +60,7 @@ def describe(event: Event) -> str:
             return (
                 f"{p.skill} {p.failure_class} -> {p.action} "
                 f"(class {p.count_for_class}, total {p.count_total})"
+                + (" [class from skill]" if p.source == "skill" else "")
             )
         case BtNodeChanged() as p:
             return f"{p.node} -> {p.status}"

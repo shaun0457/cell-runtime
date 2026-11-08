@@ -105,12 +105,54 @@ persistence, and a yaw mismatch is not recovered in B at all.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the 2026-11-08 grilling session. Shaun rewrites Decision and Why in
+his own words, then sets Status to accepted. -->
+
+- **Where.** A custom composite, `Recovering`, wraps each task step. The plan table is data in
+  `RecoveryConfig`.
+- **What runs again.** A plan runs its helper skills, then the failed skill again, then the rest
+  of the step. Each helper brings the plug to a state it can start from (Align first rises to
+  hover height, Retract backs out to a fixed height); recovery is not a rewind of the program.
+- **Budgets.** One budget per class plus a task total of 4, shared by all steps. The numbers are
+  hand-picked from the kickoff table and are part of `config_hash`.
+- **Retract** means "back out to 5 mm above the port", not the literal "retract 5 mm" of the
+  kickoff table.
+- **Fault persistence.** A fault triggered by the plug's state affects a seeded number of
+  attempts (1–3 in `phase0.yaml`).
+- **Inputs.** Only failures with a class are recovered (the Monitor's verdict, or a skill's own
+  class when the Monitor gave none, ADR 006). Preconditions not met, skill failures without a
+  class and exceptions are not.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+<!-- DRAFT by Claude: Shaun rewrites this in his own words, as he would explain it in an
+interview. -->
+
+Known failures get a fixed, cheap, explainable answer: the class picks the plan from a table
+that reads like the kickoff's, and an LLM is never asked to guess at a case we already know.
+
+- Rerunning the failed skill, not the whole step: a dropout during align is fixed by waiting
+  and aligning again; redoing the approach first would add motion for nothing.
+- Helpers own their start state: after a pose shift the plug rests on the port rim, so "align"
+  only works if it first rises; making each helper responsible keeps the plans simple.
+- Shared budgets give one number to state: at most 4 recoveries per task, whatever the number
+  of steps. FORCE_LIMIT gets 1 because every repeat risks another AIC force penalty.
+- Retract to a fixed height: from 8 mm deep, moving up 5 mm leaves the plug inside the port, so
+  the retry would not be a new attempt and nothing could change.
+- Seeded persistence: with permanent or one-shot faults B would recover a scenario on every
+  seed or on none, and pass^k would mean nothing. The fair challenge is "you chose 1–3, so you
+  chose B's success rate". The answer: yes, so the report states that per-scenario rates depend
+  on the mock's ranges, the claim is the gap between A and B under identical faults, and Phase 2
+  checks it in the AIC sim.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Easier: recoveries per class and in total are counted from `recovery_started`; budgets and
+  plans can be swept because they are in `config_hash`.
+- Harder: a TIMEOUT retry reruns in the same tick, so `bt_node_changed` shows no FAILURE for it;
+  read failures from `monitor_verdict` and `recovery_started`.
+- A budget spent early (a dropout during approach) is gone for later steps.
+- The half-speed rerun is only meaningful for the insert skills; a FORCE_LIMIT elsewhere (not
+  reachable in the mock) would rerun at full speed while the log records the scale.
+- A plug landing on the port rim counts as an insertion attempt.
+- Revisit the budget numbers with a sweep once the eval CLI (#9) exists.

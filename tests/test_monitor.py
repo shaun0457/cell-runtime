@@ -160,8 +160,10 @@ def test_when_several_rules_match_the_highest_priority_class_wins(case: str) -> 
 @pytest.mark.parametrize(
     ("config", "longest_samples"),
     [
-        (MonitorConfig(), 22),  # force over 20 N for more than 1.0 s: 1.05 s of samples at 20 Hz
-        (MonitorConfig(stall_window_s=3.0), 61),
+        # Safety window: force over 20 N for more than 1.0 s, 22 samples at 20 Hz.
+        # Insertion window: stalled for 1.0 s, 21 samples (61 for 3.0 s).
+        (MonitorConfig(), 22 + 21),
+        (MonitorConfig(stall_window_s=3.0), 22 + 61),
     ],
 )
 def test_the_signal_window_is_bounded_by_the_longest_rule(
@@ -187,3 +189,94 @@ def test_rule_durations_are_never_shorter_than_specified_when_the_period_does_no
     assert verdicts[:3] == [None, None, None]  # 3 samples span only 0.18 s
     assert verdicts[3] is not None
     assert verdicts[3].evidence["invalid_s"] == 0.27
+
+
+def _observe_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> list[str | None]:
+    """Classes per sample while the running skill changes (each change resets the Monitor)."""
+    monitor = Monitor(period_s=0.05)
+    classes: list[str | None] = []
+    for skill, samples in skills_and_samples:
+        monitor.reset(skill)
+        classes += [v.failure_class if (v := monitor.observe(s)) else None for s in samples]
+    return classes
+
+
+def test_a_sensor_dropout_is_timed_across_a_skill_boundary() -> None:
+    invalid = _sample(valid=False)
+
+    classes = _observe_across([("approach", [invalid] * 3), ("align", [invalid] * 2)])
+
+    assert classes == [None, None, None, None, "SENSOR_DROPOUT"]  # 5 samples span 0.2 s
+
+
+def test_force_over_the_limit_is_timed_across_a_skill_boundary() -> None:
+    pushing = _sample(force_n=25.0)
+
+    classes = _observe_across([("approach", [pushing] * 11), ("align", [pushing] * 11)])
+
+    assert classes == [None] * 21 + ["FORCE_LIMIT"]  # 22 samples span more than 1.0 s
+
+
+def test_after_a_safety_verdict_the_next_skill_gets_a_full_duration_again() -> None:
+    pushing = _sample(force_n=25.0)
+
+    classes = _observe_across([("approach", [pushing] * 22), ("retract", [pushing] * 22)])
+
+    assert classes == [None] * 21 + ["FORCE_LIMIT"] + [None] * 21 + ["FORCE_LIMIT"]
+
+
+def test_insertion_rules_never_see_samples_from_before_the_skill_started() -> None:
+    still = _sample(height_mm=5.0)
+
+    classes = _observe_across([("align", [still] * 30), ("insert_scripted", [still])])
+
+    assert classes == [None] * 31
+
+
+def test_the_monitor_config_is_used_by_the_run_and_is_part_of_the_config_hash(
+    tmp_path: Path,
+) -> None:
+    no_insertion_rules = MonitorConfig(insert_skills=frozenset())
+    with EventStore(tmp_path / "events.sqlite") as store:
+        default = store.events(run_unit(SCENARIOS["yaw_mismatch"], "A", seed=0, store=store).run_id)
+        custom_run = run_unit(
+            SCENARIOS["yaw_mismatch"], "A", seed=0, store=store, monitor=no_insertion_rules
+        )
+        custom = store.events(custom_run.run_id)
+
+    def classes(events: list) -> list[str]:
+        return [e.payload.failure_class for e in events if e.type == "monitor_verdict"]
+
+    assert classes(default) == ["UNKNOWN"]
+    assert classes(custom) == ["TIMEOUT"]  # without insertion rules the stall runs into the timeout
+    assert default[0].payload.config_hash != custom[0].payload.config_hash
+
+
+RULES = {
+    "SENSOR_DROPOUT": "wrench_invalid",
+    "FORCE_LIMIT": "force_over_limit",
+    "INSERT_STUCK": "stuck_under_force",
+    "POSE_ERROR": "xy_off_during_insert",
+    "UNKNOWN": "insert_stalled",
+}
+
+
+@pytest.mark.parametrize("case", PRIORITY_CASES)
+def test_the_evidence_names_the_other_rules_that_matched_on_the_same_sample(case: str) -> None:
+    samples, (winner, runner_up) = PRIORITY_CASES[case]
+    monitor = Monitor(period_s=0.05)
+    monitor.reset("insert_scripted")
+
+    verdict = [monitor.observe(s) for s in samples][-1]
+
+    assert verdict is not None and verdict.failure_class == winner
+    assert verdict.evidence["also_matched"] == [RULES[runner_up]]
+
+
+def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
+    monitor = Monitor(period_s=0.05)
+    monitor.reset("approach")
+
+    verdict = [monitor.observe(_sample(valid=False)) for _ in range(5)][-1]
+
+    assert verdict is not None and "also_matched" not in verdict.evidence

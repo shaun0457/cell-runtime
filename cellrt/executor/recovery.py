@@ -164,6 +164,9 @@ class Recovering(py_trees.composites.Composite):
         """The recovery plan for `node`'s failure, or None (with a failure reason) if none."""
         failure = node.failure
         skill = node.skill.name
+        if node.error:  # a bug in the skill: never recovered, the run is aborted
+            self.failure_reason = f"{skill} raised {node.error}"
+            return None
         plan = self._budget.config.plans.get(failure) if failure else None
         if failure is None or plan is None:
             why = failure or node.note
@@ -172,6 +175,8 @@ class Recovering(py_trees.composites.Composite):
         if refusal := self._budget.why_not(failure):
             self.failure_reason = f"{skill} failed: {failure} ({refusal})"
             return None
+        # Every path that sets a failure class also sets its source.
+        assert node.failure_source is not None
         count_for_class, count_total = self._budget.take(failure)
         self._env.recorder.emit(
             RecoveryStarted(
@@ -180,6 +185,7 @@ class Recovering(py_trees.composites.Composite):
                 action=plan.action,
                 count_for_class=count_for_class,
                 count_total=count_total,
+                source=node.failure_source,
             )
         )
         return plan

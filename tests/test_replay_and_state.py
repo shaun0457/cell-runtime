@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.runtime.events import Event
@@ -12,7 +14,7 @@ from cellrt.runtime.state import RunState, fold, state_at
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 from cellrt.skills.base import SkillContext, SkillResult
-from cellrt.skills.mock import Align, Approach, InsertScripted, Verify
+from cellrt.skills.mock import Align, Approach, InsertScripted, Retract, Verify, WaitSensor
 from cellrt.skills.registry import SkillRegistry
 
 
@@ -80,20 +82,24 @@ class _Exploding:
         raise ValueError("serial=SN-12345 user=shaun")
 
 
-def test_a_skill_that_raises_fails_the_run_without_leaking_the_message(
-    store: EventStore, baseline: Scenario
+@pytest.mark.parametrize("setting", ["A", "B"])
+def test_a_skill_that_raises_aborts_the_run_without_leaking_the_message(
+    store: EventStore, baseline: Scenario, setting: str
 ) -> None:
-    registry = SkillRegistry([Approach(), _Exploding(), InsertScripted(), Verify()])
+    registry = SkillRegistry(
+        [Approach(), _Exploding(), InsertScripted(), Verify(), Retract(), WaitSensor()]
+    )
 
-    result = run_unit(baseline, "A", seed=0, store=store, registry=registry)
+    result = run_unit(baseline, setting, seed=0, store=store, registry=registry)
 
     events = store.events(result.run_id)
-    assert result.outcome == "failed"
+    assert result.outcome == "aborted"  # a bug is not a failure to recover from
+    assert not any(e.type == "recovery_started" for e in events)
     align = next(
         e.payload for e in events if e.type == "skill_finished" and e.payload.skill == "align"
     )
     assert (align.ok, dict(align.detail)) == (False, {"error": "ValueError"})
-    assert events[-1].payload.reason == "align failed"
+    assert events[-1].payload.reason == "align raised ValueError"
     assert not any("SN-12345" in e.model_dump_json() for e in events)
 
 

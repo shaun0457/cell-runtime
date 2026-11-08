@@ -15,7 +15,7 @@ from typing import Any, Literal
 import py_trees
 from py_trees.common import Status
 
-from cellrt.monitor.classifier import Monitor, Verdict
+from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
 from cellrt.runtime.clock import SimClock, to_ns
 from cellrt.runtime.events import (
     MonitorVerdict,
@@ -66,9 +66,10 @@ class ExecEnv:
     monitor: Monitor = field(init=False)
     # Ground truth of injected faults, read only by the runner to record it.
     fault_source: FaultSource | None = None
+    monitor_config: MonitorConfig = field(default_factory=MonitorConfig)
 
     def __post_init__(self) -> None:
-        self.monitor = Monitor(self.period_s)
+        self.monitor = Monitor(self.period_s, self.monitor_config)
 
 
 class SkillBehaviour(py_trees.behaviour.Behaviour):
@@ -90,13 +91,17 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._started_ns = 0
         self._progress_mark = 0.0
         self.failure: str | None = None
+        self.failure_source: Literal["monitor", "skill"] | None = None
         self.note: str | None = None  # why it failed when there is no failure class
+        self.error: str | None = None  # exception type, if the skill raised (a bug, not a failure)
 
     def initialise(self) -> None:
         self._task = None
         self._progress_mark = 0.0
         self.failure = None
+        self.failure_source = None
         self.note = None
+        self.error = None
 
     def update(self) -> Status:
         if self._task is None:
@@ -108,13 +113,23 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
                 return Status.FAILURE
             self._start()
             return Status.RUNNING
+        # The Monitor is asked first, even on the tick the skill completes.
+        verdict = self._env.monitor.observe(self._env.world.signals())
         if self._task.done():
+            if verdict and (verdict.failure_class in SAFETY_CLASSES or not _succeeded(self._task)):
+                # A safety verdict overrides the skill's "done"; any verdict overrides the
+                # skill's own account of a failure. Other verdicts lose to a success.
+                self._record_verdict(verdict)
+                self._finish()
+                return Status.FAILURE
             result = self._finish()
             self.failure = result.failure
-            if not result.ok and isinstance(reason := result.detail.get("reason"), str):
-                self.note = reason
+            self.failure_source = "skill" if result.failure else None
+            if not result.ok:
+                reason = result.detail.get("reason")
+                self.note = reason if isinstance(reason, str) else "skill reported failure"
             return Status.SUCCESS if result.ok else Status.FAILURE
-        if verdict := self._env.monitor.observe(self._env.world.signals()):
+        if verdict:
             self._record_verdict(verdict)
             self._cancel("preempted")
             return Status.FAILURE
@@ -143,6 +158,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
 
     def _record_verdict(self, verdict: Verdict) -> None:
         self.failure = verdict.failure_class.value
+        self.failure_source = "monitor"
         self._env.recorder.emit(
             MonitorVerdict(
                 skill=self.skill.name,
@@ -155,7 +171,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
     def _finish(self) -> SkillResult:
         assert self._task is not None and self._task.done()
         task, self._task = self._task, None
-        result = _result_of(task)
+        result, self.error = _result_of(task)
         self._env.recorder.emit(
             SkillFinished(
                 skill=self.skill.name,
@@ -191,9 +207,19 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             self._env.recorder.emit(SkillProgress(skill=self.skill.name, fraction=fraction))
 
 
-def _result_of(task: asyncio.Task[SkillResult]) -> SkillResult:
-    """A skill that raises fails; only the exception type is recorded (its text may hold data)."""
+def _succeeded(task: asyncio.Task[SkillResult]) -> bool:
+    """Whether a finished skill task returned a successful result."""
+    return task.exception() is None and task.result().ok
+
+
+def _result_of(task: asyncio.Task[SkillResult]) -> tuple[SkillResult, str | None]:
+    """The skill's result, and the exception type if it raised.
+
+    Only the type is recorded: an exception's text may hold data. A raising skill never crashes
+    the loop; the run is aborted instead (see `executor.runner`).
+    """
     try:
-        return task.result()
-    except Exception as exc:  # any skill error becomes a failed result, never a crash
-        return SkillResult(ok=False, detail={"error": type(exc).__name__})
+        return task.result(), None
+    except Exception as exc:
+        error = type(exc).__name__
+        return SkillResult(ok=False, detail={"error": error}), error

@@ -107,6 +107,8 @@ class RecoveryStarted(_Payload):
     action: str
     count_for_class: int
     count_total: int
+    # Who classified the failure: the Monitor, or the skill itself when the Monitor gave no verdict.
+    source: Literal["monitor", "skill"] = "monitor"
 
 
 class BtNodeChanged(_Payload):
