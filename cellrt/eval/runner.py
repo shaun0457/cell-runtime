@@ -20,6 +20,7 @@ from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import Outcome, RunFinished, RunStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
+from cellrt.skills.base import Skill
 from cellrt.skills.mock import mock_registry
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.mock_world import MockParams, MockWorld
@@ -85,7 +86,7 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config_hash(scenario, setting, params, recovery, monitor),
+            config_hash=config_hash(scenario, setting, params, recovery, monitor, registry),
         )
     )
     env = ExecEnv(
@@ -116,10 +117,12 @@ def config_hash(
     params: MockParams,
     recovery: RecoveryConfig,
     monitor: MonitorConfig,
+    registry: SkillRegistry,
 ) -> str:
     """Everything that defines the run besides the seed: a changed scenario is a different run.
 
-    Recovery parameters count only for settings that recover; the Monitor runs in every setting.
+    Recovery parameters count only for settings that recover; the Monitor runs in every setting;
+    every skill counts with all its parameters, its Monitor profile included.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -127,6 +130,18 @@ def config_hash(
         "world": dataclasses.asdict(params),
         "recovery": None if setting == "A" else recovery.as_dict(),
         "monitor": monitor.as_dict(),
+        "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
     }
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]
+
+
+def _skill_config(skill: Skill) -> dict[str, object]:
+    """A skill's identity and parameters: all fields of a dataclass skill, else its contract."""
+    if dataclasses.is_dataclass(skill) and not isinstance(skill, type):
+        return {"type": type(skill).__qualname__, **dataclasses.asdict(skill)}
+    return {
+        "type": type(skill).__qualname__,
+        "timeout_s": skill.timeout_s,
+        "monitor_profile": skill.monitor_profile,
+    }

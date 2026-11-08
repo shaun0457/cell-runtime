@@ -11,7 +11,10 @@ import pytest
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.monitor.classifier import Monitor, MonitorConfig
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.store import EventStore
+from cellrt.skills.mock import Align, Approach, InsertScripted, Retract, Verify, WaitSensor
+from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import Signals
 from cellrt.world.mock_world import MockParams
 
@@ -181,7 +184,7 @@ PRIORITY_CASES = {
 
 def _classes(samples: list[Signals], config: MonitorConfig | None = None) -> list[str | None]:
     monitor = Monitor(period_s=0.05, config=config)
-    monitor.reset("insert_scripted")
+    monitor.reset("insertion")
     return [v.failure_class if (v := monitor.observe(s)) else None for s in samples]
 
 
@@ -207,7 +210,7 @@ def test_the_signal_window_is_bounded_by_the_longest_rule(
     config: MonitorConfig, longest_samples: int
 ) -> None:
     monitor = Monitor(period_s=0.05, config=config)
-    monitor.reset("insert_scripted")
+    monitor.reset("insertion")
 
     for i in range(1000):
         monitor.observe(_sample(height_mm=-0.01 * i))
@@ -219,7 +222,7 @@ def test_rule_durations_are_never_shorter_than_specified_when_the_period_does_no
     None
 ):
     monitor = Monitor(period_s=0.09)  # 0.2 s is not a whole number of 0.09 s steps
-    monitor.reset("approach")
+    monitor.reset("motion")
 
     verdicts = [monitor.observe(_sample(valid=False)) for _ in range(4)]
 
@@ -228,12 +231,15 @@ def test_rule_durations_are_never_shorter_than_specified_when_the_period_does_no
     assert verdicts[3].evidence["invalid_s"] == 0.27
 
 
-def _observe_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> list[str | None]:
-    """Classes per sample while the running skill changes (each change resets the Monitor)."""
+def _observe_across(
+    profiles_and_samples: list[tuple[MonitorProfile, list[Signals]]],
+) -> list[str | None]:
+    """Classes per sample while the running skill changes (each change resets the Monitor);
+    each skill is given by the Monitor profile it declares."""
     monitor = Monitor(period_s=0.05)
     classes: list[str | None] = []
-    for skill, samples in skills_and_samples:
-        monitor.reset(skill)
+    for profile, samples in profiles_and_samples:
+        monitor.reset(profile)
         classes += [v.failure_class if (v := monitor.observe(s)) else None for s in samples]
     return classes
 
@@ -241,7 +247,7 @@ def _observe_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> list
 def test_a_sensor_dropout_is_timed_across_a_skill_boundary() -> None:
     invalid = _sample(valid=False)
 
-    classes = _observe_across([("approach", [invalid] * 3), ("align", [invalid] * 2)])
+    classes = _observe_across([("motion", [invalid] * 3), ("motion", [invalid] * 2)])
 
     assert classes == [None, None, None, None, "SENSOR_DROPOUT"]  # 5 samples span 0.2 s
 
@@ -249,11 +255,11 @@ def test_a_sensor_dropout_is_timed_across_a_skill_boundary() -> None:
 PUSHING, LIGHT = _sample(force_n=25.0), _sample(force_n=5.0)
 
 
-def _verdicts_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> list:
+def _verdicts_across(profiles_and_samples: list[tuple[MonitorProfile, list[Signals]]]) -> list:
     monitor = Monitor(period_s=0.05)
     verdicts = []
-    for skill, samples in skills_and_samples:
-        monitor.reset(skill)
+    for profile, samples in profiles_and_samples:
+        monitor.reset(profile)
         verdicts += [monitor.observe(s) for s in samples]
     return verdicts
 
@@ -261,7 +267,7 @@ def _verdicts_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> lis
 def test_time_over_the_force_limit_is_summed_over_the_task_like_the_aic_penalty() -> None:
     # 0.3 s over, 0.5 s under, 0.2 s over in the next skill: never 0.5 s in a row.
     verdicts = _verdicts_across(
-        [("approach", [PUSHING] * 6 + [LIGHT] * 10), ("align", [PUSHING] * 4)]
+        [("motion", [PUSHING] * 6 + [LIGHT] * 10), ("motion", [PUSHING] * 4)]
     )
 
     assert [v and v.failure_class for v in verdicts] == [None] * 19 + ["FORCE_LIMIT"]
@@ -269,7 +275,7 @@ def test_time_over_the_force_limit_is_summed_over_the_task_like_the_aic_penalty(
 
 
 def test_after_the_trigger_any_further_force_over_the_limit_is_stopped_at_once() -> None:
-    verdicts = _verdicts_across([("approach", [PUSHING] * 10), ("align", [LIGHT] * 3 + [PUSHING])])
+    verdicts = _verdicts_across([("motion", [PUSHING] * 10), ("motion", [LIGHT] * 3 + [PUSHING])])
 
     assert [v and v.failure_class for v in verdicts] == [None] * 9 + ["FORCE_LIMIT"] + [
         None
@@ -277,9 +283,9 @@ def test_after_the_trigger_any_further_force_over_the_limit_is_stopped_at_once()
     assert verdicts[-1].evidence["over_s"] == 0.55
 
 
-def test_a_retract_is_not_preempted_for_force_but_its_time_over_the_limit_still_counts() -> None:
+def test_an_unloading_skill_is_not_preempted_for_force_but_its_time_still_counts() -> None:
     verdicts = _verdicts_across(
-        [("approach", [PUSHING] * 10), ("retract", [PUSHING] * 5), ("align", [PUSHING])]
+        [("motion", [PUSHING] * 10), ("unload", [PUSHING] * 5), ("motion", [PUSHING])]
     )
 
     assert [v and v.failure_class for v in verdicts][10:] == [None] * 5 + ["FORCE_LIMIT"]
@@ -289,7 +295,7 @@ def test_a_retract_is_not_preempted_for_force_but_its_time_over_the_limit_still_
 def test_after_a_dropout_verdict_the_next_skill_gets_the_full_duration_again() -> None:
     invalid = _sample(valid=False)
 
-    classes = _observe_across([("approach", [invalid] * 5), ("wait_free", [invalid] * 5)])
+    classes = _observe_across([("motion", [invalid] * 5), ("motion", [invalid] * 5)])
 
     assert classes == [None] * 4 + ["SENSOR_DROPOUT"] + [None] * 4 + ["SENSOR_DROPOUT"]
 
@@ -297,19 +303,40 @@ def test_after_a_dropout_verdict_the_next_skill_gets_the_full_duration_again() -
 def test_insertion_rules_never_see_samples_from_before_the_skill_started() -> None:
     still = _sample(height_mm=5.0)
 
-    classes = _observe_across([("align", [still] * 30), ("insert_scripted", [still])])
+    classes = _observe_across([("motion", [still] * 30), ("insertion", [still])])
 
     assert classes == [None] * 31
 
 
-def test_the_monitor_config_is_used_by_the_run_and_is_part_of_the_config_hash(
+def test_a_skill_waiting_for_the_sensor_is_not_preempted_for_a_dropout() -> None:
+    invalid = _sample(valid=False)
+
+    classes = _observe_across([("sensor_wait", [invalid] * 10), ("motion", [invalid] * 5)])
+
+    # The wait itself is never preempted; the dropout window still runs across skills, so the
+    # next skill is preempted on its first sample if the sensor is still out.
+    assert classes == [None] * 10 + ["SENSOR_DROPOUT"] + [None] * 4
+
+
+def test_only_insertion_skills_get_the_insertion_rules() -> None:
+    stalled = [_sample(xy_mm=2.0)] * 21  # off in XY and not descending for 1 s
+
+    assert _observe_across([("motion", stalled)]) == [None] * 21
+    assert _observe_across([("insertion", stalled)])[4] == "POSE_ERROR"
+
+
+def test_the_profile_a_skill_declares_is_used_by_the_run_and_is_part_of_the_config_hash(
     tmp_path: Path,
 ) -> None:
-    no_insertion_rules = MonitorConfig(insert_skills=frozenset())
+    # The same insert skill, declared as plain motion: the Monitor no longer applies insertion
+    # rules to it.
+    as_motion = SkillRegistry(
+        [Approach(), Align(), InsertScripted(monitor_profile="motion"), Verify(), Retract()]
+    )
     with EventStore(tmp_path / "events.sqlite") as store:
         default = store.events(run_unit(SCENARIOS["yaw_mismatch"], "A", seed=0, store=store).run_id)
         custom_run = run_unit(
-            SCENARIOS["yaw_mismatch"], "A", seed=0, store=store, monitor=no_insertion_rules
+            SCENARIOS["yaw_mismatch"], "A", seed=0, store=store, registry=as_motion
         )
         custom = store.events(custom_run.run_id)
 
@@ -334,7 +361,7 @@ RULES = {
 def test_the_evidence_names_the_other_rules_that_matched_on_the_same_sample(case: str) -> None:
     samples, (winner, runner_up) = PRIORITY_CASES[case]
     monitor = Monitor(period_s=0.05)
-    monitor.reset("insert_scripted")
+    monitor.reset("insertion")
 
     verdict = [monitor.observe(s) for s in samples][-1]
 
@@ -344,7 +371,7 @@ def test_the_evidence_names_the_other_rules_that_matched_on_the_same_sample(case
 
 def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
     monitor = Monitor(period_s=0.05)
-    monitor.reset("approach")
+    monitor.reset("motion")
 
     verdict = [monitor.observe(_sample(valid=False)) for _ in range(5)][-1]
 
@@ -355,3 +382,21 @@ def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
 def test_the_force_trigger_must_fall_inside_the_aic_budget(trigger_s: float) -> None:
     with pytest.raises(ValueError, match="force_trigger_s"):
         Monitor(period_s=0.05, config=MonitorConfig(force_trigger_s=trigger_s))
+
+
+def test_a_misspelt_monitor_profile_is_refused_when_the_skill_is_registered() -> None:
+    with pytest.raises(ValueError, match="monitor_profile"):
+        SkillRegistry([InsertScripted(monitor_profile="insert")])  # type: ignore[arg-type]
+
+
+def test_skill_parameters_are_part_of_the_config_hash(tmp_path: Path) -> None:
+    slow = SkillRegistry(
+        [Approach(), Align(), InsertScripted(speed_mm_s=1.0), Verify(), Retract(), WaitSensor()]
+    )  # the default registry but for one skill parameter
+    with EventStore(tmp_path / "events.sqlite") as store:
+        default = store.events(run_unit(SCENARIOS["baseline"], "A", seed=0, store=store).run_id)
+        custom = store.events(
+            run_unit(SCENARIOS["baseline"], "A", seed=0, store=store, registry=slow).run_id
+        )
+
+    assert default[0].payload.config_hash != custom[0].payload.config_hash

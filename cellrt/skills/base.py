@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.clock import Clock
 from cellrt.runtime.state import RunState
 from cellrt.world.base import SkillWorld
@@ -42,6 +43,11 @@ class Skill(Protocol):
 
     @property
     def timeout_s(self) -> float: ...
+
+    @property
+    def monitor_profile(self) -> MonitorProfile:
+        """Which Monitor rules apply while the skill runs (see `MonitorProfile`)."""
+        ...
 
     def preconditions(self, state: RunState) -> bool: ...
 

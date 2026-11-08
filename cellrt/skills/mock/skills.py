@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState
 from cellrt.skills.base import SkillContext, SkillResult
 from cellrt.world.base import HOLD, Velocity
@@ -18,6 +19,7 @@ class Approach:
     """Descend to a hover height above the port."""
 
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
     hover_mm: float = 5.0
     speed_mm_s: float = 20.0
@@ -48,6 +50,7 @@ class Align:
     a plug below it (resting on the rim after a missed insertion) first rises back up."""
 
     name: str = "align"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
     gain_per_s: float = 2.0
     speed_mm_s: float = 5.0
@@ -89,6 +92,7 @@ class Retract:
     """Pull the plug back out to a height above the port."""
 
     name: str = "retract"
+    monitor_profile: MonitorProfile = "unload"
     timeout_s: float = 4.0
     to_height_mm: float = 5.0
     speed_mm_s: float = 10.0
@@ -114,6 +118,7 @@ class WaitSensor:
     """Hold still until the force/torque sensor reports valid data again, for at most a while."""
 
     name: str = "wait_sensor"
+    monitor_profile: MonitorProfile = "sensor_wait"
     timeout_s: float = 12.0  # a backstop: the wait itself is bounded by max_wait_s
     max_wait_s: float = 2.0
     valid_samples: int = 3
@@ -147,6 +152,7 @@ class InsertScripted:
     """Descend at a fixed speed until the plug reaches the expected depth (CheatCode-like)."""
 
     name: str = "insert_scripted"
+    monitor_profile: MonitorProfile = "insertion"
     timeout_s: float = 15.0
     speed_mm_s: float = 4.0
     expected_depth_mm: float = 8.0
@@ -175,6 +181,7 @@ class Verify:
     """Hold still briefly, then check the plug is seated at full depth."""
 
     name: str = "verify"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 2.0
     hold_samples: int = 10
     expected_depth_mm: float = 8.0

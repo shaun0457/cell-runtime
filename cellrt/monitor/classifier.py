@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
 
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.world.base import Signals
 
 
@@ -38,12 +39,6 @@ class Verdict:
 
 @dataclass(frozen=True)
 class MonitorConfig:
-    # Skills during which the insertion rules apply.
-    insert_skills: frozenset[str] = frozenset({"insert_scripted", "insert_act"})
-    # Skills that wait for the sensor to come back; the dropout rule does not apply to them.
-    sensor_wait_skills: frozenset[str] = frozenset({"wait_sensor"})
-    # Skills that unload the plug: force over the limit still counts but does not preempt them.
-    force_exempt_skills: frozenset[str] = frozenset({"retract"})
     dropout_s: float = 0.2
     force_limit_n: float = 20.0
     # AIC penalises once the time over the limit, summed over the task, exceeds this.
@@ -59,11 +54,8 @@ class MonitorConfig:
     stall_window_s: float = 1.0
 
     def as_dict(self) -> dict[str, object]:
-        """Plain, ordered values, for `config_hash`."""
-        return {
-            f.name: sorted(v) if isinstance(v := getattr(self, f.name), frozenset) else v
-            for f in fields(self)
-        }
+        """Plain values, for `config_hash`."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
 class Monitor:
@@ -91,7 +83,7 @@ class Monitor:
         self._stall_n = self._held(c.stall_window_s)
         self._safety: deque[Signals] = deque(maxlen=self._dropout_n)
         self._window: deque[Signals] = deque(maxlen=max(self._stuck_n, self._pose_n, self._stall_n))
-        self._skill = ""
+        self._profile: MonitorProfile = "motion"
 
     def _held(self, seconds: float) -> int:
         """Samples whose span (first to last) is at least `seconds`.
@@ -108,8 +100,9 @@ class Monitor:
         """Samples currently held, in both windows."""
         return len(self._safety) + len(self._window)
 
-    def reset(self, skill: str) -> None:
-        self._skill = skill
+    def reset(self, profile: MonitorProfile) -> None:
+        """A new skill starts, with the profile it declares."""
+        self._profile = profile
         self._window.clear()
 
     def observe(self, signals: Signals) -> Verdict | None:
@@ -123,7 +116,7 @@ class Monitor:
         if signals.wrench_valid and signals.force_n > self.config.force_limit_n:
             self._over_limit += 1
         rules: list[Callable[[Signals], Verdict | None]] = [self._dropout, self._force_limit]
-        if self._skill in self.config.insert_skills:
+        if self._profile == "insertion":
             rules += [self._stuck, self._pose_error, self._stalled]
         matched = [v for rule in rules if (v := rule(signals))]
         if not matched:
@@ -137,7 +130,7 @@ class Monitor:
         return verdict
 
     def _dropout(self, s: Signals) -> Verdict | None:
-        if self._skill in self.config.sensor_wait_skills:
+        if self._profile == "sensor_wait":
             return None
         if not self._holds(lambda x: not x.wrench_valid, self._dropout_n, self._safety):
             return None
@@ -151,7 +144,7 @@ class Monitor:
         c = self.config
         over_s = round(self._over_limit * self._period_s, 6)
         if (
-            self._skill in c.force_exempt_skills
+            self._profile == "unload"
             or not (s.wrench_valid and s.force_n > c.force_limit_n)
             or over_s < c.force_trigger_s - 1e-9
         ):

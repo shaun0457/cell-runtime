@@ -31,15 +31,17 @@ classified by the same Monitor (`classify_timeout`). `MonitorConfig` is passed t
 is part of `config_hash`. A class a skill returns itself is used only without a verdict and is
 marked `source="skill"` on `recovery_started`; a skill that raises aborts the run. Each scenario injects one fault; how the
 world combines several insertion faults (an obstacle inside a tight section) is not modelled.
-Rules, checked in priority order:
+Each skill declares a `monitor_profile` (`motion`, `insertion`, `sensor_wait`, `unload`); the
+profile, not the skill's name, decides which rules apply; the registry refuses an unknown
+profile, and every registered skill, with its parameters and profile, is part of `config_hash`. Rules, checked in priority order:
 
 | Class | Rule | Applies to |
 |---|---|---|
-| SENSOR_DROPOUT | wrench invalid for 0.2 s | every skill but `wait_sensor` |
-| FORCE_LIMIT | tared force > 20 N now, and the time over 20 N summed over the task has reached 0.5 s (AIC penalises above 1.0 s) | every skill but `retract` (its time still counts) |
-| INSERT_STUCK | < 0.2 mm descent over the last 0.5 s, with force > 10 N and XY within 1.0 mm at the current sample | insert skills |
-| POSE_ERROR | XY error > 1.0 mm for 0.2 s | insert skills |
-| UNKNOWN | < 0.2 mm descent over 1.0 s, no rule above matched | insert skills |
+| SENSOR_DROPOUT | wrench invalid for 0.2 s | every profile but `sensor_wait` (`wait_sensor`) |
+| FORCE_LIMIT | tared force > 20 N now, and the time over 20 N summed over the task has reached 0.5 s (AIC penalises above 1.0 s) | every profile but `unload` (`retract`; its time still counts) |
+| INSERT_STUCK | < 0.2 mm descent over the last 0.5 s, with force > 10 N and XY within 1.0 mm at the current sample | `insertion` profile |
+| POSE_ERROR | XY error > 1.0 mm for 0.2 s | `insertion` profile |
+| UNKNOWN | < 0.2 mm descent over 1.0 s, no rule above matched | `insertion` profile |
 
 "Held for D" means the samples from the first to the last span at least D, rounded up to whole
 periods, so the verdict lands D after onset and never earlier;
@@ -53,7 +55,7 @@ from hover height to the port surface counts as progress.
 #### Option A — the Monitor only; a skill reports ok / not ok
 - Pros: one place to read and test the rules; classification accuracy measures one component;
   skills stay simple and replaceable (the ACT skill cannot classify its own failures anyway).
-- Cons: the Monitor needs to know which skills insert (a name list today); a skill's own
+- Cons: the Monitor needs to know which skills insert (each skill declares a profile); a skill's own
   knowledge of why it failed is not used.
 
 #### Option B — skills return a class; the Monitor only adds timeouts
@@ -265,7 +267,6 @@ the planner adds over B. Phase 2 tests this against failures we did not design.
 - Known misreads: a stalled controller during insertion reads as UNKNOWN, not TIMEOUT; an
   insert skill moving up for more than 1 s reads as stalled; several insertion faults at once
   are not modelled.
-- Implementation status: everything above is in place except `monitor_profile`, which lands
-  with #8. The 20-seed A/B sweep gave the same success counts
+- Implementation status: everything above is in place. The 20-seed A/B sweep gave the same success counts
   before and after the cross-skill windows, the Monitor-before-done change, taring and the
   summed force rule.

@@ -9,6 +9,7 @@ import pytest
 
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.events import Event
 from cellrt.runtime.state import RunState, fold, state_at
 from cellrt.runtime.store import EventStore
@@ -72,6 +73,7 @@ def test_rerunning_a_unit_in_the_same_store_starts_a_new_attempt(
 @dataclass(frozen=True)
 class _Exploding:
     name: str = "align"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -106,6 +108,7 @@ def test_a_skill_that_raises_aborts_the_run_without_leaking_the_message(
 @dataclass(frozen=True)
 class _FourSteps:
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:

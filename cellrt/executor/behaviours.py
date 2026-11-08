@@ -203,7 +203,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         attempt = env.recorder.state.skill_attempts.get(self.skill.name, 0) + 1
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
         self._started_ns = env.clock.now_ns()
-        env.monitor.reset(self.skill.name)
+        env.monitor.reset(self.skill.monitor_profile)
         skill = self.skill.name
         self._lease = CommandLease(
             on_dropped=lambda: env.recorder.emit(CommandDropped(skill=skill, attempt=attempt))

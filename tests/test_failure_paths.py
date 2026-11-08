@@ -11,6 +11,7 @@ import pytest
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.runner import DrainError
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState, fold
 from cellrt.runtime.store import EventStore
 from cellrt.skills.base import SkillContext, SkillResult
@@ -70,6 +71,7 @@ class _Probe:
 
     seen: list[set[str]] = field(default_factory=list)
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -101,6 +103,7 @@ def test_skills_reach_the_world_only_through_signals_and_commands(store: EventSt
 @dataclass(frozen=True)
 class _NeverReady:
     name: str = "align"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -129,6 +132,7 @@ def test_a_skill_whose_preconditions_fail_does_not_start(
 @dataclass(frozen=True)
 class _WaitsOnSomethingElse:
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -180,6 +184,7 @@ class _Idle:
 
     steps: int
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 60.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -242,6 +247,7 @@ class _GivesUp:
 
     failure: str | None = None
     name: str = "align"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -305,6 +311,7 @@ class _DoneDuringDropout:
 
     invalid_samples: int = 4
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
 
     def preconditions(self, state: RunState) -> bool:
@@ -356,6 +363,7 @@ class _StallsThenGivesUp:
 
     sleeps: int = 20
     name: str = "insert_scripted"
+    monitor_profile: MonitorProfile = "insertion"
     timeout_s: float = 15.0
 
     def preconditions(self, state: RunState) -> bool:

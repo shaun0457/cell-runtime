@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from cellrt.monitor.profiles import MONITOR_PROFILES
 from cellrt.skills.base import Skill
 
 
@@ -16,6 +17,12 @@ class SkillRegistry:
     def register(self, skill: Skill) -> None:
         if skill.name in self._skills:
             raise ValueError(f"skill already registered: {skill.name}")
+        # A Literal is not checked at run time; a misspelt profile would silently drop rules.
+        if skill.monitor_profile not in MONITOR_PROFILES:
+            raise ValueError(
+                f"{skill.name}: unknown monitor_profile {skill.monitor_profile!r} "
+                f"(known: {', '.join(sorted(MONITOR_PROFILES))})"
+            )
         self._skills[skill.name] = skill
 
     def get(self, name: str) -> Skill:

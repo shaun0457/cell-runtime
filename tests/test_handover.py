@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.state import RunState
@@ -35,6 +36,7 @@ class _DescendsThenHangs:
     gives_up_moving: bool = False
     runs: list[int] = field(default_factory=list)
     name: str = "approach"
+    monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 0.5
 
     def preconditions(self, state: RunState) -> bool:
