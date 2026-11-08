@@ -59,10 +59,20 @@ class FakeNode:
     fail_transform_after_sleeps: int | None = None
     hide_frames_after_sleeps: int | None = None  # from then on no ground-truth frame is found
     stall_after_sleeps: int | None = None  # from then on sim time stops
+    plug_xy_offset_m: tuple[float, float] = (0.0, 0.0)  # where the plug hangs off the TCP axis
+    # From this much sim time after the goal's start, the connector has sprung back out: the
+    # tip reads 2 mm above the port, whatever the arm does.
+    plug_pops_out_after_s: float | None = None
+    fail_feedback: bool = False
+    feedback: list[tuple[float, str]] = field(default_factory=list)  # (sim time, message)
+    start_sim_s: float = field(init=False)
     sends: int = 0
     sent: list[MotionCommand] = field(default_factory=list)
     tcp_at_send: list[Pose] = field(default_factory=list)
     sleeps: int = 0
+
+    def __post_init__(self) -> None:
+        self.start_sim_s = self.sim_s
 
     # NodePort ---------------------------------------------------------------------------------
 
@@ -141,6 +151,11 @@ class FakeNode:
         if motion.mode == "position":
             self.tcp = Pose(position=motion.position_m, orientation=motion.orientation)
 
+    def send_feedback(self, message: str) -> None:
+        if self.fail_feedback:
+            raise RuntimeError(SECRET)
+        self.feedback.append((self.sim_s, message))
+
     # helpers ------------------------------------------------------------------------------------
 
     @property
@@ -154,4 +169,9 @@ class FakeNode:
     @property
     def plug(self) -> Pose:
         x, y, z = self.tcp.position
-        return Pose(position=(x, y, z - PLUG_BELOW_TCP_M), orientation=self.tcp.orientation)
+        dx, dy = self.plug_xy_offset_m
+        tip_z = z - PLUG_BELOW_TCP_M
+        popped = self.plug_pops_out_after_s
+        if popped is not None and self.sim_s - self.start_sim_s >= popped - 1e-9:
+            tip_z = max(tip_z, self.port.position[2] + 0.002)
+        return Pose(position=(x + dx, y + dy, tip_z), orientation=self.tcp.orientation)

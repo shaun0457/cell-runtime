@@ -36,7 +36,7 @@ def _events(store: EventStore) -> list[Event]:
     return store.events(run_id)
 
 
-def test_insert_cable_runs_approach_and_records_the_run(store: EventStore) -> None:
+def test_insert_cable_runs_the_setting_a_tree_and_records_the_run(store: EventStore) -> None:
     node = FakeNode(task=TASK)
 
     assert run_goal(node, TASK, store) is True
@@ -50,10 +50,11 @@ def test_insert_cable_runs_approach_and_records_the_run(store: EventStore) -> No
     assert started.task == TASK
     skills = [e.payload for e in events if isinstance(e.payload, SkillStarted | SkillFinished)]
     assert [(type(p).__name__, p.skill) for p in skills] == [
-        ("SkillStarted", "approach"),
-        ("SkillFinished", "approach"),
+        (kind, skill)
+        for skill in ("approach", "align", "insert_scripted", "verify")
+        for kind in ("SkillStarted", "SkillFinished")
     ]
-    assert isinstance(skills[1], SkillFinished) and skills[1].ok
+    assert all(p.ok for p in skills if isinstance(p, SkillFinished))
     samples = [e.payload for e in events if isinstance(e.payload, SignalSampled)]
     assert [s.step for s in samples] == list(range(1, len(samples) + 1))  # one per step
     assert len(samples) >= 100  # 100 approach steps of 50 ms

@@ -34,9 +34,10 @@ QOS_DEPTH = 5  # as aic_adapter subscribes to the wrench (aic_adapter.cpp:71-72)
 
 
 class RosNodePort:
-    def __init__(self, node: Any, move_robot: Any) -> None:
+    def __init__(self, node: Any, move_robot: Any, send_feedback: Any) -> None:
         self._node = node
         self._move_robot = move_robot
+        self._send_feedback = send_feedback
         goal = getattr(node, "goal_handle", None)
         readable = all(hasattr(goal, a) for a in ("status", "is_active"))
         # Without a readable handle or the node's lifecycle flag a cancel cannot be seen: the
@@ -116,6 +117,9 @@ class RosNodePort:
     def send(self, motion: convert.MotionCommand) -> None:
         stamp = self._node.get_clock().now().to_msg()
         self._move_robot(motion_update=to_motion_update(motion, stamp=stamp))
+
+    def send_feedback(self, message: str) -> None:
+        self._send_feedback(message)
 
     # callbacks ------------------------------------------------------------------------------
 

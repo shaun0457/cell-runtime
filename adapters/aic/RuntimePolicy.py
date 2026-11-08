@@ -34,7 +34,7 @@ class RuntimePolicy(Policy):
         traceback could carry upstream text. Failures are logged by exception type only."""
         port: RosNodePort | None = None
         try:
-            port = RosNodePort(self._parent_node, move_robot)
+            port = RosNodePort(self._parent_node, move_robot, send_feedback)
             self._store_path.parent.mkdir(parents=True, exist_ok=True)
             with EventStore(self._store_path) as store:
                 return run_goal(port, core_task(task), store)
