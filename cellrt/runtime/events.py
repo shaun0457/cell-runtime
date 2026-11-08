@@ -92,6 +92,16 @@ class SkillCancelled(_Payload):
     reason: Literal["terminated", "timeout", "preempted"]
 
 
+class CommandDropped(_Payload):
+    """A skill commanded the world after the executor had revoked its access (it had finished
+    or been stopped). Only the first such command per skill run is recorded; `attempt` names
+    the run that sent it, which may no longer be the latest run of that skill."""
+
+    type: Literal["command_dropped"] = "command_dropped"
+    skill: str
+    attempt: int
+
+
 class MonitorVerdict(_Payload):
     type: Literal["monitor_verdict"] = "monitor_verdict"
     skill: str
@@ -137,6 +147,7 @@ Payload = Annotated[
     | SkillProgress
     | SkillFinished
     | SkillCancelled
+    | CommandDropped
     | MonitorVerdict
     | RecoveryStarted
     | BtNodeChanged

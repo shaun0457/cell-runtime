@@ -14,7 +14,10 @@ fault label.
 Current shape: `Monitor.observe(signals)` is called on every tick of the running skill (in
 `SkillBehaviour.update`, before the done check and before the timeout check). A verdict cancels
 the skill and records `monitor_verdict` (class, rule, evidence, and `also_matched` when other
-rules held on the same sample) followed by `skill_cancelled(reason="preempted")`; on the tick a
+rules held on the same sample) followed by `skill_cancelled(reason="preempted")`. Every skill
+run commands the world through a lease the executor revokes when the skill ends or is
+stopped, then sends HOLD; a command after revocation is dropped and recorded once per run
+(`command_dropped`, with the attempt that sent it); on the tick a
 skill completes, a safety verdict (SENSOR_DROPOUT, FORCE_LIMIT) overrides a success and any
 verdict overrides the skill's own failure (`monitor_verdict`, then the skill's own
 `skill_finished`; a metric that counts `skill_finished.ok` must pair it with the verdict).
@@ -195,7 +198,8 @@ his own words, then sets Status to accepted. -->
   skill reported failure, the skill raised an exception. Only a Monitor UNKNOWN goes to the
   planner (ADR 008); an exception aborts the run.
 - **Hand-over after preemption.** One skill owns the command channel at a time. On preemption
-  or timeout the executor sends HOLD before the next skill starts. HOLD stops adding motion; it
+  or timeout, and when a skill ends on its own, the executor revokes the skill's command access
+  and sends HOLD before the next skill starts. HOLD stops adding motion; it
   does not unload force. Unloading is a recovery action (retract, ADR 007).
 - **Which skills insert** is declared by each skill (`monitor_profile`: `insertion`,
   `sensor_wait`, ...), not by a name list inside the Monitor.
@@ -261,7 +265,7 @@ the planner adds over B. Phase 2 tests this against failures we did not design.
 - Known misreads: a stalled controller during insertion reads as UNKNOWN, not TIMEOUT; an
   insert skill moving up for more than 1 s reads as stalled; several insertion faults at once
   are not modelled.
-- Implementation status: everything above is in place except the HOLD hand-over and
-  `monitor_profile`, which land with #8. The 20-seed A/B sweep gave the same success counts
+- Implementation status: everything above is in place except `monitor_profile`, which lands
+  with #8. The 20-seed A/B sweep gave the same success counts
   before and after the cross-skill windows, the Monitor-before-done change, taring and the
   summed force rule.

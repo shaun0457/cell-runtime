@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -74,20 +74,53 @@ class SkillWorld(Protocol):
     def command(self, cmd: Velocity) -> None: ...
 
 
+class CommandLease:
+    """The right of one skill run to command the world, held by the executor.
+
+    Once revoked (the skill finished or was stopped), the run's commands no longer reach the
+    world: a stopped skill cannot keep the arm moving. The first dropped command is reported
+    through `on_dropped`; later ones are dropped silently, so a runaway skill cannot flood the
+    log.
+    """
+
+    __slots__ = ("_active", "_on_dropped", "_reported")
+
+    def __init__(self, on_dropped: Callable[[], None] | None = None) -> None:
+        self._active = True
+        self._on_dropped = on_dropped
+        self._reported = False
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def revoke(self) -> None:
+        self._active = False
+
+    def dropped(self) -> None:
+        if self._on_dropped is not None and not self._reported:
+            self._reported = True
+            self._on_dropped()
+
+
 class WorldView:
     """Hands skills only `signals` and `command`, so world internals and injected-fault ground
-    truth stay out of reach."""
+    truth stay out of reach. Commands pass only while the run's lease is active."""
 
-    __slots__ = ("_world",)
+    __slots__ = ("_lease", "_world")
 
-    def __init__(self, world: World) -> None:
+    def __init__(self, world: World, lease: CommandLease) -> None:
         self._world = world
+        self._lease = lease
 
     def signals(self) -> Signals:
         return self._world.signals()
 
     def command(self, cmd: Velocity) -> None:
-        self._world.command(cmd)
+        if self._lease.active:
+            self._world.command(cmd)
+        else:
+            self._lease.dropped()
 
 
 class InjectedFault(Protocol):

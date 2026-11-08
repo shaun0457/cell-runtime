@@ -6,6 +6,7 @@ from collections.abc import Iterable, Iterator
 
 from cellrt.runtime.events import (
     BtNodeChanged,
+    CommandDropped,
     Event,
     FaultCleared,
     FaultInjected,
@@ -56,6 +57,8 @@ def describe(event: Event) -> str:
             return f"{p.skill} {verdict} {p.detail}"
         case SkillCancelled() as p:
             return f"{p.skill} ({p.reason})"
+        case CommandDropped() as p:
+            return f"{p.skill} attempt={p.attempt} commanded after its access was revoked (dropped)"
         case RecoveryStarted() as p:
             return (
                 f"{p.skill} {p.failure_class} -> {p.action} "

@@ -3,6 +3,11 @@
 On its first tick a `SkillBehaviour` starts the skill as an asyncio task and returns RUNNING.
 Later ticks return RUNNING until the task is done, then map the result to SUCCESS / FAILURE.
 If the tree interrupts the behaviour, `terminate()` cancels the task.
+
+One skill owns the command channel at a time: each run commands through its own lease, revoked
+when the skill ends or is stopped, and the executor then sends HOLD (stop adding motion;
+unloading force is a recovery action, not part of the hand-over). The next skill's first
+command replaces HOLD in the same step.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from py_trees.common import Status
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
 from cellrt.runtime.clock import SimClock, to_ns
 from cellrt.runtime.events import (
+    CommandDropped,
     MonitorVerdict,
     PreconditionFailed,
     SkillCancelled,
@@ -27,7 +33,7 @@ from cellrt.runtime.events import (
 )
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.base import Skill, SkillContext, SkillResult
-from cellrt.world.base import FaultSource, World, WorldView
+from cellrt.world.base import HOLD, CommandLease, FaultSource, World, WorldView
 
 PROGRESS_STEP = 0.25
 
@@ -88,6 +94,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._env = env
         self._params = dict(params or {})
         self._task: asyncio.Task[SkillResult] | None = None
+        self._lease: CommandLease | None = None
         self._started_ns = 0
         self._progress_mark = 0.0
         self.failure: str | None = None
@@ -154,7 +161,15 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         assert self._task is not None
         self._task.cancel()
         self._task = None
+        self._release()
         self._env.recorder.emit(SkillCancelled(skill=self.skill.name, reason=reason))
+
+    def _release(self) -> None:
+        """Revoke the run's command access and hold the arm still."""
+        if self._lease is not None:
+            self._lease.revoke()
+            self._lease = None
+        self._env.world.command(HOLD)
 
     def _record_verdict(self, verdict: Verdict) -> None:
         self.failure = verdict.failure_class.value
@@ -171,6 +186,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
     def _finish(self) -> SkillResult:
         assert self._task is not None and self._task.done()
         task, self._task = self._task, None
+        self._release()
         result, self.error = _result_of(task)
         self._env.recorder.emit(
             SkillFinished(
@@ -188,8 +204,12 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
         self._started_ns = env.clock.now_ns()
         env.monitor.reset(self.skill.name)
+        skill = self.skill.name
+        self._lease = CommandLease(
+            on_dropped=lambda: env.recorder.emit(CommandDropped(skill=skill, attempt=attempt))
+        )
         ctx = SkillContext(
-            world=WorldView(env.world),
+            world=WorldView(env.world, self._lease),
             clock=env.clock,
             period_s=env.period_s,
             progress=self._progress,
