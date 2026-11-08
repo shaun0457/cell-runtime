@@ -13,7 +13,13 @@ import py_trees
 from py_trees.common import Status
 
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
-from cellrt.runtime.events import BtNodeChanged, Outcome, SignalSampled
+from cellrt.runtime.events import (
+    BtNodeChanged,
+    FaultCleared,
+    FaultInjected,
+    Outcome,
+    SignalSampled,
+)
 from cellrt.runtime.task import Task
 
 MAX_DRAIN_YIELDS = 100
@@ -32,7 +38,7 @@ async def run_task(
         root.tick_once()
         _record_status_changes(root, statuses, env)
         if root.status in (Status.SUCCESS, Status.FAILURE):
-            await drain(env)
+            await _finish(env)
             if root.status == Status.SUCCESS:
                 return "success", "task complete"
             return "failed", _failure_reason(root)
@@ -40,11 +46,12 @@ async def run_task(
         env.world.step(env.period_s)
         env.clock.advance(env.period_s)
         step += 1
+        _record_faults(env)
         _record_signal(env, step)
         if env.clock.now() >= task.time_limit:
             root.stop(Status.INVALID)
             _record_status_changes(root, statuses, env)
-            await drain(env)
+            await _finish(env)
             return "aborted", "time limit reached"
 
 
@@ -54,7 +61,33 @@ async def drain(env: ExecEnv) -> None:
         if env.tracker.live() <= env.clock.pending_waiters():
             return
         await asyncio.sleep(0)
-    raise DrainError(f"skill tasks still runnable after {MAX_DRAIN_YIELDS} yields")
+    names = ", ".join(env.tracker.live_names())
+    raise DrainError(
+        f"skill tasks still runnable after {MAX_DRAIN_YIELDS} yields "
+        f"(they must wait only on the clock): {names}"
+    )
+
+
+async def _finish(env: ExecEnv) -> None:
+    """Drain once more and check that no skill task outlives the run."""
+    await drain(env)
+    if leftover := env.tracker.live_names():
+        raise DrainError(f"skill tasks still alive after the run ended: {', '.join(leftover)}")
+
+
+def _record_faults(env: ExecEnv) -> None:
+    if env.fault_source is None:
+        return
+    for t in env.fault_source.take_fault_transitions():
+        event_type = FaultInjected if t.active else FaultCleared
+        env.recorder.emit(
+            event_type(
+                fault_id=t.fault.fault_id,
+                kind=t.fault.kind,
+                label=str(t.fault.label),
+                params=dict(t.fault.params),
+            )
+        )
 
 
 def _record_signal(env: ExecEnv, step: int) -> None:
@@ -86,5 +119,6 @@ def _record_status_changes(
 def _failure_reason(root: py_trees.behaviour.Behaviour) -> str:
     for node in root.iterate():
         if isinstance(node, SkillBehaviour) and node.status == Status.FAILURE:
-            return f"{node.name} failed"
+            why = node.failure or node.note
+            return f"{node.name} failed: {why}" if why else f"{node.name} failed"
     return "tree failed"

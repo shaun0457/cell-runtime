@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -48,3 +49,55 @@ class World(Protocol):
     def command(self, cmd: Velocity) -> None: ...
 
     def step(self, dt: float) -> None: ...
+
+
+class SkillWorld(Protocol):
+    """The part of the world a skill may use: read sensors, send a command."""
+
+    def signals(self) -> Signals: ...
+
+    def command(self, cmd: Velocity) -> None: ...
+
+
+class WorldView:
+    """Hands skills only `signals` and `command`, so world internals and injected-fault ground
+    truth stay out of reach."""
+
+    __slots__ = ("_world",)
+
+    def __init__(self, world: World) -> None:
+        self._world = world
+
+    def signals(self) -> Signals:
+        return self._world.signals()
+
+    def command(self, cmd: Velocity) -> None:
+        self._world.command(cmd)
+
+
+class InjectedFault(Protocol):
+    @property
+    def fault_id(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def params(self) -> Mapping[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class FaultTransition:
+    """Ground truth for evaluation: a fault became active (or cleared) during the last step."""
+
+    fault: InjectedFault
+    active: bool
+
+
+class FaultSource(Protocol):
+    """A world with injected faults reports their transitions; only the runner reads them."""
+
+    def take_fault_transitions(self) -> list[FaultTransition]: ...

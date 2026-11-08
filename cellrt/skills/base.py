@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from cellrt.runtime.clock import Clock
 from cellrt.runtime.state import RunState
-from cellrt.world.base import World
+from cellrt.world.base import SkillWorld
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ ProgressFn = Callable[[float], None]
 
 @dataclass(frozen=True)
 class SkillContext:
-    world: World
+    world: SkillWorld
     clock: Clock
     period_s: float
     progress: ProgressFn

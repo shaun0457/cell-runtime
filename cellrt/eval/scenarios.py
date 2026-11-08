@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from cellrt.eval.faults import FaultSpec
 from cellrt.runtime.task import Task
 
 
@@ -16,6 +17,7 @@ class Scenario(BaseModel):
     id: str = Field(min_length=1)
     description: str = ""
     task: Task = Field(default_factory=Task)
+    faults: list[FaultSpec] = Field(default_factory=list)
 
 
 class ScenarioFile(BaseModel):

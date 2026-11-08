@@ -33,6 +33,10 @@ class SimClock:
     def now(self) -> float:
         return self._now_ns / _NS_PER_S
 
+    def now_ns(self) -> int:
+        """Exact time; compare deadlines with this, not with float subtraction."""
+        return self._now_ns
+
     async def sleep(self, dt: float) -> None:
         if dt < 0:
             raise ValueError(f"cannot sleep a negative duration: {dt}")
@@ -53,6 +57,10 @@ class SimClock:
     def pending_waiters(self) -> int:
         """Sleeps still waiting (cancelled ones excluded)."""
         return sum(1 for _, _, future in self._waiters if not future.done())
+
+
+def to_ns(seconds: float) -> int:
+    return _to_ns(seconds)
 
 
 def _to_ns(seconds: float) -> int:

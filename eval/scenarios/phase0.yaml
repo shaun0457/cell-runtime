@@ -1,4 +1,12 @@
-# Phase 0 scenarios. One baseline with no fault; one scenario per fault arrives with its ticket.
+# Phase 0 scenarios. One baseline with no fault, then one scenario per fault kind.
+# Fault parameters are ranges; each (scenario, seed) draws its own values.
 scenarios:
   - id: baseline
     description: Nominal insertion, no injected fault.
+
+  - id: controller_stall
+    description: The arm controller stops executing commands for a while.
+    faults:
+      - kind: controller_stall
+        onset_s: [0.5, 2.0]
+        duration_s: [3.0, 12.0]

@@ -9,6 +9,7 @@ import json
 import random
 from dataclasses import dataclass
 
+from cellrt.eval.faults import materialize
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.behaviours import ExecEnv
 from cellrt.executor.runner import run_task
@@ -64,8 +65,10 @@ async def _run(
     params: MockParams,
 ) -> RunResult:
     clock = SimClock()
-    # Keyed by scenario and seed only: every setting faces exactly the same world.
-    world = MockWorld(random.Random(f"{scenario.id}:{seed}"), params)
+    # Keyed by scenario and seed only, never the setting: every setting faces the same world and
+    # the same faults. Separate streams, so adding a fault does not change the world's noise.
+    faults = materialize(scenario.faults, random.Random(f"{scenario.id}:{seed}:faults"))
+    world = MockWorld(random.Random(f"{scenario.id}:{seed}"), params, faults)
     recorder = Recorder(run_id, store, clock)
     recorder.emit(
         RunStarted(
@@ -74,10 +77,12 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config_hash(setting, params),
+            config_hash=config_hash(scenario, setting, params),
         )
     )
-    env = ExecEnv(world=world, clock=clock, recorder=recorder, period_s=params.dt)
+    env = ExecEnv(
+        world=world, clock=clock, recorder=recorder, period_s=params.dt, fault_source=world
+    )
     root = build_tree(setting, registry, env)
     outcome, reason = await run_task(root, env, scenario.task)
     recorder.emit(
@@ -92,7 +97,12 @@ async def _run(
     return RunResult(run_id=run_id, outcome=outcome)
 
 
-def config_hash(setting: Setting, params: MockParams) -> str:
-    config = {"setting": setting, "world": dataclasses.asdict(params)}
+def config_hash(scenario: Scenario, setting: Setting, params: MockParams) -> str:
+    """Everything that defines the run besides the seed: a changed scenario is a different run."""
+    config = {
+        "scenario": scenario.model_dump(mode="json"),
+        "setting": setting,
+        "world": dataclasses.asdict(params),
+    }
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]

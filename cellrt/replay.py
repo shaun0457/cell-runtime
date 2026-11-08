@@ -7,6 +7,10 @@ from collections.abc import Iterable, Iterator
 from cellrt.runtime.events import (
     BtNodeChanged,
     Event,
+    FaultCleared,
+    FaultInjected,
+    MonitorVerdict,
+    PreconditionFailed,
     RunFinished,
     RunStarted,
     SignalSampled,
@@ -36,6 +40,14 @@ def describe(event: Event) -> str:
         case SkillStarted() as p:
             params = f" params={p.params}" if p.params else ""
             return f"{p.skill} attempt={p.attempt}{params}"
+        case PreconditionFailed() as p:
+            return f"{p.skill} attempt={p.attempt} not started: preconditions not met"
+        case MonitorVerdict() as p:
+            return f"{p.skill} {p.failure_class} rule={p.rule} {p.evidence}"
+        case FaultInjected() as p:
+            return f"{p.fault_id} label={p.label} {p.params}"
+        case FaultCleared() as p:
+            return f"{p.fault_id} label={p.label}"
         case SkillProgress() as p:
             return f"{p.skill} {p.fraction:.0%}"
         case SkillFinished() as p:

@@ -25,6 +25,24 @@ class RunStarted(_Payload):
     config_hash: str
 
 
+class FaultInjected(_Payload):
+    """Ground truth for evaluation. Never read by skills or the Monitor."""
+
+    type: Literal["fault_injected"] = "fault_injected"
+    fault_id: str
+    kind: str
+    label: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class FaultCleared(_Payload):
+    type: Literal["fault_cleared"] = "fault_cleared"
+    fault_id: str
+    kind: str
+    label: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class SignalSampled(_Payload):
     type: Literal["signal_sampled"] = "signal_sampled"
     step: int
@@ -41,6 +59,14 @@ class SkillStarted(_Payload):
     skill: str
     attempt: int
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreconditionFailed(_Payload):
+    """The skill was due to start but its preconditions did not hold, so it never ran."""
+
+    type: Literal["precondition_failed"] = "precondition_failed"
+    skill: str
+    attempt: int
 
 
 class SkillProgress(_Payload):
@@ -61,7 +87,15 @@ class SkillFinished(_Payload):
 class SkillCancelled(_Payload):
     type: Literal["skill_cancelled"] = "skill_cancelled"
     skill: str
-    reason: Literal["terminated"]
+    reason: Literal["terminated", "timeout"]
+
+
+class MonitorVerdict(_Payload):
+    type: Literal["monitor_verdict"] = "monitor_verdict"
+    skill: str
+    failure_class: str
+    rule: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class BtNodeChanged(_Payload):
@@ -80,11 +114,15 @@ class RunFinished(_Payload):
 
 Payload = Annotated[
     RunStarted
+    | FaultInjected
+    | FaultCleared
     | SignalSampled
     | SkillStarted
+    | PreconditionFailed
     | SkillProgress
     | SkillFinished
     | SkillCancelled
+    | MonitorVerdict
     | BtNodeChanged
     | RunFinished,
     Field(discriminator="type"),

@@ -10,16 +10,24 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import py_trees
 from py_trees.common import Status
 
-from cellrt.runtime.clock import SimClock
-from cellrt.runtime.events import SkillCancelled, SkillFinished, SkillProgress, SkillStarted
+from cellrt.monitor.classifier import Monitor, Verdict
+from cellrt.runtime.clock import SimClock, to_ns
+from cellrt.runtime.events import (
+    MonitorVerdict,
+    PreconditionFailed,
+    SkillCancelled,
+    SkillFinished,
+    SkillProgress,
+    SkillStarted,
+)
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.base import Skill, SkillContext, SkillResult
-from cellrt.world.base import World
+from cellrt.world.base import FaultSource, World, WorldView
 
 PROGRESS_STEP = 0.25
 
@@ -41,8 +49,11 @@ class TaskTracker:
         return task
 
     def live(self) -> int:
+        return len(self.live_names())
+
+    def live_names(self) -> list[str]:
         self._tasks = {t for t in self._tasks if not t.done()}
-        return len(self._tasks)
+        return sorted(t.get_name() for t in self._tasks)
 
 
 @dataclass
@@ -52,9 +63,14 @@ class ExecEnv:
     recorder: Recorder
     period_s: float
     tracker: TaskTracker = field(default_factory=TaskTracker)
+    monitor: Monitor = field(default_factory=Monitor)
+    # Ground truth of injected faults, read only by the runner to record it.
+    fault_source: FaultSource | None = None
 
 
 class SkillBehaviour(py_trees.behaviour.Behaviour):
+    """Bridge for one skill. `failure` holds the last failure class (None after a success)."""
+
     def __init__(
         self,
         skill: Skill,
@@ -68,20 +84,38 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._env = env
         self._params = dict(params or {})
         self._task: asyncio.Task[SkillResult] | None = None
+        self._started_ns = 0
         self._progress_mark = 0.0
+        self.failure: str | None = None
+        self.note: str | None = None  # why it failed when there is no failure class
 
     def initialise(self) -> None:
         self._task = None
         self._progress_mark = 0.0
+        self.failure = None
+        self.note = None
 
     def update(self) -> Status:
         if self._task is None:
+            state = self._env.recorder.state
+            if not self.skill.preconditions(state):
+                attempt = state.skill_attempts.get(self.skill.name, 0) + 1
+                self._env.recorder.emit(PreconditionFailed(skill=self.skill.name, attempt=attempt))
+                self.note = "preconditions not met"
+                return Status.FAILURE
             self._start()
             return Status.RUNNING
-        if not self._task.done():
-            return Status.RUNNING
-        result = self._finish()
-        return Status.SUCCESS if result.ok else Status.FAILURE
+        if self._task.done():
+            result = self._finish()
+            self.failure = result.failure
+            return Status.SUCCESS if result.ok else Status.FAILURE
+        elapsed_ns = self._env.clock.now_ns() - self._started_ns
+        if elapsed_ns >= to_ns(self.skill.timeout_s):
+            self._cancel("timeout")
+            verdict = self._env.monitor.classify_timeout(elapsed_ns / 1e9, self.skill.timeout_s)
+            self._record_verdict(verdict)
+            return Status.FAILURE
+        return Status.RUNNING
 
     def terminate(self, new_status: Status) -> None:
         if self._task is None:
@@ -90,9 +124,24 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             # Finished after the last tick but before the tree was stopped: keep its result.
             self._finish()
             return
+        self._cancel("terminated")
+
+    def _cancel(self, reason: Literal["terminated", "timeout"]) -> None:
+        assert self._task is not None
         self._task.cancel()
         self._task = None
-        self._env.recorder.emit(SkillCancelled(skill=self.skill.name, reason="terminated"))
+        self._env.recorder.emit(SkillCancelled(skill=self.skill.name, reason=reason))
+
+    def _record_verdict(self, verdict: Verdict) -> None:
+        self.failure = verdict.failure_class.value
+        self._env.recorder.emit(
+            MonitorVerdict(
+                skill=self.skill.name,
+                failure_class=verdict.failure_class.value,
+                rule=verdict.rule,
+                evidence=verdict.evidence,
+            )
+        )
 
     def _finish(self) -> SkillResult:
         assert self._task is not None and self._task.done()
@@ -112,8 +161,9 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         env = self._env
         attempt = env.recorder.state.skill_attempts.get(self.skill.name, 0) + 1
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
+        self._started_ns = env.clock.now_ns()
         ctx = SkillContext(
-            world=env.world,
+            world=WorldView(env.world),
             clock=env.clock,
             period_s=env.period_s,
             progress=self._progress,
