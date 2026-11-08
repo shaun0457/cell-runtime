@@ -22,9 +22,11 @@ Current shape:
   interrupted attempt keeps its number and the rerun gets the next one.
 - A unit is complete when one of its attempts has `run_finished` **and** that attempt's
   `config_hash` equals the hash of the configuration the eval runs now. The hash covers the
-  parameters and a fingerprint of the core source (every `.py` under `cellrt/`, line endings
-  normalised), so changed code is a changed configuration. `run_started` also records a hash
-  per part (`config_parts`: scenario, setting, world, monitor, skills, code, recovery, planner), so the log
+  parameters, a fingerprint of the core source (every `.py` under `cellrt/`, line endings
+  normalised) and, since #20, of the adapter source (`adapters/`) and of `uv.lock`, so changed
+  code or dependencies are a changed configuration. `run_started` also records a hash per part
+  (`config_parts`: scenario, setting, world, monitor, skills, code, adapters, lock, recovery,
+  planner), so the log
   shows which parts two runs share; the fairness test uses it to check that A, B and C share
   everything but recovery and planner.
 - A unit interrupted `MAX_ATTEMPTS` (3) times under the current configuration is given up on:
