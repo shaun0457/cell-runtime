@@ -9,6 +9,7 @@ import pytest
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.recovery import Plan, RecoveryConfig
+from cellrt.runtime.state import fold, state_at
 from cellrt.runtime.store import EventStore
 
 
@@ -293,3 +294,30 @@ def test_setting_a_ignores_the_recovery_config(tmp_path: Path) -> None:
 def test_recovery_configs_that_cannot_work_are_rejected(bad: dict) -> None:
     with pytest.raises(ValueError):
         RecoveryConfig(**bad)
+
+
+DROPOUT_THEN_OBSTACLE = Scenario.model_validate(
+    {
+        "id": "dropout_then_obstacle",
+        "faults": [
+            {"kind": "sensor_dropout", "onset_s": [1.0, 1.0], "duration_s": [0.5, 0.5]},
+            {"kind": "obstacle", "depth_mm": [3.0, 3.0], "attempts": [2, 2]},
+        ],
+    }
+)
+
+
+def test_recoveries_used_so_far_are_part_of_the_folded_state(tmp_path: Path) -> None:
+    events = _run(tmp_path, DROPOUT_THEN_OBSTACLE, "B", 0)
+    recoveries = [e for e in events if e.type == "recovery_started"]
+
+    # Each recovery's own counts are what the fold says right after it.
+    for e in recoveries:
+        state = state_at(events, e.seq)
+        assert (state.recoveries_by_class[e.payload.failure_class], state.recoveries_total) == (
+            e.payload.count_for_class,
+            e.payload.count_total,
+        )
+    final = fold(events)
+    assert dict(final.recoveries_by_class) == {"SENSOR_DROPOUT": 1, "INSERT_STUCK": 2}
+    assert final.recoveries_total == 3

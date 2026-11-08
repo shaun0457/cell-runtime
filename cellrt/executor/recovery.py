@@ -18,6 +18,7 @@ from py_trees.common import Status
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
 from cellrt.monitor.classifier import FailureClass
 from cellrt.runtime.events import RecoveryStarted
+from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
 
 
@@ -91,25 +92,31 @@ class RecoveryConfig:
 
 
 class RecoveryBudget:
-    """Recoveries used so far in this task, per class and in total."""
+    """The task's recovery budgets, checked against the recoveries in the folded run state.
 
-    def __init__(self, config: RecoveryConfig) -> None:
+    The counts are not kept here: they are a fold over `recovery_started` events, so they can be
+    rebuilt from the log at any event (`state_at`).
+    """
+
+    def __init__(self, config: RecoveryConfig, recorder: Recorder) -> None:
         self.config = config
-        self.by_class: dict[str, int] = {}
-        self.total = 0
+        self._recorder = recorder
 
     def why_not(self, failure_class: str) -> str | None:
         """Why no recovery is possible for `failure_class`, or None if one is allowed."""
-        if self.total >= self.config.total_budget:
+        state = self._recorder.state
+        if state.recoveries_total >= self.config.total_budget:
             return "task recovery budget used up"
-        if self.by_class.get(failure_class, 0) >= self.config.budgets.get(failure_class, 0):
+        used = state.recoveries_by_class.get(failure_class, 0)
+        if used >= self.config.budgets.get(failure_class, 0):
             return f"{failure_class} recovery budget used up"
         return None
 
-    def take(self, failure_class: str) -> tuple[int, int]:
-        self.by_class[failure_class] = self.by_class.get(failure_class, 0) + 1
-        self.total += 1
-        return self.by_class[failure_class], self.total
+    def next_counts(self, failure_class: str) -> tuple[int, int]:
+        """The per-class and total count the next recovery of `failure_class` will have."""
+        state = self._recorder.state
+        used = state.recoveries_by_class.get(failure_class, 0)
+        return used + 1, state.recoveries_total + 1
 
 
 class Recovering(py_trees.composites.Composite):
@@ -177,7 +184,7 @@ class Recovering(py_trees.composites.Composite):
             return None
         # Every path that sets a failure class also sets its source.
         assert node.failure_source is not None
-        count_for_class, count_total = self._budget.take(failure)
+        count_for_class, count_total = self._budget.next_counts(failure)
         self._env.recorder.emit(
             RecoveryStarted(
                 skill=skill,
@@ -194,7 +201,7 @@ class Recovering(py_trees.composites.Composite):
 def build_recovering_steps(
     skills: tuple[str, ...], registry: SkillRegistry, env: ExecEnv, config: RecoveryConfig
 ) -> list[Recovering]:
-    budget = RecoveryBudget(config)
+    budget = RecoveryBudget(config, env.recorder)
     helper_params = {
         "retract": {"to_height_mm": config.retract_to_mm},
         "wait_sensor": {

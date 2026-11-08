@@ -15,7 +15,9 @@ insert_scripted, verify]`. A `Recovering` composite runs its step's skill; when 
 fails with a class that has a plan and the budgets allow it, it records `recovery_started`
 (skill, class, action, per-class count, total count), runs the plan's skills, then the failed
 skill again, and repeats. Otherwise it fails with a reason that names the exhausted budget.
-Budgets are shared across the whole task. All parameters, the plan table included, live in
+Budgets are shared across the whole task; the counts they are checked against are part of the
+folded run state (`RunState.recoveries_by_class`, `recoveries_total`, from `recovery_started`), so
+they can be rebuilt from the log at any event. All parameters, the plan table included, live in
 `RecoveryConfig` (validated, immutable), which is part of `config_hash` for settings that
 recover. Helper limits are checked against the helpers' own timeouts so a helper never times
 out first and spends the TIMEOUT budget.
