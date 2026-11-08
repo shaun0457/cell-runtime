@@ -31,12 +31,30 @@ checked against the clock; `asyncio.wait_for` / `asyncio.timeout` are not used.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the code at 92d79e7 and the Phase 0 sessions. Shaun: rewrite
+anything you would not say yourself, then set Status to accepted. -->
+
+Option A. Time in the core comes only from an injected `Clock`. `SimClock` keeps integer
+nanoseconds and moves only when the loop calls `advance(dt)` after a world step. Skill timeouts
+are checked against the clock. Real-time APIs are banned in the core by ruff `banned-api`; the
+two exceptions (`recorder.py`'s `wall_ts`, the drain's `asyncio.sleep(0)`) are listed per file in
+`pyproject.toml`.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+"Same seed, same result" is impossible if time comes from the machine: asyncio's timers depend
+on load, so a timeout could fire on a busy CI runner and not on my laptop. With a simulated
+clock, twenty 50 ms steps are exactly one second, and a 10 s insertion runs in milliseconds,
+which is why 420 runs take under a minute.
+
+It is also the right shape for Phase 2: Gazebo has its own sim time that does not follow the
+wall clock, so the same protocol can wrap it. The cost is discipline (no `asyncio.wait_for`), and
+I enforce it with a lint rule rather than a convention.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Easier: deterministic tests and evals; long scenarios cost almost nothing.
+- Harder: asyncio's timeout helpers are off-limits; `loop.time()` is a method call the lint rule
+  does not catch.
+- Revisit in Phase 1: a clock adapter over ROS sim time, and what the runtime does when sim time
+  pauses or jumps (a Gazebo reset).

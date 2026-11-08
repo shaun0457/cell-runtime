@@ -67,11 +67,30 @@ a stall even for `insert_act`; the seeded range stays well below that.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the code at 92d79e7 and the Phase 0 sessions. Shaun: rewrite
+anything you would not say yourself, then set Status to accepted. -->
+
+- Faults act in the world, not in skills (Option A): the Monitor has to detect them from
+  signals.
+- Each fault kind has seeded parameter ranges for onset, magnitude and persistence (Option A).
+- Fault parameters and world noise come from two RNG streams, both keyed by (scenario, seed);
+  the setting is never part of a key (Option A).
+- Skills only see a `WorldView` (`signals()`, `command()`), so the injected label cannot leak.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Classification accuracy only means something if the Monitor has to find the fault in the
+signals; a skill told to fail with a class would make accuracy 100 % by definition. Seeded
+ranges make pass^k and recovery rate informative: with fixed faults, every (scenario, setting)
+is either 0 % or 100 %.
+
+Separate streams keep experiments clean: editing one fault does not reshuffle the noise in every
+measurement. Keeping the setting out of the key is what makes A, B and C face identical
+problems, and the fairness tests check it from the log.
+
+The honest weakness: I chose the ranges, so I chose B's success rate per scenario. The claim is
+the gap between settings under identical faults, and Phase 2 tests it against faults I did not
+design.
 
 ## Consequences
 

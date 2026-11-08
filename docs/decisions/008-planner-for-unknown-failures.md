@@ -104,11 +104,32 @@ Current shape:
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the code at 92d79e7 and the Phase 0 sessions. Shaun: rewrite
+anything you would not say yourself, then set Status to accepted. -->
+
+1. Planners return raw output (a dict or JSON text). The executor validates it into a
+   `Decision` (`switch_skill`, `retry`, `abort`) or a `Rejection` (Option A).
+2. A switch may only name one of the step's explicit options; in Phase 0 only insert steps have
+   options, namely the other insert skills (Option A).
+3. Invalid output aborts the run with a reason, recorded as `planner_output_rejected`
+   (Option A).
+4. Two budgets: 2 planner calls per task, and every retry or switch the planner starts counts
+   against the shared task recovery budget of 4 (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Principle 4 says LLM output is untrusted, and that only holds if no planner can skip
+validation. So the rule planner returns dicts the way an LLM would and goes through the same
+gate; the stub already tests the path the LLM will use in Phase 3.
+
+Explicit options keep the planner inside the task: it may choose how to insert, not decide to
+skip verification. Aborting on invalid output is strict on purpose. Asking again, or quietly
+falling back to B, would hide how often the planner is wrong, and that is exactly the number
+Phase 3 has to report. The budgets cap cost and time per task and stop a planner from looping.
+
+What Phase 0 does not show: the rule planner has one rule, so the C − B gap (14 points) is
+exactly the `yaw_mismatch` scenario. It shows that the gate and the budgets work, not that a
+planner adds value.
 
 ## Consequences
 

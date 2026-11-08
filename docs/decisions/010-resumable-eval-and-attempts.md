@@ -112,11 +112,33 @@ Current shape:
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the code at 92d79e7 and the Phase 0 sessions. Shaun: rewrite
+anything you would not say yourself, then set Status to accepted. -->
+
+1. A unit is complete when one of its attempts has `run_finished` and that attempt's
+   `config_hash` matches the current configuration, including a fingerprint of every `.py` under
+   `cellrt/` (Option A).
+2. If several attempts match, the first counts (Option A).
+3. An interrupted unit reruns from the start as a new attempt `aN` (Option A).
+4. After 3 interrupted attempts under one configuration, the unit is given up and reported on
+   stderr (Option A).
+5. The kill is tested with a test-only environment variable that exits after an exact number of
+   events (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+The failure I care about is silent: a table that mixes results from two versions of the
+Monitor. Hashing the parameters and the core source means a changed rule can never reuse old
+results, and it works on a dirty tree without git.
+
+Rerunning instead of resuming keeps one code path. Resuming from step N needs the world's state
+at step N, which the mock could rebuild but Gazebo cannot. The attempt cap protects a VM that
+restarts automatically from looping forever on a unit that crashes because of a bug, not a
+preemption. The environment-variable hook makes the crash test deterministic on Windows and
+Linux; a timer-based kill would be flaky on a loaded CI runner.
+
+Known gap: dependency versions (`uv.lock`) and `adapters/` are not in the hash yet. Add both
+before Phase 1 runs any eval through the adapter.
 
 ## Consequences
 

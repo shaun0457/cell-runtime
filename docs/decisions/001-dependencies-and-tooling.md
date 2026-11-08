@@ -48,12 +48,31 @@ turns text into dicts and lists.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- DRAFT by Claude from the code at 92d79e7 and the Phase 0 sessions. Shaun: rewrite
+anything you would not say yourself, then set Status to accepted. -->
+
+- Scenario files are YAML, read with `yaml.safe_load` and validated by pydantic models. PyYAML
+  is the one runtime dependency added beyond the list in CLAUDE.md.
+- The environment is managed by uv with a committed `uv.lock`; uv also installs the interpreter
+  (`python-preference = "only-managed"`). Windows, CI and the Spot VM all run `uv sync --locked`.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Scenarios are nested: a scenario holds a list of faults, each with parameter ranges. In YAML
+that reads like the table in the plan; in TOML it turns into `[[scenarios.faults]]` blocks that
+are hard to review. YAML's implicit typing is the known risk, and it is covered because pydantic
+validates every field after parsing.
+
+For tooling, determinism is a project principle and it has to hold on three machines. Without a
+lock file a transitive upgrade can change behaviour between my laptop and the VM, and the
+interpreter would be whatever each machine has (conda on my laptop). `uv sync --locked` gives the
+same versions and the same Python build everywhere. The evidence: the Phase 0 eval prints the
+identical table on Windows and on Linux.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Easier: a fresh VM is one command away from a working environment; CI and local runs match.
+- Harder: uv has to be installed on every machine; the pydantic models must stay in step with
+  the YAML.
+- Revisit: when Phase 2 generates scenarios from `task_board_limits`, export a JSON Schema from
+  the pydantic models so generated files can be checked before a run.
