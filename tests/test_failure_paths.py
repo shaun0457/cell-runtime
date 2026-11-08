@@ -91,7 +91,8 @@ def test_skills_reach_the_world_only_through_signals_and_commands(store: EventSt
     assert {f.name for f in fields(Signals)} == {
         "height_mm",
         "xy_offset_mm",
-        "force_n",
+        "raw_force_n",
+        "tare_offset_n",
         "torque_nm",
         "wrench_valid",
     }

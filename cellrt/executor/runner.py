@@ -101,6 +101,8 @@ def _record_signal(env: ExecEnv, step: int) -> None:
             height_mm=s.height_mm,
             depth_mm=s.depth_mm,
             xy_error_mm=round(s.xy_error_mm, 6),
+            raw_force_n=s.raw_force_n,
+            tare_offset_n=s.tare_offset_n,
             force_n=s.force_n,
             torque_nm=s.torque_nm,
             wrench_valid=s.wrench_valid,

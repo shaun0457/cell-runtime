@@ -17,9 +17,13 @@ the skill and records `monitor_verdict` (class, rule, evidence, and `also_matche
 rules held on the same sample) followed by `skill_cancelled(reason="preempted")`; on the tick a
 skill completes, a safety verdict (SENSOR_DROPOUT, FORCE_LIMIT) overrides a success and any
 verdict overrides the skill's own failure (`monitor_verdict`, then the skill's own
-`skill_finished`; a metric that counts `skill_finished.ok` must pair it with the verdict). Two bounded windows: the safety
-window (sensor validity, force) runs across skills and restarts after a safety verdict; the
-insertion window covers the current skill only (`reset` on skill start). Timeouts are
+`skill_finished`; a metric that counts `skill_finished.ok` must pair it with the verdict).
+Force is tared: a sample carries the raw F/T reading and the offset published beside it, and
+rules read raw minus offset, as AIC's scorer does (`wrist_wrench` is not tared;
+`controller_state.fts_tare_offset` is the offset). Time over the force limit is a running sum
+over the task, never reset. Two bounded windows: the sensor window (validity) runs across skills
+and restarts after a dropout verdict; the insertion window covers the current skill only
+(`reset` on skill start). Timeouts are
 classified by the same Monitor (`classify_timeout`). `MonitorConfig` is passed to `run_unit` and
 is part of `config_hash`. A class a skill returns itself is used only without a verdict and is
 marked `source="skill"` on `recovery_started`; a skill that raises aborts the run. Each scenario injects one fault; how the
@@ -29,13 +33,13 @@ Rules, checked in priority order:
 | Class | Rule | Applies to |
 |---|---|---|
 | SENSOR_DROPOUT | wrench invalid for 0.2 s | every skill but `wait_sensor` |
-| FORCE_LIMIT | force > 20 N for more than 1.0 s | every skill |
+| FORCE_LIMIT | tared force > 20 N now, and the time over 20 N summed over the task has reached 0.5 s (AIC penalises above 1.0 s) | every skill but `retract` (its time still counts) |
 | INSERT_STUCK | < 0.2 mm descent over the last 0.5 s, with force > 10 N and XY within 1.0 mm at the current sample | insert skills |
 | POSE_ERROR | XY error > 1.0 mm for 0.2 s | insert skills |
 | UNKNOWN | < 0.2 mm descent over 1.0 s, no rule above matched | insert skills |
 
-"Held for D" means the samples from the first to the last span at least D (more than D for
-FORCE_LIMIT), rounded up to whole periods, so the verdict lands D after onset and never earlier;
+"Held for D" means the samples from the first to the last span at least D, rounded up to whole
+periods, so the verdict lands D after onset and never earlier;
 evidence records the span actually covered. Progress is measured as descent of the plug height, not as depth, so the approach
 from hover height to the port surface counts as progress.
 
@@ -84,6 +88,35 @@ Preconditions not met, a skill returning `ok=False` without a class, and a skill
 - Pros: one path to the planner.
 - Cons: hides bugs as failures; muddies classification accuracy.
 
+### How force over the limit is counted
+
+AIC adds up every interval with tared force above 20 N over the task and takes -12 once the sum
+exceeds 1 s (`ScoringTier2.cc:870-900`); the sum never goes back down.
+
+#### Option A — continuous: over 20 N for more than 1 s in a row
+- Pros: simple; ignores short spikes.
+- Cons: not what AIC scores. Five 0.3 s pushes never fire, yet add up to 1.5 s and the penalty;
+  by the time a continuous 1 s has passed, the penalty is already certain.
+
+#### Option B — a running sum, with a trigger below the AIC budget
+- Pros: counts exactly what AIC scores; firing at 0.5 s leaves 0.5 s of the budget for the
+  recovery (retract, slower reinsert).
+- Cons: once the trigger is passed, every further sample over the limit is a verdict, so one
+  noisy spike preempts a skill; the trigger (0.5 s) is a judgement call.
+
+### Retract and the force rule
+
+#### Option A — retract is not preempted for force; its time still counts
+- Pros: retract is the action that unloads the plug; preempting it for force stops the one skill
+  that reduces force.
+- Cons: a retract that itself drives force up (wrong direction, snag) is not stopped by the
+  Monitor; the controller's protective stop and the retract timeout remain.
+
+#### Option B — the force rule applies to retract like any skill
+- Pros: one rule everywhere.
+- Cons: after INSERT_STUCK or FORCE_LIMIT under high force, retract can be preempted before it
+  has unloaded, and the recovery cannot proceed.
+
 ### Window scope
 
 #### Option A — per skill (reset on start)
@@ -97,16 +130,13 @@ Preconditions not met, a skill returning `ok=False` without a class, and a skill
 - Cons: phase-specific rules need their own bookkeeping; a recovery skill can be preempted at
   once by samples from before it started.
 
-#### Option C — safety durations across skills, insertion progress per skill
-- Pros: force and sensor time is counted the way the AIC penalty counts it, whatever skill is
-  running; insertion rules still never see the previous skill's samples. Restarting the safety
-  window after a safety verdict keeps the skill that handles it from being preempted at once.
-- Cons: two windows to reason about; a force episode that a verdict ended is not counted again
-  until it has lasted the full duration a second time. Only a safety verdict restarts the
-  window: after a normal completion or another class's verdict, the next skill inherits the
-  time already counted. A dropout that began in approach can preempt align early, and a
-  retract that follows INSERT_STUCK under high force can be preempted by FORCE_LIMIT before it
-  has unloaded (rare in the mock, where retract unloads fast).
+#### Option C — sensor validity across skills, insertion progress per skill
+- Pros: a dropout is timed whatever skill is running; insertion rules still never see the
+  previous skill's samples. Restarting the sensor window after a dropout verdict keeps the skill
+  that handles it from being preempted at once. (Force is a running sum, not a window.)
+- Cons: two windows to reason about. Only a dropout verdict restarts the sensor window: after a
+  normal completion or another class's verdict, the next skill inherits the time already
+  counted, so a dropout that began in approach can preempt align early.
 
 ### Rules that overlap
 
@@ -148,9 +178,13 @@ his own words, then sets Status to accepted. -->
   On the tick a skill completes, the Monitor is still asked first: a safety verdict
   (SENSOR_DROPOUT, FORCE_LIMIT) overrides the skill's "done", and any verdict overrides the
   skill's own report of a failure.
-- **Windows.** Force-over-limit and sensor-invalid durations are tracked across skill
-  boundaries, the way the AIC force penalty counts them. The progress window that the
-  insertion rules use restarts with each skill.
+- **Force is tared** (raw reading minus the published offset) before any rule reads it, as in
+  AIC.
+- **Force over the limit** is summed over the task, as AIC scores it. The Monitor fires when the
+  sum reaches 0.5 s, half the AIC budget, and then on every further sample over the limit.
+  Retract is not preempted for force, but its time counts.
+- **Windows.** Sensor-invalid time is tracked across skill boundaries. The progress window that
+  the insertion rules use restarts with each skill.
 - **Overlapping rules.** Fixed priority, first match wins: can we see (SENSOR_DROPOUT), is it
   safe (FORCE_LIMIT), what is the mechanical cause (INSERT_STUCK, POSE_ERROR), else UNKNOWN.
   The evidence also lists the other rules that held on the same tick.
@@ -182,6 +216,13 @@ One component owns the question "why did this fail", for three reasons:
 Because of this, classification accuracy can be measured as one component against the
 injected ground truth, separately from whether recovery works.
 
+The force rule copies the scorer, not a guess at it: AIC sums time over 20 N for the whole task,
+so a continuous-time rule would miss repeated short pushes that cost the same -12. Firing at half
+the budget is the margin: the recovery (retract, slower reinsert) has the other half. Retract is
+exempt because it is the action that unloads; preempting it would stop the one thing that
+helps. Taring follows the same logic: AIC hands the policy a raw reading, so comparing it with
+20 N directly would misfire from the first sample.
+
 Preempting instead of waiting for the skill: a plug pushed into an obstacle keeps building
 force. Waiting for the 15 s timeout means paying the AIC force penalty and labelling every
 failure TIMEOUT, so the BT could not pick a fitting recovery. The cost is that a false alarm
@@ -206,9 +247,21 @@ the planner adds over B. Phase 2 tests this against failures we did not design.
 - Out of scope for Phase 0: graded responses (slow down before stopping), compliant
   (impedance/admittance) control, estimating the contact phase from signals instead of from
   the skill. Revisit the last one when the ACT skill spans several phases.
+- After the trigger there is no debounce: one sample over 20 N preempts. Revisit with real
+  F/T noise in Phase 2.
+- A retract that itself drives force up is not stopped by the Monitor; it spends the budget
+  until the retract timeout or the controller's protective stop.
+- The offset is constant in the mock. In AIC the controller re-expresses it in the tool frame
+  every cycle, so the adapter must use the latest offset per sample (Phase 1). Raw force and
+  offset are vectors: tare per axis, then take the magnitude, as the scorer does; the
+  difference of the two magnitudes would underestimate side contact. Torque needs the same.
+- The sum counts samples times the nominal period. AIC sums the real time between wrench
+  messages, so in Phase 1 the Monitor must see every wrench sample (or sum the real dt), not
+  only the samples at the control rate.
 - Known misreads: a stalled controller during insertion reads as UNKNOWN, not TIMEOUT; an
   insert skill moving up for more than 1 s reads as stalled; several insertion faults at once
   are not modelled.
 - Implementation status: everything above is in place except the HOLD hand-over and
   `monitor_profile`, which land with #8. The 20-seed A/B sweep gave the same success counts
-  before and after the cross-skill windows and the Monitor-before-done change.
+  before and after the cross-skill windows, the Monitor-before-done change, taring and the
+  summed force rule.

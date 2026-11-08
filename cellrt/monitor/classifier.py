@@ -42,9 +42,14 @@ class MonitorConfig:
     insert_skills: frozenset[str] = frozenset({"insert_scripted", "insert_act"})
     # Skills that wait for the sensor to come back; the dropout rule does not apply to them.
     sensor_wait_skills: frozenset[str] = frozenset({"wait_sensor"})
+    # Skills that unload the plug: force over the limit still counts but does not preempt them.
+    force_exempt_skills: frozenset[str] = frozenset({"retract"})
     dropout_s: float = 0.2
     force_limit_n: float = 20.0
-    force_limit_s: float = 1.0  # exceeded only when held for longer than this
+    # AIC penalises once the time over the limit, summed over the task, exceeds this.
+    force_budget_s: float = 1.0
+    # The Monitor fires once the sum reaches this, leaving the rest of the budget for recovery.
+    force_trigger_s: float = 0.5
     stuck_force_n: float = 10.0
     stuck_progress_mm: float = 0.2
     stuck_window_s: float = 0.5
@@ -64,34 +69,36 @@ class MonitorConfig:
 class Monitor:
     """Watches the signals of the running skill and returns a verdict once a rule matches.
 
+    Force over the limit is a running sum over the whole task, as in the AIC penalty: never
+    reset, counted in every skill, but a skill that unloads the plug (retract) is not preempted
+    for it. Once the sum reaches the trigger, every further sample over the limit is a verdict.
+
     Two bounded windows, each as long as its longest rule:
-    - safety (sensor validity, force limit) runs across skill boundaries, the way the AIC force
-      penalty counts time; it restarts after a safety verdict, so the skill that handles it gets
-      the full duration again;
+    - sensor validity runs across skill boundaries; it restarts after a dropout verdict, so the
+      skill that handles it gets the full duration again;
     - insertion (progress, XY) covers only the current skill (`reset` clears it).
     """
 
     def __init__(self, period_s: float, config: MonitorConfig | None = None) -> None:
         self.config = c = config or MonitorConfig()
         self._period_s = period_s
+        if not 0 < c.force_trigger_s <= c.force_budget_s:
+            raise ValueError("force_trigger_s must be positive and at most force_budget_s")
         self._dropout_n = self._held(c.dropout_s)
-        self._force_n = self._held(c.force_limit_s, strictly_longer=True)
+        self._over_limit = 0  # samples with force over the limit, this task
         self._stuck_n = self._held(c.stuck_window_s)
         self._pose_n = self._held(c.pose_error_s)
         self._stall_n = self._held(c.stall_window_s)
-        self._safety: deque[Signals] = deque(maxlen=max(self._dropout_n, self._force_n))
+        self._safety: deque[Signals] = deque(maxlen=self._dropout_n)
         self._window: deque[Signals] = deque(maxlen=max(self._stuck_n, self._pose_n, self._stall_n))
         self._skill = ""
 
-    def _held(self, seconds: float, *, strictly_longer: bool = False) -> int:
-        """Samples whose span (first to last) is at least `seconds`, or more than it.
+    def _held(self, seconds: float) -> int:
+        """Samples whose span (first to last) is at least `seconds`.
 
         Rounded up, so a rule never fires early when the period does not divide `seconds`.
         """
-        steps = seconds / self._period_s
-        if strictly_longer:
-            return math.floor(steps + 1e-9) + 2
-        return math.ceil(steps - 1e-9) + 1
+        return math.ceil(seconds / self._period_s - 1e-9) + 1
 
     def _span(self, samples: int) -> float:
         """Time covered by `samples` consecutive samples."""
@@ -113,6 +120,8 @@ class Monitor:
         """
         self._safety.append(signals)
         self._window.append(signals)
+        if signals.wrench_valid and signals.force_n > self.config.force_limit_n:
+            self._over_limit += 1
         rules: list[Callable[[Signals], Verdict | None]] = [self._dropout, self._force_limit]
         if self._skill in self.config.insert_skills:
             rules += [self._stuck, self._pose_error, self._stalled]
@@ -120,7 +129,7 @@ class Monitor:
         if not matched:
             return None
         verdict, *others = matched
-        if verdict.failure_class in SAFETY_CLASSES:
+        if verdict.failure_class is FailureClass.SENSOR_DROPOUT:
             self._safety.clear()  # the skill that handles it gets the full duration again
         if others:
             evidence = {**verdict.evidence, "also_matched": [v.rule for v in others]}
@@ -139,18 +148,23 @@ class Monitor:
         )
 
     def _force_limit(self, s: Signals) -> Verdict | None:
-        limit = self.config.force_limit_n
-        if not self._holds(
-            lambda x: x.wrench_valid and x.force_n > limit, self._force_n, self._safety
+        c = self.config
+        over_s = round(self._over_limit * self._period_s, 6)
+        if (
+            self._skill in c.force_exempt_skills
+            or not (s.wrench_valid and s.force_n > c.force_limit_n)
+            or over_s < c.force_trigger_s - 1e-9
         ):
             return None
         return Verdict(
             FailureClass.FORCE_LIMIT,
             rule="force_over_limit",
             evidence={
-                "min_force_n": min(x.force_n for x in list(self._safety)[-self._force_n :]),
-                "limit_n": limit,
-                "over_s": self._span(self._force_n),
+                "force_n": s.force_n,
+                "limit_n": c.force_limit_n,
+                "over_s": over_s,
+                "trigger_s": c.force_trigger_s,
+                "budget_s": c.force_budget_s,
             },
         )
 

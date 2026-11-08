@@ -36,6 +36,9 @@ class MockParams:
     tight_fit_speed_ratio: float = 0.5
     xy_noise_mm: float = 0.05
     force_noise_n: float = 0.2
+    # The F/T sensor reads this with no contact (gripper and plug weight); the runtime has to
+    # subtract it, as in AIC. The value is a stand-in: what matters is that it is not zero.
+    tare_offset_n: float = 6.0  # along z
     # Sensor resolution: signals are quantised, so the log holds exactly what the runtime saw.
     length_resolution_mm: float = 1e-4
     force_resolution_n: float = 1e-3
@@ -206,12 +209,14 @@ class MockWorld:
             self._xy[1] + self._rng.gauss(0.0, p.xy_noise_mm),
         )
         # Drawn even during a dropout, so a dropout does not shift the noise of later samples.
-        force = max(0.0, self._force + self._rng.gauss(0.0, p.force_noise_n))
+        # Weight and contact both act along the insertion axis (z) in the mock.
+        raw_z = p.tare_offset_n + self._force + self._rng.gauss(0.0, p.force_noise_n)
         mm, n = p.length_resolution_mm, p.force_resolution_n
         return Signals(
             height_mm=_quantise(self._height, mm),
             xy_offset_mm=(_quantise(offset[0], mm), _quantise(offset[1], mm)),
-            force_n=_quantise(force, n) if self._wrench_valid else 0.0,
+            raw_force_n=(0.0, 0.0, _quantise(raw_z, n) if self._wrench_valid else 0.0),
+            tare_offset_n=(0.0, 0.0, p.tare_offset_n),
             torque_nm=_quantise(self._torque, p.torque_resolution_nm)
             if self._wrench_valid
             else 0.0,

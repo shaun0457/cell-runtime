@@ -49,7 +49,9 @@ class SignalSampled(_Payload):
     height_mm: float
     depth_mm: float
     xy_error_mm: float
-    force_n: float
+    raw_force_n: tuple[float, float, float]
+    tare_offset_n: tuple[float, float, float]
+    force_n: float  # tared, as the Monitor saw it
     torque_nm: float
     wrench_valid: bool
 

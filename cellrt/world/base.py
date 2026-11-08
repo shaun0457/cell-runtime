@@ -14,13 +14,28 @@ class Signals:
 
     `height_mm` is the plug tip above the port surface (negative once inside the port).
     `xy_offset_mm` is the measured plug-to-port offset in the port plane.
+    `raw_force_n` is the F/T force as the sensor gives it (x, y, z in the sensor frame), not
+    tared; `tare_offset_n` is the offset published beside it, in the same frame (AIC:
+    `wrist_wrench.force` and the latest `controller_state.fts_tare_offset.force`). Tare per axis,
+    then take the magnitude, as the AIC scorer does; the difference of the two magnitudes
+    underestimates contact force. Only `force_n`, the tared magnitude, means contact force.
+    `torque_nm` is a magnitude an adapter must tare the same way (the mock has no torque offset).
     """
 
     height_mm: float
     xy_offset_mm: tuple[float, float]
-    force_n: float
+    raw_force_n: tuple[float, float, float]
+    tare_offset_n: tuple[float, float, float]
     torque_nm: float
     wrench_valid: bool
+
+    @property
+    def force_n(self) -> float:
+        """Tared contact force magnitude (0 while the reading is invalid)."""
+        if not self.wrench_valid:
+            return 0.0
+        tared = (r - o for r, o in zip(self.raw_force_n, self.tare_offset_n, strict=True))
+        return round(math.hypot(*tared), 6)
 
     @property
     def depth_mm(self) -> float:

@@ -23,6 +23,8 @@ def _signal(run_id: str, seq: int) -> Event:
             height_mm=1.0,
             depth_mm=0.0,
             xy_error_mm=0.0,
+            raw_force_n=(0.0, 0.0, 0.0),
+            tare_offset_n=(0.0, 0.0, 0.0),
             force_n=0.0,
             torque_nm=0.0,
             wrench_valid=True,

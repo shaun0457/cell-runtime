@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.monitor.classifier import Monitor, MonitorConfig
 from cellrt.runtime.store import EventStore
 from cellrt.world.base import Signals
+from cellrt.world.mock_world import MockParams
 
 PHASE0 = Path(__file__).resolve().parents[1] / "eval" / "scenarios" / "phase0.yaml"
 SCENARIOS = {s.id: s for s in load_scenarios(PHASE0)}
@@ -48,7 +50,7 @@ INSERT_FAULTS = [
         "tight_fit",
         "FORCE_LIMIT",
         "force_over_limit",
-        lambda ev: ev["min_force_n"] > 20 and ev["over_s"] > 1.0,
+        lambda ev: ev["force_n"] > 20 and ev["over_s"] == 0.5 and ev["budget_s"] == 1.0,
     ),
     (
         "pose_shift",
@@ -97,13 +99,45 @@ def test_the_baseline_raises_no_verdict(tmp_path: Path, seed: int) -> None:
     assert events[-1].payload.outcome == "success"
 
 
+def test_the_force_is_tared_so_a_sensor_bias_over_the_limit_raises_no_verdict(
+    tmp_path: Path,
+) -> None:
+    biased = MockParams(tare_offset_n=30.0)  # like AIC: raw F/T reading, offset published apart
+    with EventStore(tmp_path / "events.sqlite") as store:
+        events = store.events(
+            run_unit(SCENARIOS["baseline"], "A", seed=0, store=store, params=biased).run_id
+        )
+
+    samples = [e.payload for e in events if e.type == "signal_sampled"]
+    assert [e.payload for e in events if e.type == "monitor_verdict"] == []
+    assert events[-1].payload.outcome == "success"
+    assert all(s.tare_offset_n == (0.0, 0.0, 30.0) for s in samples)
+    assert min(math.hypot(*s.raw_force_n) for s in samples) > 25.0  # every raw reading > 20 N
+    assert max(s.force_n for s in samples) < 20.0
+
+
+def test_force_is_tared_per_axis_before_taking_the_magnitude() -> None:
+    # 6 N of weight along z, 25 N of side contact along x: |raw| - |offset| would read 19.7 N.
+    side_push = Signals(
+        height_mm=-2.0,
+        xy_offset_mm=(0.0, 0.0),
+        raw_force_n=(25.0, 0.0, 6.0),
+        tare_offset_n=(0.0, 0.0, 6.0),
+        torque_nm=0.0,
+        wrench_valid=True,
+    )
+
+    assert side_push.force_n == 25.0
+
+
 def _sample(
     height_mm: float = -2.0, force_n: float = 5.0, xy_mm: float = 0.0, valid: bool = True
 ) -> Signals:
     return Signals(
         height_mm=height_mm,
         xy_offset_mm=(xy_mm, 0.0),
-        force_n=force_n,
+        raw_force_n=(0.0, 0.0, force_n),
+        tare_offset_n=(0.0, 0.0, 0.0),
         torque_nm=0.0,
         wrench_valid=valid,
     )
@@ -124,11 +158,14 @@ PRIORITY_CASES = {
         ("SENSOR_DROPOUT", "POSE_ERROR"),
     ),
     "force limit over stuck": (
-        [_sample(height_mm=-min(i, 12), force_n=25.0) for i in range(1, 23)],
+        [_sample(height_mm=-min(i, 12), force_n=25.0 if i > 12 else 5.0) for i in range(1, 23)],
         ("FORCE_LIMIT", "INSERT_STUCK"),
     ),
     "force limit over pose error": (
-        [_sample(height_mm=-i, force_n=25.0, xy_mm=2.0 if i > 17 else 0.0) for i in range(1, 23)],
+        [
+            _sample(height_mm=-i, force_n=25.0 if i > 12 else 5.0, xy_mm=2.0 if i > 17 else 0.0)
+            for i in range(1, 23)
+        ],
         ("FORCE_LIMIT", "POSE_ERROR"),
     ),
     "stuck over stalled": (
@@ -160,10 +197,10 @@ def test_when_several_rules_match_the_highest_priority_class_wins(case: str) -> 
 @pytest.mark.parametrize(
     ("config", "longest_samples"),
     [
-        # Safety window: force over 20 N for more than 1.0 s, 22 samples at 20 Hz.
+        # Sensor window: invalid for 0.2 s, 5 samples at 20 Hz (force is a running sum).
         # Insertion window: stalled for 1.0 s, 21 samples (61 for 3.0 s).
-        (MonitorConfig(), 22 + 21),
-        (MonitorConfig(stall_window_s=3.0), 22 + 61),
+        (MonitorConfig(), 5 + 21),
+        (MonitorConfig(stall_window_s=3.0), 5 + 61),
     ],
 )
 def test_the_signal_window_is_bounded_by_the_longest_rule(
@@ -209,20 +246,52 @@ def test_a_sensor_dropout_is_timed_across_a_skill_boundary() -> None:
     assert classes == [None, None, None, None, "SENSOR_DROPOUT"]  # 5 samples span 0.2 s
 
 
-def test_force_over_the_limit_is_timed_across_a_skill_boundary() -> None:
-    pushing = _sample(force_n=25.0)
-
-    classes = _observe_across([("approach", [pushing] * 11), ("align", [pushing] * 11)])
-
-    assert classes == [None] * 21 + ["FORCE_LIMIT"]  # 22 samples span more than 1.0 s
+PUSHING, LIGHT = _sample(force_n=25.0), _sample(force_n=5.0)
 
 
-def test_after_a_safety_verdict_the_next_skill_gets_a_full_duration_again() -> None:
-    pushing = _sample(force_n=25.0)
+def _verdicts_across(skills_and_samples: list[tuple[str, list[Signals]]]) -> list:
+    monitor = Monitor(period_s=0.05)
+    verdicts = []
+    for skill, samples in skills_and_samples:
+        monitor.reset(skill)
+        verdicts += [monitor.observe(s) for s in samples]
+    return verdicts
 
-    classes = _observe_across([("approach", [pushing] * 22), ("retract", [pushing] * 22)])
 
-    assert classes == [None] * 21 + ["FORCE_LIMIT"] + [None] * 21 + ["FORCE_LIMIT"]
+def test_time_over_the_force_limit_is_summed_over_the_task_like_the_aic_penalty() -> None:
+    # 0.3 s over, 0.5 s under, 0.2 s over in the next skill: never 0.5 s in a row.
+    verdicts = _verdicts_across(
+        [("approach", [PUSHING] * 6 + [LIGHT] * 10), ("align", [PUSHING] * 4)]
+    )
+
+    assert [v and v.failure_class for v in verdicts] == [None] * 19 + ["FORCE_LIMIT"]
+    assert verdicts[-1].evidence["over_s"] == 0.5  # the trigger: half the 1 s AIC budget
+
+
+def test_after_the_trigger_any_further_force_over_the_limit_is_stopped_at_once() -> None:
+    verdicts = _verdicts_across([("approach", [PUSHING] * 10), ("align", [LIGHT] * 3 + [PUSHING])])
+
+    assert [v and v.failure_class for v in verdicts] == [None] * 9 + ["FORCE_LIMIT"] + [
+        None
+    ] * 3 + ["FORCE_LIMIT"]
+    assert verdicts[-1].evidence["over_s"] == 0.55
+
+
+def test_a_retract_is_not_preempted_for_force_but_its_time_over_the_limit_still_counts() -> None:
+    verdicts = _verdicts_across(
+        [("approach", [PUSHING] * 10), ("retract", [PUSHING] * 5), ("align", [PUSHING])]
+    )
+
+    assert [v and v.failure_class for v in verdicts][10:] == [None] * 5 + ["FORCE_LIMIT"]
+    assert verdicts[-1].evidence["over_s"] == 0.8
+
+
+def test_after_a_dropout_verdict_the_next_skill_gets_the_full_duration_again() -> None:
+    invalid = _sample(valid=False)
+
+    classes = _observe_across([("approach", [invalid] * 5), ("wait_free", [invalid] * 5)])
+
+    assert classes == [None] * 4 + ["SENSOR_DROPOUT"] + [None] * 4 + ["SENSOR_DROPOUT"]
 
 
 def test_insertion_rules_never_see_samples_from_before_the_skill_started() -> None:
@@ -280,3 +349,9 @@ def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
     verdict = [monitor.observe(_sample(valid=False)) for _ in range(5)][-1]
 
     assert verdict is not None and "also_matched" not in verdict.evidence
+
+
+@pytest.mark.parametrize("trigger_s", [0.0, 1.5])
+def test_the_force_trigger_must_fall_inside_the_aic_budget(trigger_s: float) -> None:
+    with pytest.raises(ValueError, match="force_trigger_s"):
+        Monitor(period_s=0.05, config=MonitorConfig(force_trigger_s=trigger_s))

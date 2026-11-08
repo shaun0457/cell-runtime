@@ -138,7 +138,8 @@ that reads like the kickoff's, and an LLM is never asked to guess at a case we a
 - Helpers own their start state: after a pose shift the plug rests on the port rim, so "align"
   only works if it first rises; making each helper responsible keeps the plans simple.
 - Shared budgets give one number to state: at most 4 recoveries per task, whatever the number
-  of steps. FORCE_LIMIT gets 1 because every repeat risks another AIC force penalty.
+  of steps. FORCE_LIMIT gets 1 because every repeat spends more of the 1 s AIC force budget, which is
+  summed over the task (ADR 006).
 - Retract to a fixed height: from 8 mm deep, moving up 5 mm leaves the plug inside the port, so
   the retry would not be a new attempt and nothing could change.
 - Seeded persistence: with permanent or one-shot faults B would recover a scenario on every

@@ -94,6 +94,9 @@ def test_a_force_limit_is_recovered_by_retracting_and_inserting_at_half_speed(
     assert a[-1].payload.outcome == "failed"
     assert b[-1].payload.outcome == "success"
     assert _recoveries(b) == [("FORCE_LIMIT", "retract_slow", 1, 1)]
+    # The whole recovery stays inside the AIC force budget: under 1 s over 20 N, summed.
+    over_s = sum(0.05 for e in b if e.type == "signal_sampled" and e.payload.force_n > 20.0)
+    assert over_s < 1.0
     reinsert = [e.payload for e in b if e.type == "skill_started"][-2]
     assert (reinsert.skill, reinsert.params) == ("insert_scripted", {"speed_scale": 0.5})
 

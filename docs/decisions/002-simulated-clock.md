@@ -5,7 +5,7 @@ Status: proposed
 
 ## Context
 
-Skills have timeouts, the Monitor's FORCE_LIMIT rule is "force > 20 N for more than 1 s"
+Skills have timeouts, the Monitor's FORCE_LIMIT rule sums the time over 20 N against a 1 s budget
 (mirroring the AIC penalty), and the eval runs hundreds of units. Design principle 5 requires
 that the same scenario and seed give the same result in mock mode. In Phase 2 the clock is
 Gazebo's sim time, which also does not follow the wall clock.
