@@ -87,7 +87,7 @@ class SkillFinished(_Payload):
 class SkillCancelled(_Payload):
     type: Literal["skill_cancelled"] = "skill_cancelled"
     skill: str
-    reason: Literal["terminated", "timeout"]
+    reason: Literal["terminated", "timeout", "preempted"]
 
 
 class MonitorVerdict(_Payload):

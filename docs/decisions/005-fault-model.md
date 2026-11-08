@@ -15,8 +15,7 @@ Current shape: a scenario lists fault specs (a kind plus parameter ranges). For 
 (scenario, seed), `materialize` draws concrete parameters from `random.Random(
 "{scenario_id}:{seed}:faults")`, a stream separate from the world's noise
 (`"{scenario_id}:{seed}"`); the setting is never part of either key. The mock world applies an
-active fault as an effect (for `controller_stall`: commands are ignored) and reports activation
-and clearing to the runner, which records `fault_injected` / `fault_cleared` with the label.
+active fault as an effect and reports activation and clearing to the runner, which records `fault_injected` / `fault_cleared` with the label.
 Skills receive a `WorldView` that exposes only `signals()` and `command()`.
 
 ## Options
@@ -36,8 +35,10 @@ Skills receive a `WorldView` that exposes only `signals()` and `command()`.
 ### How a fault varies
 
 #### Option A — seeded parameter ranges per fault (onset, magnitude, persistence)
-Persistence is expressed per kind: a duration for `controller_stall`, a number of attempts for
-faults that trigger on an attempt (pose shift, obstacle; next ticket).
+Persistence is expressed per kind: a duration for timed faults (`controller_stall`,
+`sensor_dropout`); faults triggered by the plug's state (`pose_shift`, `obstacle`, `tight_fit`,
+`yaw_mismatch`) take effect when the plug reaches them and, for now, stay in effect. A number
+of affected attempts comes with the recovery ticket, where retries make it matter.
 - Pros: the same seed reproduces exactly; across seeds a bounded retry budget sometimes suffices
   and sometimes does not, so B and C show partial recovery.
 - Cons: ranges need tuning to get a readable spread; "persistence" means different things for

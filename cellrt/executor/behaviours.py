@@ -63,9 +63,12 @@ class ExecEnv:
     recorder: Recorder
     period_s: float
     tracker: TaskTracker = field(default_factory=TaskTracker)
-    monitor: Monitor = field(default_factory=Monitor)
+    monitor: Monitor = field(init=False)
     # Ground truth of injected faults, read only by the runner to record it.
     fault_source: FaultSource | None = None
+
+    def __post_init__(self) -> None:
+        self.monitor = Monitor(self.period_s)
 
 
 class SkillBehaviour(py_trees.behaviour.Behaviour):
@@ -109,11 +112,15 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             result = self._finish()
             self.failure = result.failure
             return Status.SUCCESS if result.ok else Status.FAILURE
+        if verdict := self._env.monitor.observe(self._env.world.signals()):
+            self._record_verdict(verdict)
+            self._cancel("preempted")
+            return Status.FAILURE
         elapsed_ns = self._env.clock.now_ns() - self._started_ns
         if elapsed_ns >= to_ns(self.skill.timeout_s):
-            self._cancel("timeout")
             verdict = self._env.monitor.classify_timeout(elapsed_ns / 1e9, self.skill.timeout_s)
             self._record_verdict(verdict)
+            self._cancel("timeout")
             return Status.FAILURE
         return Status.RUNNING
 
@@ -126,7 +133,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             return
         self._cancel("terminated")
 
-    def _cancel(self, reason: Literal["terminated", "timeout"]) -> None:
+    def _cancel(self, reason: Literal["terminated", "timeout", "preempted"]) -> None:
         assert self._task is not None
         self._task.cancel()
         self._task = None
@@ -162,6 +169,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         attempt = env.recorder.state.skill_attempts.get(self.skill.name, 0) + 1
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
         self._started_ns = env.clock.now_ns()
+        env.monitor.reset(self.skill.name)
         ctx = SkillContext(
             world=WorldView(env.world),
             clock=env.clock,
