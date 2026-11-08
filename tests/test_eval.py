@@ -87,6 +87,12 @@ def test_eval_prints_one_row_per_setting_and_a_confusion_matrix(tmp_path: Path) 
     assert rows["C"][2] == "100.0%"
     assert rows["A"][3] == "-"  # pass^5 is undefined with 2 runs per scenario
     assert any(line.startswith("truth") for line in lines)
+    # C wins both yaw mismatch seeds that A loses, each through a planner call.
+    assert "  B: 0 won, 0 unexplained" in lines
+    assert "  C: 2 won, 0 unexplained" in lines
+    notes = " ".join(line for line in lines if line.startswith("note:"))
+    assert "fault persistence" in notes and "budgets" in notes and "speed" in notes
+    assert "not the value of recovery" in notes
 
 
 def test_eval_rejects_an_invalid_scenarios_file_with_where_it_is_wrong(tmp_path: Path) -> None:

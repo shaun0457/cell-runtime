@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cellrt.eval.metrics import compute_metrics, pass_hat_k, summarize_run
+from cellrt.eval.report import render_gains
 from cellrt.runtime.events import (
     Event,
     FaultCleared,
@@ -12,6 +13,7 @@ from cellrt.runtime.events import (
     MonitorVerdict,
     Payload,
     PlannerCalled,
+    RecoveryStarted,
     RunFinished,
     RunStarted,
     SignalSampled,
@@ -333,3 +335,52 @@ def test_a_fault_still_active_at_the_end_of_the_run_can_be_missed() -> None:
 def test_k_must_be_at_least_one() -> None:
     with pytest.raises(ValueError):
         compute_metrics([], k=0)
+
+
+# --- gains over A ---------------------------------------------------------------------------
+
+
+def _recovery() -> RecoveryStarted:
+    return RecoveryStarted(
+        skill="insert_scripted",
+        failure_class="POSE_ERROR",
+        action="realign",
+        count_for_class=1,
+        count_total=1,
+    )
+
+
+def _planner_call() -> PlannerCalled:
+    return PlannerCalled(skill="insert_scripted", failure_class="UNKNOWN", call=1)
+
+
+def test_a_run_that_wins_where_a_lost_is_explained_by_a_recovery_or_a_planner_call() -> None:
+    runs = [
+        _log("s1", "A", 0, (1.0, _finish("failed"))),
+        _log("s1", "B", 0, (0.5, _recovery()), (1.0, _finish())),
+        _log("s1", "C", 0, (0.5, _planner_call()), (1.0, _finish())),
+        _log("s1", "A", 1, (1.0, _finish("failed"))),
+        _log("s1", "B", 1, (1.0, _finish())),  # won, but nothing in its log says why
+        _log("s1", "C", 1, (1.0, _finish("failed"))),
+        _log("s1", "A", 2, (1.0, _finish())),  # A won too: not a gain
+        _log("s1", "B", 2, (1.0, _finish())),
+    ]
+
+    gains = compute_metrics(runs, k=1).gains
+
+    assert {g.setting: (g.won, g.unexplained) for g in gains} == {
+        "B": (2, ("s1/B/1/a1",)),
+        "C": (1, ()),
+    }
+    assert render_gains(compute_metrics(runs, k=1))[1:] == [
+        "  B: 2 won, 1 unexplained",
+        "    unexplained: s1/B/1/a1",
+        "  C: 1 won, 0 unexplained",
+    ]
+
+
+def test_without_setting_a_there_is_nothing_to_gain_over() -> None:
+    runs = [_log("s1", "B", 0, (1.0, _finish()))]
+
+    assert compute_metrics(runs, k=1).gains == ()
+    assert render_gains(compute_metrics(runs, k=1)) == []

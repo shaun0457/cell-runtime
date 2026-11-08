@@ -21,7 +21,10 @@ Current shape:
 - A unit is complete when one of its attempts has `run_finished` **and** that attempt's
   `config_hash` equals the hash of the configuration the eval runs now. The hash covers the
   parameters and a fingerprint of the core source (every `.py` under `cellrt/`, line endings
-  normalised), so changed code is a changed configuration.
+  normalised), so changed code is a changed configuration. `run_started` also records a hash
+  per part (`config_parts`: scenario, setting, world, monitor, skills, code, recovery, planner), so the log
+  shows which parts two runs share; the fairness test uses it to check that A, B and C share
+  everything but recovery and planner.
 - A unit interrupted `MAX_ATTEMPTS` (3) times under the current configuration is given up on:
   left out of the table and reported on stderr.
 - If several finished attempts match, the first (lowest N) counts; the table reads exactly one

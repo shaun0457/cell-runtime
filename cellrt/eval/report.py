@@ -48,6 +48,29 @@ def render_confusion(table: MetricsTable) -> list[str]:
     return _columns([header, *rows])
 
 
+# What a Phase 0 table can and cannot claim; printed under every table.
+NOTES = (
+    "note: Phase 0 runs on a mock world we designed, so it shows orchestration behaviour"
+    " (detection, preemption, bounded recovery, stopping when budgets run out, replay),"
+    " not the value of recovery; that is measured in the AIC sim in Phase 2.",
+    "note: success, recovery and accuracy depend on mock settings: fault persistence (attempts"
+    " in the scenarios file), recovery and planner budgets (RecoveryConfig), and the"
+    " speed-force model (MockParams).",
+)
+
+
+def render_gains(table: MetricsTable) -> list[str]:
+    """For each setting other than A: the (scenario, seed) pairs it won and A lost, and the run
+    ids of any win with no recovery or planner call in its log. Nothing without setting A."""
+    if not table.gains:
+        return []
+    lines = ["wins over A (A failed, this one succeeded; each needs a recovery or planner call):"]
+    for g in table.gains:
+        lines.append(f"  {g.setting}: {g.won} won, {len(g.unexplained)} unexplained")
+        lines.extend(f"    unexplained: {run_id}" for run_id in g.unexplained)
+    return lines
+
+
 def _pct(value: float | None) -> str:
     return UNDEFINED if value is None else f"{100 * value:.1f}%"
 

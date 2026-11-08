@@ -75,4 +75,16 @@ a stall even for `insert_act`; the seeded range stays well below that.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Every Phase 0 failure class can be produced on demand and is labelled, so classification
+  accuracy and a confusion matrix come straight from the log. Because each fault was designed to
+  match one Monitor rule, the 100 % accuracy of the Phase 0 eval shows that rules and attribution
+  work, not that the Monitor would classify real failures this well (`docs/phase0-results.md`).
+- Who wins is set by our ranges: fault persistence against the recovery budgets (ADR 007) decides
+  B's success in `obstacle`, `pose_shift` and `controller_stall`; the dropout range (0.5–1.0 s)
+  is inside the 2 s sensor wait, and half speed keeps every drawn `tight_fit` under 20 N.
+- The baseline succeeds in every seed (300 of 300, no false alarm), not the ~95 % the Phase 0
+  plan expected: nominal noise is far below the thresholds, and the mock was not changed to
+  produce failures. The nominal failure rate comes from the sim in Phase 2.
+- Parameter changes after the first full eval (`3b4a4eb`, #9): none so far. Any later change to
+  `MockParams` or to the fault ranges in `eval/scenarios/phase0.yaml` is listed here with its
+  reason.

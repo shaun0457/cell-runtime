@@ -83,7 +83,10 @@ class _UnitConfig:
         )
 
     def hash(self, scenario: Scenario, setting: Setting) -> str:
-        return config_hash(
+        return hash_parts(self.parts(scenario, setting))
+
+    def parts(self, scenario: Scenario, setting: Setting) -> dict[str, str]:
+        return config_parts(
             scenario,
             setting,
             self.params,
@@ -186,6 +189,7 @@ async def _run(
     faults = materialize(scenario.faults, random.Random(f"{scenario.id}:{seed}:faults"))
     world = MockWorld(random.Random(f"{scenario.id}:{seed}"), params, faults)
     recorder = Recorder(run_id, store, clock)
+    parts = config.parts(scenario, setting)
     recorder.emit(
         RunStarted(
             scenario_id=scenario.id,
@@ -193,7 +197,8 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config.hash(scenario, setting),
+            config_hash=hash_parts(parts),
+            config_parts=parts,
         )
     )
     env = ExecEnv(
@@ -219,7 +224,7 @@ async def _run(
     return RunResult(run_id=run_id, outcome=outcome)
 
 
-def config_hash(
+def config_parts(
     scenario: Scenario,
     setting: Setting,
     params: MockParams,
@@ -227,8 +232,9 @@ def config_hash(
     monitor: MonitorConfig,
     registry: SkillRegistry,
     planner: Planner | None = None,
-) -> str:
-    """Everything that defines the run besides the seed: a changed scenario is a different run.
+) -> dict[str, str]:
+    """Everything that defines the run besides the seed, as one hash per part: a changed
+    scenario is a different run, and two settings that share a part show the same hash for it.
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
@@ -250,8 +256,16 @@ def config_hash(
             "budget": recovery.planner_budget,
         },
     }
-    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
-    return digest[:16]
+    return {name: _digest(value) for name, value in config.items()}
+
+
+def hash_parts(parts: dict[str, str]) -> str:
+    """The run's config_hash: one hash over all its parts."""
+    return _digest(parts)
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 @functools.cache

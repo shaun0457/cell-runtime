@@ -10,7 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 from cellrt.eval.metrics import compute_metrics
-from cellrt.eval.report import render_confusion, render_table
+from cellrt.eval.report import NOTES, render_confusion, render_gains, render_table
 from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.trees import SETTINGS
@@ -76,7 +76,11 @@ def eval_(
             f" (not in the table): {', '.join(runs.gave_up)}",
             err=True,
         )
-    for line in [*render_table(table), "", *render_confusion(table)]:
+    gains = render_gains(table)
+    for line in [
+        *render_table(table), "", *render_confusion(table), "",
+        *gains, *([""] if gains else []), *NOTES,
+    ]:  # fmt: skip
         typer.echo(line)
 
 

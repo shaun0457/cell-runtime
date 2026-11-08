@@ -23,6 +23,9 @@ class RunStarted(_Payload):
     attempt: int
     task: Task
     config_hash: str
+    # A hash per part of the configuration (scenario, setting, world, monitor, skills, code,
+    # recovery, planner), so a log shows which parts two runs share; config_hash covers them all.
+    config_parts: dict[str, str] = Field(default_factory=dict)
 
 
 class FaultInjected(_Payload):

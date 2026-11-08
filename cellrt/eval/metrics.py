@@ -11,6 +11,9 @@ left out of every metric.
   point while the failed skill attempt ran, from its `skill_started` to the verdict: a fault's
   effect can outlast it (a controller stall that ends just before the skill times out). A fault
   that no verdict is attributed to is a miss; a verdict with no such fault is a false alarm.
+- A gain is a (scenario, seed) that a setting wins and setting A loses. It is explained when the
+  winning run's log has a `recovery_started` or a `planner_called`: the extra success came from
+  recovery, which is the only thing the settings differ in.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from cellrt.runtime.events import (
     FaultInjected,
     MonitorVerdict,
     PlannerCalled,
+    RecoveryStarted,
     RunFinished,
     RunStarted,
     SignalSampled,
@@ -59,6 +63,7 @@ class RunSummary:
     steps: int
     duration_s: float
     planner_calls: int
+    recoveries: int  # recovery_started events
     over_limit_s: float  # time with a valid tared force over UNSAFE_FORCE_N
     verdicts: tuple[VerdictCheck, ...]
     missed: tuple[str, ...]  # labels of faults no verdict was attributed to
@@ -84,10 +89,20 @@ class SettingMetrics:
 
 
 @dataclass(frozen=True)
+class Gains:
+    """The (scenario, seed) pairs a setting wins and setting A loses."""
+
+    setting: str
+    won: int
+    unexplained: tuple[str, ...]  # run ids of wins with no recovery or planner call in the log
+
+
+@dataclass(frozen=True)
 class MetricsTable:
     k: int
     rows: tuple[SettingMetrics, ...]
     confusion: Mapping[tuple[str, str], int]  # (truth, predicted or MISSED) -> count
+    gains: tuple[Gains, ...]  # one per setting other than A, sorted; empty without A
 
 
 def pass_hat_k(n: int, c: int, k: int) -> float | None:
@@ -115,6 +130,7 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
     over_limit_s = 0.0
     last_sample_ts = events[0].ts  # the run's clock need not start at 0
     planner_calls = 0
+    recoveries = 0
     for event in events:
         match event.payload:
             case FaultInjected(fault_id=fid, label=label):
@@ -138,6 +154,8 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
                 last_sample_ts = event.ts
             case PlannerCalled():
                 planner_calls += 1
+            case RecoveryStarted():
+                recoveries += 1
             case _:
                 pass
     return RunSummary(
@@ -149,6 +167,7 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
         steps=finished.steps,
         duration_s=finished.duration,
         planner_calls=planner_calls,
+        recoveries=recoveries,
         over_limit_s=round(over_limit_s, 6),
         verdicts=tuple(verdicts),
         missed=tuple(e.label for e in episodes if not e.attributed),
@@ -193,7 +212,24 @@ def compute_metrics(runs: Iterable[Sequence[Event]], k: int) -> MetricsTable:
         confusion.update((v.truth, v.predicted) for v in summary.verdicts)
         confusion.update((label, MISSED) for label in summary.missed)
     rows = tuple(_row(setting, by_setting[setting], k) for setting in sorted(by_setting))
-    return MetricsTable(k=k, rows=rows, confusion=dict(confusion))
+    return MetricsTable(k=k, rows=rows, confusion=dict(confusion), gains=_gains(by_setting))
+
+
+def _gains(by_setting: Mapping[str, list[RunSummary]]) -> tuple[Gains, ...]:
+    """For each setting other than A, the (scenario, seed) pairs it wins and A loses."""
+    if "A" not in by_setting:
+        return ()
+    a_lost = {(r.scenario_id, r.seed) for r in by_setting["A"] if r.outcome != "success"}
+    gains = []
+    for setting in sorted(by_setting.keys() - {"A"}):
+        won = [
+            r
+            for r in by_setting[setting]
+            if r.outcome == "success" and (r.scenario_id, r.seed) in a_lost
+        ]
+        unexplained = tuple(r.run_id for r in won if not (r.recoveries or r.planner_calls))
+        gains.append(Gains(setting=setting, won=len(won), unexplained=unexplained))
+    return tuple(gains)
 
 
 def _row(setting: str, runs: list[RunSummary], k: int) -> SettingMetrics:

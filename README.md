@@ -39,7 +39,10 @@ in success), unsafe runs (time with tared force over 20 N, summed over the run, 
 the AIC penalty; read from the signals, not from the Monitor), mean time over 20 N, mean steps
 and duration, planner calls per task, and Monitor classification accuracy. Below it, a confusion
 matrix of verdicts against the injected faults, with false alarms (`none`) and misses. A rate
-with nothing to measure is shown as `-`.
+with nothing to measure is shown as `-`. Then the wins over A (runs A lost and another setting
+won), each of which must show a recovery or planner call in its log, and notes on which numbers
+depend on the mock. `docs/phase0-results.md` has the 20-seed results and what they do and do
+not show.
 
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
