@@ -80,7 +80,10 @@ def apply(state: RunState, event: Event) -> RunState:
             return replace(state, current_skill=None)
         case SignalSampled() as signal:
             over_limit_s = state.over_limit_s
-            if signal.wrench_valid and signal.force_n > FORCE_LIMIT_N:
+            if signal.force_over_limit_s is not None:
+                # The world summed its F/T stream within the step (the AIC scorer's rule).
+                over_limit_s = round(over_limit_s + signal.force_over_limit_s, 9)
+            elif signal.wrench_valid and signal.force_n > FORCE_LIMIT_N:
                 since = state.last_sample_ts
                 if since is None:
                     since = state.started_ts if state.started_ts is not None else event.ts

@@ -99,6 +99,7 @@ def test_skills_reach_the_world_only_through_signals_and_commands(store: EventSt
         "tare_offset_n",
         "torque_nm",
         "wrench_valid",
+        "force_over_limit_s",  # read from the F/T stream (AIC), not from fault ground truth
     }
 
 

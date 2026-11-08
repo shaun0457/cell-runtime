@@ -15,7 +15,8 @@ when time advances.
 ### Option A — asyncio owns the loop, single-threaded lockstep
 Each step: `tree.tick_once()` → drain (yield with `asyncio.sleep(0)` until every live skill task
 is waiting on the clock or done, at most 100 yields, else `DrainError`) → `world.step(dt)` →
-`clock.advance(dt)` → record a signal sample. `SkillBehaviour` starts the skill as a task on its
+`clock.advance` by the time the step reports (exactly `dt` in the mock; a sim may take longer,
+since #23) → record a signal sample. `SkillBehaviour` starts the skill as a task on its
 first tick, returns RUNNING until the task is done, maps the result to SUCCESS / FAILURE, and
 cancels the task in `terminate()`.
 - Pros: one thread and a FIFO ready queue, so the schedule is reproducible; no locks; the bridge

@@ -7,6 +7,8 @@ The old rows below were copied as stored from a Phase 0 store (before `config_pa
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -17,7 +19,13 @@ from cellrt.eval.metrics import compute_metrics, summarize_run
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.replay import replay_lines
-from cellrt.runtime.events import SCHEMA_VERSION, RunStarted, SignalSampled, parse_stored
+from cellrt.runtime.events import (
+    PAYLOAD_ADAPTER,
+    SCHEMA_VERSION,
+    RunStarted,
+    SignalSampled,
+    parse_stored,
+)
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 
@@ -57,7 +65,35 @@ def test_a_new_run_records_the_current_schema_version(
     started = store.events(done.run_id)[0].payload
 
     assert isinstance(started, RunStarted)
-    assert started.schema_version == SCHEMA_VERSION == 2
+    assert started.schema_version == SCHEMA_VERSION == 3
+
+
+# The JSON schema of every payload, hashed, per schema version. A payload that changes shape
+# changes the hash: bump SCHEMA_VERSION and record the new hash under it, so two stores with
+# the same version always have the same shape. 2: #21 (`schema_version` itself); 3: #23
+# (`signal_sampled.force_over_limit_s`). Descriptions (docstrings) are left out; a pydantic
+# upgrade that only changes how the schema is written needs the hash re-recorded, not a bump.
+PAYLOAD_SHAPES = {3: "b20ca3e30bfafeb4"}
+
+
+def _shape(schema: object) -> object:
+    """The schema without descriptions: a payload's docstring is not part of its shape."""
+    if isinstance(schema, dict):
+        return {
+            k: _shape(v)
+            for k, v in schema.items()
+            if not (k == "description" and isinstance(v, str))  # not a field named so
+        }
+    if isinstance(schema, list):
+        return [_shape(v) for v in schema]
+    return schema
+
+
+def test_the_payload_shape_matches_the_schema_version() -> None:
+    schema = json.dumps(_shape(PAYLOAD_ADAPTER.json_schema()), sort_keys=True)
+    shape = hashlib.sha256(schema.encode()).hexdigest()[:16]
+
+    assert PAYLOAD_SHAPES.get(SCHEMA_VERSION) == shape
 
 
 def test_a_run_started_stored_before_versioning_reads_as_version_1() -> None:

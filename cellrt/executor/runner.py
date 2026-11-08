@@ -1,13 +1,15 @@
 """The main loop: single-threaded lockstep between the tree, the skill tasks and the world.
 
 Each step: tick the tree → let every skill task run until it waits on the clock → step the
-world → advance the clock → record a signal sample. asyncio's ready queue is FIFO and nothing
-else runs on the loop, so the same inputs always give the same schedule.
+world → advance the clock by the time the step reports → record a signal sample. asyncio's
+ready queue is FIFO and nothing else runs on the loop, so the same inputs always give the same
+schedule.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 
 import py_trees
 from py_trees.common import Status
@@ -24,6 +26,10 @@ from cellrt.runtime.events import (
 from cellrt.runtime.task import Task
 
 MAX_DRAIN_YIELDS = 100
+# A world step may take longer than the period, never shorter: a step that reports less (or no
+# number) would stall the clock, so neither the time limit nor any skill timeout would end the
+# run.
+STEP_TOLERANCE_S = 1e-9
 
 
 class DrainError(RuntimeError):
@@ -48,8 +54,13 @@ async def run_task(
                 return "aborted", stopped
             return "failed", _failure_reason(root)
         await drain(env)
-        env.world.step(env.period_s)
-        env.clock.advance(env.period_s)
+        elapsed = env.world.step(env.period_s)
+        if not (math.isfinite(elapsed) and elapsed >= env.period_s - STEP_TOLERANCE_S):
+            root.stop(Status.INVALID)
+            _record_status_changes(root, statuses, env)
+            await _finish(env)
+            return "aborted", "world step time invalid"
+        env.clock.advance(elapsed)
         step += 1
         _record_faults(env)
         _record_signal(env, step)
