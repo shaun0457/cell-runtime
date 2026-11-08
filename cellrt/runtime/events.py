@@ -13,10 +13,10 @@ Outcome = Literal["success", "failed", "aborted"]
 
 # The version of the event payloads a run was written with, recorded on `run_started`. Version 1
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
-# field itself; 3 added `signal_sampled.force_over_limit_s`. Bump it when a payload changes
-# shape (a test hashes every payload's schema per version), and keep older rows readable: new
-# fields get defaults.
-SCHEMA_VERSION = 3
+# field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
+# `run_started.geometry_source`. Bump it when a payload changes shape (a test hashes every
+# payload's schema per version), and keep older rows readable: new fields get defaults.
+SCHEMA_VERSION = 4
 
 
 class _Payload(BaseModel):
@@ -38,6 +38,9 @@ class RunStarted(_Payload):
     # Required, so no writer can forget it; rows stored before it existed get 1 on reading
     # (`parse_stored`).
     schema_version: int
+    # Where skills got the plug and port poses: "ground_truth" is TF from the AIC sim (blocked in
+    # the submission environment); None is the mock world, which has no poses.
+    geometry_source: Literal["ground_truth"] | None = None
 
 
 class FaultInjected(_Payload):

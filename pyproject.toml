@@ -21,7 +21,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cellrt"]
+# adapters/ ships too: aic_model loads `adapters.aic.RuntimePolicy` from the installed package.
+packages = ["cellrt", "adapters"]
 
 [tool.uv]
 # Same interpreter build locally and in CI; never a system or conda Python.
@@ -68,6 +69,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "TID"]
 [tool.ruff.lint.per-file-ignores]
 # Adapters are where ROS lives.
 "adapters/**" = ["TID251"]
+# Tests of the ROS shell; skipped where ROS is not importable.
+"tests/test_aic_ros_shell.py" = ["TID251"]
 # wall_ts is real time by design (debugging only, never folded).
 "cellrt/runtime/recorder.py" = ["TID251"]
 # drain() yields to the loop with asyncio.sleep(0); it never waits real time.

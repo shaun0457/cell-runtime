@@ -49,6 +49,24 @@ not show.
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
 attempts stay in the store and `cellrt replay` still prints them; the table uses finished runs
 only, so a resumed eval prints the same table as one that was never interrupted. Change the
-code under `cellrt/` or a parameter, and every affected unit runs again (the configuration hash
-covers both). A unit interrupted 3 times under the same configuration is given up on and
+code under `cellrt/` or `adapters/`, `uv.lock` or a parameter, and every affected unit runs
+again (the configuration hash covers them all). A unit interrupted 3 times under the same configuration is given up on and
 reported on stderr, so a unit that crashes every time cannot block the rest.
+
+## The AIC cell (Phase 1, in progress)
+
+`adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch
+the model with `policy:=adapters.aic.RuntimePolicy`, with cell-runtime installed in its
+environment. Each goal (one task) becomes one run in the store named by `CELLRT_STORE`
+(default `runs/aic.sqlite`): scenario = task id, setting A, seed 0. `cellrt replay` reads those
+runs like any other.
+
+So far the policy runs the `approach` skill only (#24); the other scripted skills follow.
+Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS
+against a fake node (`tests/aic_fakes.py`); those two files run only where ROS 2 and AIC are
+installed, and their tests are skipped elsewhere.
+
+The skills read plug and port poses from the sim's ground-truth TF (launch the sim with
+`ground_truth:=true`; every run records `geometry_source: ground_truth`). That is for local
+development only: the AIC submission environment blocks those topics (`docs/access_control.md`
+in the AIC repository).

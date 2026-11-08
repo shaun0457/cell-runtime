@@ -58,5 +58,6 @@ What becomes easier, what becomes harder, what we will need to revisit.
   payload field gets a default. Payloads still forbid unknown fields, so a store written by
   newer code is not readable by older code. The first change that cannot have a default will
   need the reader to convert rows by their run's version; nothing does that yet. Version 3
-  (#23) added `signal_sampled.force_over_limit_s`. A test hashes every payload's JSON schema
+  (#23) added `signal_sampled.force_over_limit_s`, version 4 (#24)
+  `run_started.geometry_source`. A test hashes every payload's JSON schema
   and pins the hash per version, so a shape change without a bump fails.

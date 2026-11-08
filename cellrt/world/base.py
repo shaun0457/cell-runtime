@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -91,6 +92,21 @@ class UnsupportedCommand(TypeError):
     """A world was sent a kind of command it cannot execute."""
 
 
+_STOP_REASON = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+class WorldStopped(Exception):
+    """The world cannot go on: its clock stalled or went back, or ground truth is gone. Raised by
+    `World.step`; the run then ends aborted with `reason`, a fixed lowercase code (never text
+    from upstream, which may carry anything)."""
+
+    def __init__(self, reason: str) -> None:
+        if not _STOP_REASON.fullmatch(reason):
+            raise ValueError("a stop reason is a lowercase code such as 'sim_clock_stalled'")
+        super().__init__(reason)
+        self.reason = reason
+
+
 class World(Protocol):
     def signals(self) -> Signals: ...
 
@@ -98,7 +114,8 @@ class World(Protocol):
 
     def step(self, dt: float) -> float:
         """Let about `dt` seconds pass and return the time that did pass, which the clock then
-        advances by: a world driven by its own clock (a sim) may take longer than asked."""
+        advances by: a world driven by its own clock (a sim) may take longer than asked. Raises
+        `WorldStopped` when it cannot go on."""
         ...
 
 

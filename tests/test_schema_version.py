@@ -65,15 +65,16 @@ def test_a_new_run_records_the_current_schema_version(
     started = store.events(done.run_id)[0].payload
 
     assert isinstance(started, RunStarted)
-    assert started.schema_version == SCHEMA_VERSION == 3
+    assert started.schema_version == SCHEMA_VERSION == 4
 
 
 # The JSON schema of every payload, hashed, per schema version. A payload that changes shape
 # changes the hash: bump SCHEMA_VERSION and record the new hash under it, so two stores with
 # the same version always have the same shape. 2: #21 (`schema_version` itself); 3: #23
-# (`signal_sampled.force_over_limit_s`). Descriptions (docstrings) are left out; a pydantic
-# upgrade that only changes how the schema is written needs the hash re-recorded, not a bump.
-PAYLOAD_SHAPES = {3: "b20ca3e30bfafeb4"}
+# (`signal_sampled.force_over_limit_s`); 4: #24 (`run_started.geometry_source`). Descriptions
+# (docstrings) are left out; a pydantic upgrade that only changes how the schema is written
+# needs the hash re-recorded, not a bump.
+PAYLOAD_SHAPES = {3: "b20ca3e30bfafeb4", 4: "492633644cf97f43"}
 
 
 def _shape(schema: object) -> object:
