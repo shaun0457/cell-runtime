@@ -86,8 +86,10 @@ SUCCESS/FAILURE, and cancels the task on `terminate()`. Keep this bridge in one 
 ### Failure classes (initial)
 
 `POSE_ERROR` (misaligned), `INSERT_STUCK` (force over threshold, no depth progress),
-`FORCE_LIMIT` (force > 20 N for > 1 s — mirrors the AIC penalty), `TIMEOUT`, `SENSOR_DROPOUT`,
-`UNKNOWN`. Injected faults carry a ground-truth label so classifier accuracy can be measured.
+`FORCE_LIMIT` (tared force above 20 N, accumulated over the task — mirrors the AIC penalty;
+the Monitor tracks the running total so recovery can act before the 1 s budget is spent),
+`TIMEOUT`, `SENSOR_DROPOUT`, `UNKNOWN`. Injected faults carry a ground-truth label so
+classifier accuracy can be measured.
 
 ### Eval settings
 
@@ -100,34 +102,70 @@ contact counts), mean duration and steps, planner calls per task, failure-classi
 
 ## AIC facts this project depends on
 
-Source: https://github.com/shaun0457/aic (fork of intrinsic-dev/aic, Apache 2.0).
+Source: https://github.com/shaun0457/aic @ `3ab0653` (fork of intrinsic-dev/aic, Apache 2.0).
+File:line references below are against that commit. Upstream may differ — check which checkout
+you are reading before trusting a reference.
 
-- One trial = one `InsertCable` action goal sent by `aic_engine` to the `aic_model` lifecycle
-  node. The trial sequence is owned by the engine config, not by us. Goals must be cancellable
-  and finish within `Task.time_limit`.
+- A trial can contain several tasks. `aic_engine` sends one `InsertCable` action goal per task,
+  in order, to the `aic_model` lifecycle node (`aic_engine.cpp:218-237`, `:1353`). The task
+  sequence is owned by the engine config, not by us. Goals must be cancellable and finish within
+  `Task.time_limit`.
 - A policy implements `insert_cable(task, get_observation, move_robot, send_feedback) -> bool`
   (`aic_model/aic_model/policy.py`). Our AIC entry point is a `RuntimePolicy` with that signature.
 - `Task`: `id, cable_type, cable_name, plug_type, plug_name, port_type, port_name,
   target_module_name, time_limit`.
-- `Observation`: left/center/right images + camera info, `wrist_wrench` (F/T, tared at start),
-  `joint_states`, `controller_state`.
+- `Observation`: left/center/right images + camera info, `wrist_wrench`, `joint_states`,
+  `controller_state`.
+- **`wrist_wrench` is the raw `/fts_broadcaster/wrench` reading, not tared**
+  (`aic_adapter.cpp:71-72`, `:224`). The tare offset is `controller_state.fts_tare_offset`,
+  published in the sensor frame `ati/tool_link` and recomputed every control cycle
+  (`aic_controller.cpp:1157-1160`, `:1275-1277`). Subtract it before applying any force
+  threshold — this is exactly what the scorer does (`ScoringTier2.cc:423-429`, `:456`).
 - Ground truth (launch with `ground_truth:=true`) arrives as TF frames:
   port `task_board/{target_module_name}/{port_name}_link`,
   plug `{cable_name}/{plug_name}_link`, gripper `gripper/tcp`, reference `base_link`.
 - `CheatCode` (ground-truth expert) is two-phase: approach above the port (z_offset 0.2,
   interpolated), then descend in 0.5 mm steps with a PI correction on XY until z_offset < -0.015,
-  then wait for the connector to settle. This is the basis for the scripted skills.
-- ACT policy: Hugging Face `shaun0457/act_aic` (LeRobot ACT). State 26-dim, action = Cartesian
-  twist, velocity mode, ~4 Hz. Import torch/lerobot lazily (see `RunACT._LightPolicy` in the AIC
-  repo): heavy module-level imports make `aic_model` miss its GetState timeout.
-- Scoring (per trial, max 100): full insertion 75, wrong port -12, partial 38–50, proximity 0–25;
-  force > 20 N for > 1 s: -12; off-limit contact: -24; plus smoothness, duration, path length.
-- Scenario variation: engine config sets task-board pose and per-rail translation/rotation
-  within `task_board_limits` — use this for scenario generation in Phase 2.
-- Runtime: ROS 2 Kilted, Pixi, eval in Docker. Zenoh does not connect across docker-compose
-  services: run the model container with `--network container:aic-eval-1`.
-- A CheatCode trial takes minutes of sim time (settling alone is long). Large-N statistics come
-  from mock mode; sim runs are a smaller confirmation set.
+  then wait 5 s for the connector to settle. This is the basis for the scripted skills.
+- A CheatCode task is about 32 s of **sim time** by construction: 100 x 0.05 s approach,
+  430 descent steps x 0.05 s, 5 s settle (`CheatCode.py:221-255`). Wall-clock time depends on
+  the real-time factor and can be several times longer on weak hardware. Large-N statistics
+  still come from mock mode; sim runs are a smaller confirmation set.
+- ACT policy: in this fork, `RunACT` loads `shaun0457/act_aic` from the local HF cache
+  (`RunACT.py:52-53`; downloaded in `docker/aic_model/Dockerfile:30`). Upstream points to the
+  organisers' `grkw/aic_act_policy` instead. State 26-dim, action = Cartesian twist, velocity
+  mode, ~4 Hz. Import torch/lerobot lazily, as `RunACT._LightPolicy` does (`RunACT.py:17-33`):
+  heavy module-level imports make `aic_model` miss its GetState timeout.
+- Scoring (per trial, per `docs/scoring.md`; max 100): full insertion 75, wrong port -12,
+  partial 38–50, proximity 0–25; off-limit contact -24; plus smoothness, duration, path length.
+- **Force penalty (-12)**: the magnitude of the tared force (torque ignored) above 20 N,
+  **accumulated** over the whole task for more than 1 s — not one continuous second
+  (`ScoringTier2.cc:863-903`). Several short spikes add up.
+- Scenario variation: engine config sets the task-board pose and per-rail translation.
+  `task_board_limits` clamps **translation only** (`aic_engine.cpp:1798-1830`); rotations come
+  from the scene config unclamped, so validate them ourselves.
+- Ground-truth TF is for local development only: the submission environment blocks those
+  topics with a Zenoh ACL (`docs/access_control.md`). Fine for this project; state it in the
+  README.
+- Runtime: ROS 2 Kilted, Pixi, eval in Docker. The official compose file connects the model to
+  the eval router via `AIC_ROUTER_ADDR=eval:7447` (`docker/docker-compose.yaml:26-28`). In
+  Shaun's earlier setup that did not connect, and `--network container:aic-eval-1` was the
+  workaround — an environment issue, not a Zenoh limitation.
+
+## Where things run
+
+- **Phase 0–1: developed on Windows** (native Python 3.12, Shaun's Claude Code setup lives
+  there), pushed to GitHub. The core must therefore run on both Windows and Linux:
+  `pathlib` only, no `loop.add_signal_handler` or other POSIX-only APIs, no shell scripts
+  in the core path. `.gitattributes` forces LF line endings.
+- **CI**: GitHub Actions runs `ruff` + `pytest` for the core on `ubuntu-latest` and
+  `windows-latest`. Adapter tests that need ROS/AIC are skipped when ROS is not importable.
+- **Phase 2: GCP Spot VM** (n1-standard-8 + 1x T4), cloned from GitHub. Results and the
+  SQLite store live on a persistent disk.
+- **Spot VMs can be preempted at any time, so the eval runner must be resumable.** The unit of
+  work is one (scenario, setting, seed). A completed unit is recorded in the event store and
+  skipped on restart. A unit interrupted mid-run is rerun from the start, never resumed
+  half-way. The runner shuts the VM down when the queue is empty (opt-in flag).
 
 ## Conventions
 
@@ -149,7 +187,8 @@ Source: https://github.com/shaun0457/aic (fork of intrinsic-dev/aic, Apache 2.0)
 
 ## Status
 
-- [ ] Phase 0 — ROS-free runtime core + mock world + eval CLI
+- [x] Phase 0 — ROS-free runtime core + mock world + eval CLI (ADRs 001–010: Decision and
+  Why still to be written by Shaun)
 - [ ] Phase 1 — AIC adapter: `RuntimePolicy` plugin, same eval on the real interface
 - [ ] Phase 2 — AIC Gazebo: scripted skills on ground truth, ACT as `insert_act`, fault injection
 - [ ] Phase 3 — LLM planner (validated trees, UNKNOWN-failure triage, human escalation)
