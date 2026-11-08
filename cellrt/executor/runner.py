@@ -14,12 +14,12 @@ from py_trees.common import Status
 
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
 from cellrt.executor.recovery import Recovering
+from cellrt.executor.samples import sampled
 from cellrt.runtime.events import (
     BtNodeChanged,
     FaultCleared,
     FaultInjected,
     Outcome,
-    SignalSampled,
 )
 from cellrt.runtime.task import Task
 
@@ -96,20 +96,7 @@ def _record_faults(env: ExecEnv) -> None:
 
 
 def _record_signal(env: ExecEnv, step: int) -> None:
-    s = env.world.signals()
-    env.recorder.emit(
-        SignalSampled(
-            step=step,
-            height_mm=s.height_mm,
-            depth_mm=s.depth_mm,
-            xy_error_mm=round(s.xy_error_mm, 6),
-            raw_force_n=s.raw_force_n,
-            tare_offset_n=s.tare_offset_n,
-            force_n=s.force_n,
-            torque_nm=s.torque_nm,
-            wrench_valid=s.wrench_valid,
-        )
-    )
+    env.recorder.emit(sampled(step, env.world.signals()))
 
 
 def _record_status_changes(

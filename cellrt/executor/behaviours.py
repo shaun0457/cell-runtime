@@ -21,6 +21,7 @@ from typing import Any, Literal
 import py_trees
 from py_trees.common import Status
 
+from cellrt.executor.samples import signals_of
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
 from cellrt.planner.base import FailureContext, Planner
 from cellrt.planner.schemas import Decision, Rejection, validate_decision
@@ -84,7 +85,10 @@ class ExecEnv:
     time_limit_s: float = math.inf
 
     def __post_init__(self) -> None:
-        self.monitor = Monitor(self.period_s, self.monitor_config)
+        recorder = self.recorder
+        self.monitor = Monitor(
+            self.period_s, self.monitor_config, force_time=lambda: recorder.state.over_limit_s
+        )
 
 
 class SkillBehaviour(py_trees.behaviour.Behaviour):
@@ -132,8 +136,12 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
                 return Status.FAILURE
             self._start()
             return Status.RUNNING
-        # The Monitor is asked first, even on the tick the skill completes.
-        verdict = self._env.monitor.observe(self._env.world.signals())
+        # The Monitor is asked first, even on the tick the skill completes. It judges the sample
+        # as logged (see `executor.samples`): every verdict can be checked from the log.
+        last = self._env.recorder.state.last_signal
+        if last is None:
+            raise RuntimeError("a skill is ticked again before any sample was logged")
+        verdict = self._env.monitor.observe(signals_of(last))
         if self._task.done():
             if verdict and (verdict.failure_class in SAFETY_CLASSES or not _succeeded(self._task)):
                 # A safety verdict overrides the skill's "done"; any verdict overrides the
@@ -222,11 +230,14 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._lease = CommandLease(
             on_dropped=lambda: env.recorder.emit(CommandDropped(skill=skill, attempt=attempt))
         )
+        lease = self._lease
         ctx = SkillContext(
-            world=WorldView(env.world, self._lease),
+            world=WorldView(env.world, lease),
             clock=env.clock,
             period_s=env.period_s,
-            progress=self._progress,
+            # Revoked with the commands: a stopped skill cannot report progress either, which
+            # would land on the node's next attempt.
+            progress=lambda fraction: self._progress(fraction) if lease.active else None,
             params=self._params,
         )
         self._task = env.tracker.spawn(self.skill.run(ctx), name=self.skill.name)
@@ -302,7 +313,7 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         task, self._task = self._task, None
         try:
             raw = task.result()
-        except Exception as exc:  # only the type: the text may hold anything
+        except (Exception, asyncio.CancelledError) as exc:  # the type only: text may hold anything
             result: Decision | Rejection = Rejection(
                 "", (f"<root>: planner_raised {type(exc).__name__}",)
             )
@@ -335,17 +346,18 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
 
 def _succeeded(task: asyncio.Task[SkillResult]) -> bool:
     """Whether a finished skill task returned a successful result."""
-    return task.exception() is None and task.result().ok
+    return not task.cancelled() and task.exception() is None and task.result().ok
 
 
 def _result_of(task: asyncio.Task[SkillResult]) -> tuple[SkillResult, str | None]:
     """The skill's result, and the exception type if it raised.
 
     Only the type is recorded: an exception's text may hold data. A raising skill never crashes
-    the loop; the run is aborted instead (see `executor.runner`).
+    the loop; the run is aborted instead (see `executor.runner`). Nor does one that ended
+    cancelled on its own (the executor clears the task before it cancels one).
     """
     try:
         return task.result(), None
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         error = type(exc).__name__
         return SkillResult(ok=False, detail={"error": error}), error

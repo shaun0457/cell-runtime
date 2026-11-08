@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, fields
+from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from cellrt.eval.runner import run_unit
-from cellrt.eval.scenarios import Scenario
+from cellrt.eval.runner import run_eval, run_unit
+from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.runner import DrainError
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState, fold
@@ -421,3 +423,86 @@ def test_a_skill_that_raises_on_the_tick_of_a_verdict_is_not_recovered(store: Ev
     assert result.outcome == "aborted"
     assert events[-1].payload.reason == "approach raised ValueError"
     assert not any(e.type == "recovery_started" for e in events)
+
+
+# --- inputs the log could not hold, and skills that break the contract (PR #15 review) --------
+
+
+def test_a_scenarios_file_that_repeats_an_id_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "s.yaml"
+    path.write_text("scenarios:\n  - id: baseline\n  - id: baseline\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError) as exc:
+        load_scenarios(path)
+
+    assert [e["type"] for e in exc.value.errors()] == ["duplicate_scenario_id"]
+
+
+def test_run_eval_refuses_two_scenarios_with_one_id(store: EventStore) -> None:
+    twice = [Scenario(id="baseline"), Scenario(id="baseline", description="another")]
+
+    with pytest.raises(ValueError, match="unique"):
+        run_eval(twice, ["A"], 1, store)
+    assert store.run_ids() == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"task": {"time_limit": float("inf")}},
+        {"task": {"time_limit": float("nan")}},
+        {"faults": [{"kind": "obstacle", "depth_mm": [2.0, float("inf")]}]},
+        {"faults": [{"kind": "tight_fit", "onset_depth_mm": [1.0, 2.0],
+                     "force_n_per_mm_s": [float("nan"), 7.0]}]},
+    ],
+)  # fmt: skip
+def test_a_number_json_cannot_hold_is_rejected_before_it_reaches_the_log(bad: dict) -> None:
+    # JSON has no inf or nan: stored as null, the event would no longer parse.
+    with pytest.raises(ValidationError):
+        Scenario.model_validate({"id": "x", **bad})
+
+
+@dataclass(frozen=True)
+class _CancelsItself(Approach):
+    """Breaks the contract: ends cancelled on its own, not because the executor cancelled it."""
+
+    async def run(self, ctx: SkillContext) -> SkillResult:
+        await ctx.clock.sleep(ctx.period_s)
+        raise asyncio.CancelledError
+
+
+def test_a_skill_that_cancels_itself_aborts_its_run_not_the_eval(
+    store: EventStore, baseline: Scenario
+) -> None:
+    registry = SkillRegistry(
+        [_CancelsItself(), Align(), InsertScripted(), Verify(), Retract(), WaitSensor()]
+    )
+
+    result = run_unit(baseline, "B", seed=0, store=store, registry=registry)
+
+    events = store.events(result.run_id)
+    assert result.outcome == "aborted"
+    assert events[-1].payload.reason == "approach raised CancelledError"
+
+
+@dataclass(frozen=True)
+class _ReportsProgressWhenStopped(Approach):
+    """Reports progress from its cleanup after it was stopped."""
+
+    async def run(self, ctx: SkillContext) -> SkillResult:
+        try:
+            return await super().run(ctx)
+        except asyncio.CancelledError:
+            ctx.progress(1.0)
+            raise
+
+
+def test_a_stopped_skill_can_no_longer_report_progress(store: EventStore) -> None:
+    stalled = Scenario.model_validate({"id": "stall", "faults": [STALL_FOREVER]})
+    registry = SkillRegistry([_ReportsProgressWhenStopped(), Align(), InsertScripted(), Verify()])
+
+    result = run_unit(stalled, "A", seed=0, store=store, registry=registry)
+
+    types = [e.type for e in store.events(result.run_id)]
+    assert "skill_cancelled" in types
+    assert "skill_progress" not in types[types.index("skill_cancelled") :]

@@ -4,9 +4,12 @@ Each finished run is summarised on its own (`summarize_run`), then the summaries
 setting (`compute_metrics`). A run without `run_finished` (interrupted) has no summary and is
 left out of every metric.
 
-- Unsafe force is read from `signal_sampled`, not from Monitor verdicts, so a force the Monitor
-  missed still counts. It follows the AIC penalty: the time with tared force over 20 N, summed
-  over the run (not one continuous stretch), exceeding 1 s.
+- Unsafe force is read from `signal_sampled` through the fold (`RunState.over_limit_s`), not
+  from Monitor verdicts, so a force the Monitor missed still counts. It follows the AIC penalty:
+  the time with tared force over 20 N, summed over the run (not one continuous stretch),
+  exceeding 1 s. The Monitor reads the same folded sum.
+- Planner calls and recoveries are the fold's counts too: one definition for the runtime's
+  budgets and the metrics.
 - Classification is judged per Monitor verdict against the faults (ground truth) active at any
   point while the failed skill attempt ran, from its `skill_started` to the verdict: a fault's
   effect can outlast it (a controller stall that ends just before the skill times out). A fault
@@ -29,16 +32,14 @@ from cellrt.runtime.events import (
     FaultCleared,
     FaultInjected,
     MonitorVerdict,
-    PlannerCalled,
-    RecoveryStarted,
     RunFinished,
     RunStarted,
-    SignalSampled,
     SkillStarted,
 )
+from cellrt.runtime.state import FORCE_LIMIT_N, fold
 
 # The AIC force penalty: tared force over this ...
-UNSAFE_FORCE_N = 20.0
+UNSAFE_FORCE_N = FORCE_LIMIT_N
 # ... for longer than this in total over the task.
 UNSAFE_BUDGET_S = 1.0
 # Truth for a verdict given while no fault was active.
@@ -127,10 +128,6 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
     open_episodes: dict[str, _Episode] = {}  # fault_id -> its episode, while active
     skill_started_ts: dict[str, float] = {}  # skill -> when its latest attempt started
     verdicts: list[VerdictCheck] = []
-    over_limit_s = 0.0
-    last_sample_ts = events[0].ts  # the run's clock need not start at 0
-    planner_calls = 0
-    recoveries = 0
     for event in events:
         match event.payload:
             case FaultInjected(fault_id=fid, label=label):
@@ -147,17 +144,9 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
                 if episode is not None:
                     episode.attributed = True
                 verdicts.append(VerdictCheck(episode.label if episode else NO_FAULT, predicted))
-            case SignalSampled(force_n=force, wrench_valid=valid):
-                # A sample stands for the interval since the previous one.
-                if valid and force > UNSAFE_FORCE_N:
-                    over_limit_s += event.ts - last_sample_ts
-                last_sample_ts = event.ts
-            case PlannerCalled():
-                planner_calls += 1
-            case RecoveryStarted():
-                recoveries += 1
             case _:
                 pass
+    state = fold(events)
     return RunSummary(
         run_id=events[0].run_id,
         scenario_id=started.scenario_id,
@@ -166,9 +155,9 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
         outcome=finished.outcome,
         steps=finished.steps,
         duration_s=finished.duration,
-        planner_calls=planner_calls,
-        recoveries=recoveries,
-        over_limit_s=round(over_limit_s, 6),
+        planner_calls=state.planner_calls,
+        recoveries=state.recoveries_total,
+        over_limit_s=round(state.over_limit_s, 6),
         verdicts=tuple(verdicts),
         missed=tuple(e.label for e in episodes if not e.attributed),
     )

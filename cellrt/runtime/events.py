@@ -51,7 +51,10 @@ class SignalSampled(_Payload):
     step: int
     height_mm: float
     depth_mm: float
-    xy_error_mm: float
+    # What Align corrects on. None in logs written before it was recorded: a new field gets a
+    # default, so every older log still reads (ADR 004).
+    xy_offset_mm: tuple[float, float] | None = None
+    xy_error_mm: float  # the magnitude, as the Monitor compared it
     raw_force_n: tuple[float, float, float]
     tare_offset_n: tuple[float, float, float]
     force_n: float  # tared, as the Monitor saw it

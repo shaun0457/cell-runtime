@@ -26,7 +26,9 @@ of a few hundred steps each.
 `(run_id, seq)` primary key, `ts` (clock time), `wall_ts` (debugging only), `type`, JSON
 `payload`; WAL mode; `BEFORE UPDATE` / `BEFORE DELETE` triggers abort; no mutable runs table
 (run lists come from `run_started` / `run_finished`). Writes are buffered: any non-signal event,
-or 500 buffered events, flushes.
+or 500 buffered events, flushes. A field added to an event later gets a default (e.g.
+`signal_sampled.xy_offset_mm`, None in older logs), so a store written by older code still
+reads; a change that cannot have a default would need a format version in `run_started`.
 - Pros: stdlib only; a single file that survives a VM restart; queryable with `json_extract`;
   "append-only" is a database property, not a convention.
 - Cons: a crash can lose up to 500 buffered signal samples (never a decision event); one writer

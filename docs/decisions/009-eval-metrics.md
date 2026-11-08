@@ -90,7 +90,7 @@ with none it is a false alarm; a fault no verdict is attributed to is a miss.
 
 ## Consequences
 
-- Phase 0 result, 7 scenarios × 20 seeds (`cellrt eval --seeds 20`, 44 s, 31 MB store):
+- Phase 0 result, 7 scenarios × 20 seeds (`cellrt eval --seeds 20`, 45 s, 34 MB store):
 
   | setting | success | pass^5 | recovery | unsafe | accuracy |
   |---|---|---|---|---|---|

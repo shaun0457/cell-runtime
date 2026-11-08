@@ -22,6 +22,7 @@ def _signal(run_id: str, seq: int) -> Event:
             step=seq,
             height_mm=1.0,
             depth_mm=0.0,
+            xy_offset_mm=(0.0, 0.0),
             xy_error_mm=0.0,
             raw_force_n=(0.0, 0.0, 0.0),
             tare_offset_n=(0.0, 0.0, 0.0),
@@ -47,6 +48,27 @@ def _started(run_id: str, scenario: str, setting: str, seed: int, attempt: int) 
             config_hash="x",
         ),
     )
+
+
+def test_a_sample_logged_before_xy_offset_was_recorded_still_reads(tmp_path: Path) -> None:
+    # A new event field has a default, so a store written by older code stays readable.
+    old = (
+        '{"type": "signal_sampled", "step": 1, "height_mm": 1.0, "depth_mm": 0.0,'
+        ' "xy_error_mm": 0.5, "raw_force_n": [0, 0, 0], "tare_offset_n": [0, 0, 0],'
+        ' "force_n": 0.0, "torque_nm": 0.0, "wrench_valid": true}'
+    )
+    with EventStore(tmp_path / "e.sqlite"):
+        pass
+    with sqlite3.connect(tmp_path / "e.sqlite") as conn:
+        conn.execute(
+            "INSERT INTO events VALUES ('r/A/0/a1', 1, 0.05, 0.0, 'signal_sampled', ?)", (old,)
+        )
+
+    with EventStore(tmp_path / "e.sqlite") as store:
+        [event] = store.events("r/A/0/a1")
+
+    assert isinstance(event.payload, SignalSampled)
+    assert (event.payload.xy_offset_mm, event.payload.xy_error_mm) == (None, 0.5)
 
 
 def test_events_cannot_be_updated_or_deleted(tmp_path: Path) -> None:

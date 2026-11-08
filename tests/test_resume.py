@@ -90,6 +90,22 @@ def test_an_interrupted_unit_is_rerun_from_the_start_as_the_next_attempt(
     assert [e.type for e in store.events("baseline/A/1/a1")] == ["run_started", "skill_started"]
 
 
+def test_the_eval_numbers_attempts_from_the_runs_it_read_once(
+    store: EventStore, scenarios: list[Scenario], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _interrupted(store, "baseline/A/1", 1, "whatever")
+    _interrupted(store, "baseline/A/1", 2, "whatever")
+
+    # A count per unit would scan every run_started for each unit: n^2 over an eval.
+    def no_scan(*args: object) -> int:
+        raise AssertionError("run_eval must not query the store per unit")
+
+    monkeypatch.setattr(EventStore, "next_attempt", no_scan)
+    result = run_eval(scenarios[:1], ["A"], 2, store)
+
+    assert result.run_ids == ["baseline/A/0/a1", "baseline/A/1/a3"]
+
+
 def test_a_unit_finished_under_another_configuration_is_run_again(
     store: EventStore, scenarios: list[Scenario]
 ) -> None:

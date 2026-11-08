@@ -45,4 +45,12 @@ Behaviours submit coroutines with `run_coroutine_threadsafe` and poll the future
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- A skill that breaks the contract cannot stop the eval: one that raises, or that ends
+  cancelled on its own (not cancelled by the executor), aborts its run with
+  `"<skill> raised <ExceptionType>"`; a planner task that does either is a rejected output.
+- When a skill is stopped (finished, preempted, timed out, terminated) both its command access
+  and its progress callback are revoked, so a stopped skill cannot move the arm or report
+  progress that would land on the node's next attempt.
+- The Monitor judges the sample as it was logged (`executor.samples.signals_of` of the run
+  state's last sample), not a fresh `world.signals()`: a world fed by callbacks (Phase 1) may
+  change between two steps, and every verdict stays checkable from the log.

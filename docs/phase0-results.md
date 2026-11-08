@@ -21,7 +21,7 @@ uv run cellrt eval --scenarios eval/scenarios/phase0.yaml --settings A,B,C --see
 
 7 scenarios × 3 settings × 20 seeds = 420 runs. Measured on Windows 11 (Python 3.12, a laptop):
 
-- one uninterrupted eval: **44 s** wall time; the event store is **31 MB** (`runs/cellrt.sqlite`);
+- one uninterrupted eval: **45 s** wall time; the event store is **34 MB** (`runs/cellrt.sqlite`);
 - running the same command again: 1 s (`ran 0 units, 420 already finished`).
 
 The mock runs in simulated time, so the same command prints the same table on any machine.
@@ -104,7 +104,7 @@ setting, or give A a different Monitor threshold: each mutation makes them fail.
 
 | criterion | evidence |
 |---|---|
-| `pytest -q` passes | 318 tests; CI on every push |
+| `pytest -q` passes | 351 tests; CI on every push |
 | eval runs in one go and prints the table | above; `tests/test_eval.py` |
 | A, B, C face identical faults, difference only from recovery | `tests/test_fairness.py` |
 | one Monitor, one set of thresholds | `config_parts` check in `tests/test_fairness.py` |

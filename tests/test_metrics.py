@@ -46,6 +46,7 @@ def _signal(step: int, force_n: float, valid: bool = True) -> SignalSampled:
         step=step,
         height_mm=0.0,
         depth_mm=0.0,
+        xy_offset_mm=(0.0, 0.0),
         xy_error_mm=0.0,
         raw_force_n=(0.0, 0.0, force_n),
         tare_offset_n=(0.0, 0.0, 0.0),

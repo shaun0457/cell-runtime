@@ -16,4 +16,7 @@ class Task(BaseModel):
     port_type: str = "sfp"
     port_name: str = "port_0"
     target_module_name: str = "nic_card_0"
-    time_limit: float = Field(default=60.0, gt=0, description="seconds of (simulated) time")
+    # Finite: JSON has no inf, so an infinite limit could not be read back from the log.
+    time_limit: float = Field(
+        default=60.0, gt=0, allow_inf_nan=False, description="seconds of (simulated) time"
+    )

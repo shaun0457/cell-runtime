@@ -19,6 +19,10 @@ from cellrt.runtime.events import (
     SkillStarted,
 )
 
+# AIC: tared force above this counts toward the force penalty (`ScoringTier2.cc`). A fact of
+# the scorer, not a tuning knob: the Monitor and the metrics both read the folded sum.
+FORCE_LIMIT_N = 20.0
+
 Status = Literal["pending", "running", "succeeded", "failed", "aborted"]
 _OUTCOME_STATUS: Mapping[str, Status] = {
     "success": "succeeded",
@@ -40,6 +44,10 @@ class RunState:
     # Planner calls so far: setting C's planner budget is checked against this.
     planner_calls: int = 0
     last_signal: SignalSampled | None = None
+    last_sample_ts: float | None = None
+    # Time with a valid tared force over FORCE_LIMIT_N, summed over the task as the AIC penalty
+    # sums it: each sample stands for the interval since the one before (or the run start).
+    over_limit_s: float = 0.0
     started_ts: float | None = None
     finished_ts: float | None = None
 
@@ -71,7 +79,15 @@ def apply(state: RunState, event: Event) -> RunState:
         case SkillFinished() | SkillCancelled():
             return replace(state, current_skill=None)
         case SignalSampled() as signal:
-            return replace(state, last_signal=signal)
+            over_limit_s = state.over_limit_s
+            if signal.wrench_valid and signal.force_n > FORCE_LIMIT_N:
+                since = state.last_sample_ts
+                if since is None:
+                    since = state.started_ts if state.started_ts is not None else event.ts
+                over_limit_s = round(over_limit_s + event.ts - since, 9)
+            return replace(
+                state, last_signal=signal, last_sample_ts=event.ts, over_limit_s=over_limit_s
+            )
         case RunFinished(outcome=outcome):
             return replace(
                 state,

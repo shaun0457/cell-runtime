@@ -43,7 +43,8 @@ class Signals:
 
     @property
     def xy_error_mm(self) -> float:
-        return math.hypot(*self.xy_offset_mm)
+        """Rounded like `force_n`, so the value in the log is the one the Monitor compared."""
+        return round(math.hypot(*self.xy_offset_mm), 6)
 
 
 @dataclass(frozen=True)

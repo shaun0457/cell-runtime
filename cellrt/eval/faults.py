@@ -10,7 +10,7 @@ import math
 import random
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat
 
 from cellrt.world.faults import (
     ControllerStall,
@@ -41,7 +41,8 @@ def _at_least(minimum: float) -> AfterValidator:
     return AfterValidator(check)
 
 
-Range = Annotated[tuple[float, float], AfterValidator(_ordered)]
+# Finite bounds: JSON has no inf or nan, so a drawn value must be one the log can hold.
+Range = Annotated[tuple[FiniteFloat, FiniteFloat], AfterValidator(_ordered)]
 OnsetRange = Annotated[Range, _at_least(0.0)]
 DurationRange = Annotated[Range, _at_least(MIN_FAULT_DURATION_S)]
 DepthRange = Annotated[Range, _at_least(0.0)]

@@ -21,11 +21,14 @@ Current shape:
   value is raw (a dict or a JSON string), so a fake, a rule planner and an LLM share one path.
 - `validate_decision` turns raw output into a `Decision` (`switch_skill(skill)`, `retry`,
   `abort(reason)`; pydantic, `extra="forbid"`, discriminator `kind`) or a `Rejection` holding the
-  raw text (cut to 500 characters) and error codes (`field: type`; a key the planner made up
+  raw text (scrubbed by `runtime.scrub`, then cut to 500 characters: what looks like a key, a
+  token or an e-mail address is redacted, control and direction characters are replaced, since
+  the store keeps it for good) and error codes (`field: type`; a key the planner made up
   shows as `<extra>`, so nothing the planner wrote is echoed in a code). Text over 16,000
   characters, or nested more than 8 brackets deep, is rejected unparsed (`too_long`,
   `too_deep`): parsing deep input would hit a recursion limit that differs by platform.
-  Validation never raises (a hostile `repr` included).
+  Validation never raises (a hostile `repr` included). An `abort` reason may not contain C0 or
+  C1 control characters or direction overrides, and is scrubbed before it is stored.
   A switch must name a registered skill, not the failed one, and one of the step's options.
   An abort reason is at most 200 printable characters: it becomes the run's outcome reason.
 - Only insert steps get a planner in Phase 0; their options are the other registered insert
@@ -49,7 +52,7 @@ Current shape:
 
 #### Option A — raw output, validated by the executor
 - Pros: one validation path for every planner; the stub cannot bypass checks an LLM must pass;
-  the audit trail records exactly what the planner said.
+  the audit trail records what the planner said (scrubbed and cut short).
 - Cons: the stub has to produce dicts instead of typed objects; type checkers see `object`.
 
 #### Option B — a typed `Decision`, each planner validates its own output

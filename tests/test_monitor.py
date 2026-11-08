@@ -10,9 +10,13 @@ import pytest
 
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
+from cellrt.executor.samples import sampled, signals_of
 from cellrt.monitor.classifier import Monitor, MonitorConfig
 from cellrt.monitor.profiles import MonitorProfile
+from cellrt.runtime.events import Event, RunStarted
+from cellrt.runtime.state import RunState, apply, state_at
 from cellrt.runtime.store import EventStore
+from cellrt.runtime.task import Task
 from cellrt.skills.mock import Align, Approach, InsertScripted, Retract, Verify, WaitSensor
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import Signals
@@ -21,6 +25,39 @@ from cellrt.world.mock_world import MockParams
 PHASE0 = Path(__file__).resolve().parents[1] / "eval" / "scenarios" / "phase0.yaml"
 SCENARIOS = {s.id: s for s in load_scenarios(PHASE0)}
 SEEDS = range(8)
+
+
+class _Fed:
+    """A Monitor fed as the runtime feeds it: each sample is logged, and so folded, before the
+    Monitor sees it; the Monitor reads the time over the force limit from the folded state."""
+
+    def __init__(self, period_s: float = 0.05, config: MonitorConfig | None = None) -> None:
+        self._period_s = period_s
+        self._seq = 1
+        started = RunStarted(
+            scenario_id="s", setting="A", seed=0, attempt=1, task=Task(), config_hash="h"
+        )
+        self.state = apply(
+            RunState(), Event(run_id="r", seq=1, ts=0.0, wall_ts=0.0, payload=started)
+        )
+        self.monitor = Monitor(period_s, config, force_time=lambda: self.state.over_limit_s)
+
+    def log(self, s: Signals) -> None:
+        """A sample reaches the log only (e.g. while the planner runs and no skill does)."""
+        self._seq += 1
+        ts = round((self._seq - 1) * self._period_s, 9)
+        event = Event(run_id="r", seq=self._seq, ts=ts, wall_ts=0.0, payload=sampled(self._seq, s))
+        self.state = apply(self.state, event)
+
+    def observe(self, s: Signals):
+        self.log(s)
+        return self.monitor.observe(s)
+
+    def reset(self, profile: MonitorProfile) -> None:
+        self.monitor.reset(profile)
+
+    def buffered(self) -> int:
+        return self.monitor.buffered()
 
 
 def _run(tmp_path: Path, scenario: Scenario, seed: int) -> list:
@@ -149,7 +186,7 @@ def _sample(
 # Settings that switch one rule off, to show the runner-up matches on the same sample.
 DISABLE = {
     "SENSOR_DROPOUT": MonitorConfig(dropout_s=1e6),
-    "FORCE_LIMIT": MonitorConfig(force_limit_n=1e9),
+    "FORCE_LIMIT": MonitorConfig(force_budget_s=1e9, force_trigger_s=1e9),
     "INSERT_STUCK": MonitorConfig(stuck_force_n=1e9),
     "POSE_ERROR": MonitorConfig(pose_tolerance_mm=1e9),
 }
@@ -183,7 +220,7 @@ PRIORITY_CASES = {
 
 
 def _classes(samples: list[Signals], config: MonitorConfig | None = None) -> list[str | None]:
-    monitor = Monitor(period_s=0.05, config=config)
+    monitor = _Fed(0.05, config)
     monitor.reset("insertion")
     return [v.failure_class if (v := monitor.observe(s)) else None for s in samples]
 
@@ -209,7 +246,7 @@ def test_when_several_rules_match_the_highest_priority_class_wins(case: str) -> 
 def test_the_signal_window_is_bounded_by_the_longest_rule(
     config: MonitorConfig, longest_samples: int
 ) -> None:
-    monitor = Monitor(period_s=0.05, config=config)
+    monitor = _Fed(0.05, config)
     monitor.reset("insertion")
 
     for i in range(1000):
@@ -221,7 +258,7 @@ def test_the_signal_window_is_bounded_by_the_longest_rule(
 def test_rule_durations_are_never_shorter_than_specified_when_the_period_does_not_divide_them() -> (
     None
 ):
-    monitor = Monitor(period_s=0.09)  # 0.2 s is not a whole number of 0.09 s steps
+    monitor = _Fed(0.09)  # 0.2 s is not a whole number of 0.09 s steps
     monitor.reset("motion")
 
     verdicts = [monitor.observe(_sample(valid=False)) for _ in range(4)]
@@ -236,7 +273,7 @@ def _observe_across(
 ) -> list[str | None]:
     """Classes per sample while the running skill changes (each change resets the Monitor);
     each skill is given by the Monitor profile it declares."""
-    monitor = Monitor(period_s=0.05)
+    monitor = _Fed(0.05)
     classes: list[str | None] = []
     for profile, samples in profiles_and_samples:
         monitor.reset(profile)
@@ -256,7 +293,7 @@ PUSHING, LIGHT = _sample(force_n=25.0), _sample(force_n=5.0)
 
 
 def _verdicts_across(profiles_and_samples: list[tuple[MonitorProfile, list[Signals]]]) -> list:
-    monitor = Monitor(period_s=0.05)
+    monitor = _Fed(0.05)
     verdicts = []
     for profile, samples in profiles_and_samples:
         monitor.reset(profile)
@@ -290,6 +327,58 @@ def test_an_unloading_skill_is_not_preempted_for_force_but_its_time_still_counts
 
     assert [v and v.failure_class for v in verdicts][10:] == [None] * 5 + ["FORCE_LIMIT"]
     assert verdicts[-1].evidence["over_s"] == 0.8
+
+
+def test_the_monitor_judges_a_sample_exactly_as_it_was_logged() -> None:
+    s = Signals(
+        height_mm=-1.25,
+        xy_offset_mm=(0.3, -0.4),
+        raw_force_n=(1.0, -2.0, 21.5),
+        tare_offset_n=(0.5, 0.5, 0.5),
+        torque_nm=0.25,
+        wrench_valid=True,
+    )
+
+    assert signals_of(sampled(7, s)) == s
+
+
+def test_the_logged_xy_error_is_the_value_the_monitor_compared() -> None:
+    # Just over the 1 mm tolerance before rounding; the log keeps 6 decimals.
+    edge = _sample(xy_mm=1.0000001)
+    fed = _Fed()
+    fed.reset("insertion")
+
+    verdicts = [fed.observe(edge) for _ in range(10)]  # pose error needs 0.2 s = 5 samples
+    logged = fed.state.last_signal
+
+    assert logged is not None
+    assert (logged.xy_offset_mm, logged.xy_error_mm) == ((1.0000001, 0.0), 1.0)
+    # 1.0 mm is within tolerance: the Monitor agrees with what a reader of the log sees.
+    assert verdicts == [None] * 10
+
+
+def test_time_over_the_limit_while_no_skill_runs_still_counts_toward_the_trigger() -> None:
+    # While the planner runs, samples reach the log but not the Monitor; the AIC counts them.
+    fed = _Fed()
+    fed.reset("motion")
+
+    seen = [fed.observe(PUSHING) for _ in range(8)]  # 0.40 s
+    fed.log(PUSHING)
+    fed.log(PUSHING)  # 0.50 s, no skill watching
+    verdict = fed.observe(PUSHING)
+
+    assert seen == [None] * 8
+    assert verdict is not None and verdict.failure_class == "FORCE_LIMIT"
+    assert verdict.evidence["over_s"] == 0.55
+
+
+def test_the_monitor_judges_force_by_the_time_in_the_folded_run_state(tmp_path: Path) -> None:
+    events = _run(tmp_path, SCENARIOS["tight_fit"], seed=0)
+    [verdict] = [e for e in events if e.type == "monitor_verdict"]
+
+    assert verdict.payload.failure_class == "FORCE_LIMIT"
+    # Rebuilt from the log at the verdict: the same time the Monitor acted on.
+    assert state_at(events, verdict.seq).over_limit_s == verdict.payload.evidence["over_s"]
 
 
 def test_after_a_dropout_verdict_the_next_skill_gets_the_full_duration_again() -> None:
@@ -360,7 +449,7 @@ RULES = {
 @pytest.mark.parametrize("case", PRIORITY_CASES)
 def test_the_evidence_names_the_other_rules_that_matched_on_the_same_sample(case: str) -> None:
     samples, (winner, runner_up) = PRIORITY_CASES[case]
-    monitor = Monitor(period_s=0.05)
+    monitor = _Fed(0.05)
     monitor.reset("insertion")
 
     verdict = [monitor.observe(s) for s in samples][-1]
@@ -370,7 +459,7 @@ def test_the_evidence_names_the_other_rules_that_matched_on_the_same_sample(case
 
 
 def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
-    monitor = Monitor(period_s=0.05)
+    monitor = _Fed(0.05)
     monitor.reset("motion")
 
     verdict = [monitor.observe(_sample(valid=False)) for _ in range(5)][-1]
@@ -381,7 +470,7 @@ def test_a_verdict_with_no_other_match_has_no_also_matched_entry() -> None:
 @pytest.mark.parametrize("trigger_s", [0.0, 1.5])
 def test_the_force_trigger_must_fall_inside_the_aic_budget(trigger_s: float) -> None:
     with pytest.raises(ValueError, match="force_trigger_s"):
-        Monitor(period_s=0.05, config=MonitorConfig(force_trigger_s=trigger_s))
+        _Fed(0.05, MonitorConfig(force_trigger_s=trigger_s))
 
 
 def test_a_misspelt_monitor_profile_is_refused_when_the_skill_is_registered() -> None:

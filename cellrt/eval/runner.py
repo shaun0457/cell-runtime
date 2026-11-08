@@ -112,13 +112,18 @@ def run_unit(
     """Run one unit as its next attempt. Setting C asks `planner` (the rule planner by
     default) about UNKNOWN."""
     config = _UnitConfig.resolve(setting, registry, params, recovery, monitor, planner)
-    return _run_next_attempt(scenario, setting, seed, store, config)
-
-
-def _run_next_attempt(
-    scenario: Scenario, setting: Setting, seed: int, store: EventStore, config: _UnitConfig
-) -> RunResult:
     attempt = store.next_attempt(scenario.id, setting, seed)
+    return _run_attempt(scenario, setting, seed, attempt, store, config)
+
+
+def _run_attempt(
+    scenario: Scenario,
+    setting: Setting,
+    seed: int,
+    attempt: int,
+    store: EventStore,
+    config: _UnitConfig,
+) -> RunResult:
     run_id = f"{scenario.id}/{setting}/{seed}/a{attempt}"
     return asyncio.run(_run(run_id, scenario, setting, seed, attempt, store, config))
 
@@ -141,11 +146,16 @@ def run_eval(
     included) is skipped, and its first such attempt counts; any other unit runs as its next
     attempt, so one that was interrupted starts again from the beginning, unless it has been
     interrupted MAX_ATTEMPTS times under this configuration. Nothing is deleted from the log.
-    A setting given twice runs once.
+    A setting given twice runs once. Scenario ids must be unique: every run is keyed by them.
     """
+    if len({s.id for s in scenarios}) != len(scenarios):
+        raise ValueError("scenario ids must be unique")
     finished: dict[tuple[str, str, int, str], str] = {}
     interrupted: Counter[tuple[str, str, int, str]] = Counter()
+    # Attempts per unit under any configuration, read once: the next attempt's number.
+    attempts: Counter[tuple[str, str, int]] = Counter()
     for run in store.runs():  # oldest attempt first: keep the first finished one
+        attempts[(run.scenario_id, run.setting, run.seed)] += 1
         key = (run.scenario_id, run.setting, run.seed, run.config_hash)
         if run.finished:
             finished.setdefault(key, run.run_id)
@@ -167,7 +177,9 @@ def run_eval(
                 elif interrupted[key] >= MAX_ATTEMPTS:
                     gave_up.append(f"{scenario.id}/{setting}/{seed}")
                 else:
-                    run_ids.append(_run_next_attempt(scenario, setting, seed, store, config).run_id)
+                    attempt = attempts[(scenario.id, setting, seed)] + 1
+                    result = _run_attempt(scenario, setting, seed, attempt, store, config)
+                    run_ids.append(result.run_id)
                     ran += 1
     return EvalRuns(run_ids=run_ids, ran=ran, skipped=len(run_ids) - ran, gave_up=gave_up)
 

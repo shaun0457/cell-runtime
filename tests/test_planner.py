@@ -3,6 +3,7 @@ validated against a schema and the skill registry before anything runs."""
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import logging
 from dataclasses import dataclass, field
@@ -191,8 +192,53 @@ def test_rejections_never_echo_what_the_planner_wrote(store: EventStore) -> None
     assert r.errors == ["retry.<extra>: extra_forbidden"]
     hostile = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=FakePlanner([_HostileRepr()]))
     [h] = _rejected(hostile)
-    assert h.raw == "<unrepresentable>"
+    assert h.raw == "<_HostileRepr>"  # its own repr is never called
     assert "secret-token-123" not in str([e.payload for e in hostile])
+
+
+def test_rejected_output_is_scrubbed_before_it_is_stored(store: EventStore) -> None:
+    secret = "sk-SECRETKEY-1234567890"
+    text = FakePlanner([f"cannot comply: key {secret} refused, ask bob@example.com"])
+    huge = FakePlanner([{"kind": "retry", **{f"{secret}-{i}": i for i in range(5000)}}])
+
+    [t] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=text))
+    [h] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=huge))
+
+    for r in (t, h):
+        assert "SECRETKEY" not in r.raw and "bob@" not in r.raw
+        assert 0 < len(r.raw) <= MAX_RAW_CHARS
+    assert t.raw.startswith("cannot comply: key <redacted> refused")
+
+
+def test_an_abort_reason_is_scrubbed_and_must_not_steer_the_terminal(store: EventStore) -> None:
+    leaky = FakePlanner([{"kind": "abort", "reason": "key sk-SECRETKEY-1234567890 refused"}])
+    bidi = FakePlanner([{"kind": "abort", "reason": "looks fine\u202edesrever"}])
+    c1 = FakePlanner([{"kind": "abort", "reason": "csi\x9b2J"}])
+
+    leaked = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=leaky)
+
+    assert "SECRETKEY" not in str([e.payload for e in leaked])
+    assert leaked[-1].payload.reason.endswith("(planner aborted: key <redacted> refused)")
+    for planner in (bidi, c1):
+        [r] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=planner))
+        assert r.errors == ["abort.reason: string_pattern_mismatch"]
+
+
+def test_the_audit_text_of_a_structure_is_bounded_and_the_same_on_every_run(
+    store: EventStore,
+) -> None:
+    deep = FakePlanner([_nested_list(3000)])
+    wide = FakePlanner([{"kind": "retry", **{f"k{i:02}": i for i in range(50)}}])
+    other = FakePlanner([{"kind": "retry", "at": object(), "ok": None, "x": 1.5}])
+
+    [d] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=deep))
+    [w] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=wide))
+    [o] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=other))
+
+    assert d.raw == "[[[[[...]]]]]"  # four levels, then "..."
+    assert w.raw.count(":") == 20 and w.raw.endswith(", ...}")  # twenty entries, then "..."
+    # Not plain data: the type name only, never an address that differs from run to run.
+    assert o.raw == "{'at': <object>, 'kind': 'retry', 'ok': None, 'x': 1.5}"
 
 
 def _retry_nested(depth: int) -> str:
@@ -228,6 +274,20 @@ def test_json_is_parsed_up_to_the_depth_limit_and_rejected_past_it(store: EventS
 class _Raises:
     async def triage(self, ctx: FailureContext) -> object:
         raise ValueError("upstream said: api key sk-123 is invalid")
+
+
+@dataclass
+class _CancelsItself:
+    async def triage(self, ctx: FailureContext) -> object:
+        raise asyncio.CancelledError
+
+
+def test_a_planner_that_cancels_itself_is_rejected_and_aborts_the_run(store: EventStore) -> None:
+    events = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=_CancelsItself())
+
+    [r] = _rejected(events)
+    assert r.errors == ["<root>: planner_raised CancelledError"]
+    assert events[-1].payload.outcome == "aborted"
 
 
 def test_a_planner_that_raises_is_recorded_by_type_and_aborts_the_run(store: EventStore) -> None:

@@ -16,6 +16,8 @@ nothing can be deleted or marked.
 
 Current shape:
 
+- Scenario ids must be unique in a scenarios file (`duplicate_scenario_id`), and `run_eval`
+  refuses duplicates: every run, attempt and metric is keyed by them.
 - Run ids are `scenario/setting/seed/aN`. `N` counts the unit's `run_started` events, so an
   interrupted attempt keeps its number and the rerun gets the next one.
 - A unit is complete when one of its attempts has `run_finished` **and** that attempt's
@@ -121,7 +123,7 @@ Current shape:
 - An eval command is safe to rerun any number of times; `ran N units, M already finished` on
   stderr says what it did.
 - The store grows with every interrupted or reconfigured attempt; nothing is ever removed, so
-  a long campaign needs its own disk budget (the 20-seed Phase 0 eval writes about 31 MB).
+  a long campaign needs its own disk budget (the 20-seed Phase 0 eval writes about 34 MB).
 - The runner does not yet shut the VM down when the queue is empty (CLAUDE.md, opt-in flag);
   that belongs with the Phase 2 runner.
 - Listing the attempts builds the set of finished runs once (a non-correlated subquery), so

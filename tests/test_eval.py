@@ -155,7 +155,8 @@ def test_eval_rejects_bad_options(tmp_path: Path) -> None:
 
 def test_unsafe_force_is_counted_even_when_the_monitor_misses_it(tmp_path: Path) -> None:
     tight = next(s for s in load_scenarios(PHASE0) if s.id == "tight_fit")
-    blind = MonitorConfig(force_limit_n=1000.0)  # a Monitor that never sees force as too high
+    # A Monitor that never acts on force: its trigger is beyond any run.
+    blind = MonitorConfig(force_budget_s=1e9, force_trigger_s=1e9)
 
     with EventStore(tmp_path / "e.sqlite") as store:
         run = run_unit(tight, "A", 0, store, monitor=blind)

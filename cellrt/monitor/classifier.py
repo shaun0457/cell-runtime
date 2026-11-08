@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any
 
 from cellrt.monitor.profiles import MonitorProfile
+from cellrt.runtime.state import FORCE_LIMIT_N
 from cellrt.world.base import Signals
 
 
@@ -40,7 +41,7 @@ class Verdict:
 @dataclass(frozen=True)
 class MonitorConfig:
     dropout_s: float = 0.2
-    force_limit_n: float = 20.0
+    # The force limit itself is the AIC's (`runtime.state.FORCE_LIMIT_N`), not configurable.
     # AIC penalises once the time over the limit, summed over the task, exceeds this.
     force_budget_s: float = 1.0
     # The Monitor fires once the sum reaches this, leaving the rest of the budget for recovery.
@@ -61,9 +62,11 @@ class MonitorConfig:
 class Monitor:
     """Watches the signals of the running skill and returns a verdict once a rule matches.
 
-    Force over the limit is a running sum over the whole task, as in the AIC penalty: never
-    reset, counted in every skill, but a skill that unloads the plug (retract) is not preempted
-    for it. Once the sum reaches the trigger, every further sample over the limit is a verdict.
+    Force over the limit is a running sum over the whole task, as in the AIC penalty. The
+    Monitor does not keep it: `force_time` reads it from the folded run state, which counts
+    every logged sample, also those taken while no skill runs (the planner step). A skill that
+    unloads the plug (retract) is not preempted for force. Once the sum reaches the trigger,
+    every further sample over the limit is a verdict.
 
     Two bounded windows, each as long as its longest rule:
     - sensor validity runs across skill boundaries; it restarts after a dropout verdict, so the
@@ -71,13 +74,19 @@ class Monitor:
     - insertion (progress, XY) covers only the current skill (`reset` clears it).
     """
 
-    def __init__(self, period_s: float, config: MonitorConfig | None = None) -> None:
+    def __init__(
+        self,
+        period_s: float,
+        config: MonitorConfig | None = None,
+        *,
+        force_time: Callable[[], float],
+    ) -> None:
         self.config = c = config or MonitorConfig()
         self._period_s = period_s
         if not 0 < c.force_trigger_s <= c.force_budget_s:
             raise ValueError("force_trigger_s must be positive and at most force_budget_s")
         self._dropout_n = self._held(c.dropout_s)
-        self._over_limit = 0  # samples with force over the limit, this task
+        self._force_time = force_time  # seconds over the limit so far, this task
         self._stuck_n = self._held(c.stuck_window_s)
         self._pose_n = self._held(c.pose_error_s)
         self._stall_n = self._held(c.stall_window_s)
@@ -113,8 +122,6 @@ class Monitor:
         """
         self._safety.append(signals)
         self._window.append(signals)
-        if signals.wrench_valid and signals.force_n > self.config.force_limit_n:
-            self._over_limit += 1
         rules: list[Callable[[Signals], Verdict | None]] = [self._dropout, self._force_limit]
         if self._profile == "insertion":
             rules += [self._stuck, self._pose_error, self._stalled]
@@ -142,10 +149,10 @@ class Monitor:
 
     def _force_limit(self, s: Signals) -> Verdict | None:
         c = self.config
-        over_s = round(self._over_limit * self._period_s, 6)
+        over_s = round(self._force_time(), 6)
         if (
             self._profile == "unload"
-            or not (s.wrench_valid and s.force_n > c.force_limit_n)
+            or not (s.wrench_valid and s.force_n > FORCE_LIMIT_N)
             or over_s < c.force_trigger_s - 1e-9
         ):
             return None
@@ -154,7 +161,7 @@ class Monitor:
             rule="force_over_limit",
             evidence={
                 "force_n": s.force_n,
-                "limit_n": c.force_limit_n,
+                "limit_n": FORCE_LIMIT_N,
                 "over_s": over_s,
                 "trigger_s": c.force_trigger_s,
                 "budget_s": c.force_budget_s,
