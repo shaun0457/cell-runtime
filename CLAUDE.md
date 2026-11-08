@@ -177,7 +177,8 @@ you are reading before trusting a reference.
 
 - Python >= 3.11 (Kilted on Ubuntu 24.04 ships 3.12). Type hints everywhere.
 - Dependencies: stdlib `sqlite3` + `asyncio`, `py_trees`, `pydantic` (schemas), `typer` (CLI),
-  `pytest`. Ask before adding anything else.
+  `pyyaml` (scenario files); dev: `pytest`, `ruff`. Environment and lock file: uv (`uv.lock`).
+  Ask before adding anything else.
 - Format with `ruff format`, lint with `ruff check`. Tests with `pytest -q`.
 - Tests never call a real LLM; use a fake planner with scripted answers.
 - Seeded randomness only (`random.Random(seed)` passed in); no global RNG.
