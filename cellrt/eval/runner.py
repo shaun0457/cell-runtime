@@ -7,6 +7,7 @@ import dataclasses
 import hashlib
 import json
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from cellrt.eval.faults import materialize
@@ -66,6 +67,22 @@ def run_unit(
             (planner or RulePlanner()) if setting == "C" else None,
         )
     )
+
+
+def run_eval(
+    scenarios: Sequence[Scenario],
+    settings: Sequence[Setting],
+    seeds: int,
+    store: EventStore,
+) -> list[str]:
+    """Run every (scenario, setting, seed) for seeds 0..seeds-1, one after another, in that
+    order; return the run ids. Each unit gets a fresh attempt (resuming is a later ticket)."""
+    return [
+        run_unit(scenario, setting, seed, store).run_id
+        for scenario in scenarios
+        for setting in settings
+        for seed in range(seeds)
+    ]
 
 
 async def _run(

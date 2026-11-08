@@ -25,5 +25,19 @@ uv run cellrt run --scenario yaw_mismatch --setting C --seed 0 # C asks the plan
 uv run cellrt replay baseline/A/0/a1                         # every step; add --signals for samples
 ```
 
-Events go to `runs/cellrt.sqlite` by default (`--db` to change). `cellrt eval` arrives with the
-Phase 0 eval tickets (#1).
+Events go to `runs/cellrt.sqlite` by default (`--db` to change).
+
+Run every scenario × setting × seed and print the metrics table, read from the event log
+(about 45 s for the defaults: 7 scenarios × A, B, C × 20 seeds):
+
+```sh
+uv run cellrt eval --scenarios eval/scenarios/phase0.yaml --settings A,B,C --seeds 20 --k 5
+```
+
+One row per setting: success rate, pass^k, recovery rate (runs with a Monitor verdict that end
+in success), unsafe runs (time with tared force over 20 N, summed over the run, above 1 s, as in
+the AIC penalty; read from the signals, not from the Monitor), mean time over 20 N, mean steps
+and duration, planner calls per task, and Monitor classification accuracy. Below it, a confusion
+matrix of verdicts against the injected faults, with false alarms (`none`) and misses. A rate
+with nothing to measure is shown as `-`. Every run of `eval` adds new attempts; skipping units
+that already finished comes with #10.

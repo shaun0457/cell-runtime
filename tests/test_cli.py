@@ -52,12 +52,12 @@ def test_run_with_unreadable_scenarios_file_fails_clearly(tmp_path: Path) -> Non
     empty = tmp_path / "empty.yaml"
     empty.write_text("", encoding="utf-8")
 
-    for path in (missing, empty):
+    for path, message in ((missing, "cannot read"), (empty, "invalid")):
         run = _cellrt("run", "--scenarios", str(path), "--scenario", "baseline",
                       "--db", str(tmp_path / "x.sqlite"))  # fmt: skip
 
         assert run.returncode == 1
-        assert f"cannot read scenarios file {path}" in run.stderr
+        assert f"{message} scenarios file {path}" in run.stderr
         assert "Traceback" not in run.stderr
 
 
