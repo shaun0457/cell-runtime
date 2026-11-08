@@ -11,6 +11,7 @@ from cellrt.runtime.events import (
     FaultInjected,
     MonitorVerdict,
     PreconditionFailed,
+    RecoveryStarted,
     RunFinished,
     RunStarted,
     SignalSampled,
@@ -55,6 +56,11 @@ def describe(event: Event) -> str:
             return f"{p.skill} {verdict} {p.detail}"
         case SkillCancelled() as p:
             return f"{p.skill} ({p.reason})"
+        case RecoveryStarted() as p:
+            return (
+                f"{p.skill} {p.failure_class} -> {p.action} "
+                f"(class {p.count_for_class}, total {p.count_total})"
+            )
         case BtNodeChanged() as p:
             return f"{p.node} -> {p.status}"
         case RunFinished() as p:

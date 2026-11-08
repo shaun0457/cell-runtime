@@ -46,6 +46,8 @@ OnsetRange = Annotated[Range, _at_least(0.0)]
 DurationRange = Annotated[Range, _at_least(MIN_FAULT_DURATION_S)]
 DepthRange = Annotated[Range, _at_least(0.0)]
 MagnitudeRange = Annotated[Range, _at_least(0.0)]
+# How many insertion attempts a fault affects (drawn as a whole number).
+AttemptsRange = Annotated[tuple[int, int], AfterValidator(_ordered), _at_least(1)]
 
 
 class ControllerStallSpec(BaseModel):
@@ -69,6 +71,7 @@ class ObstacleSpec(BaseModel):
 
     kind: Literal["obstacle"] = "obstacle"
     depth_mm: DepthRange
+    attempts: AttemptsRange = (1, 1)
 
 
 class TightFitSpec(BaseModel):
@@ -87,6 +90,7 @@ class PoseShiftSpec(BaseModel):
     kind: Literal["pose_shift"] = "pose_shift"
     trigger_height_mm: DepthRange
     shift_mm: MagnitudeRange
+    attempts: AttemptsRange = (1, 1)
 
 
 class YawMismatchSpec(BaseModel):
@@ -131,7 +135,13 @@ def materialize(specs: list[FaultSpec], rng: random.Random) -> list[Fault]:
                     )
                 )
             case ObstacleSpec():
-                faults.append(Obstacle(fault_id=fault_id, depth_mm=_draw(rng, spec.depth_mm)))
+                faults.append(
+                    Obstacle(
+                        fault_id=fault_id,
+                        depth_mm=_draw(rng, spec.depth_mm),
+                        attempts=rng.randint(*spec.attempts),
+                    )
+                )
             case TightFitSpec():
                 faults.append(
                     TightFit(
@@ -147,6 +157,7 @@ def materialize(specs: list[FaultSpec], rng: random.Random) -> list[Fault]:
                         trigger_height_mm=_draw(rng, spec.trigger_height_mm),
                         shift_mm=_draw(rng, spec.shift_mm),
                         angle_rad=_draw(rng, (0.0, 2 * math.pi)),
+                        attempts=rng.randint(*spec.attempts),
                     )
                 )
             case YawMismatchSpec():

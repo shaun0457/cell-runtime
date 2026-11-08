@@ -37,8 +37,9 @@ Skills receive a `WorldView` that exposes only `signals()` and `command()`.
 #### Option A — seeded parameter ranges per fault (onset, magnitude, persistence)
 Persistence is expressed per kind: a duration for timed faults (`controller_stall`,
 `sensor_dropout`); faults triggered by the plug's state (`pose_shift`, `obstacle`, `tight_fit`,
-`yaw_mismatch`) take effect when the plug reaches them and, for now, stay in effect. A number
-of affected attempts comes with the recovery ticket, where retries make it matter.
+`yaw_mismatch`) take effect when the plug reaches them. Obstacles and pose shifts persist for a
+seeded number of attempts (insertions into the port, descents past the trigger height); see
+ADR 007 for why retries need it.
 - Pros: the same seed reproduces exactly; across seeds a bounded retry budget sometimes suffices
   and sometimes does not, so B and C show partial recovery.
 - Cons: ranges need tuning to get a readable spread; "persistence" means different things for

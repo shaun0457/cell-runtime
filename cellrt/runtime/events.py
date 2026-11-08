@@ -98,6 +98,17 @@ class MonitorVerdict(_Payload):
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
+class RecoveryStarted(_Payload):
+    """The tree starts a recovery for a known failure class, within its budgets."""
+
+    type: Literal["recovery_started"] = "recovery_started"
+    skill: str
+    failure_class: str
+    action: str
+    count_for_class: int
+    count_total: int
+
+
 class BtNodeChanged(_Payload):
     type: Literal["bt_node_changed"] = "bt_node_changed"
     node: str
@@ -123,6 +134,7 @@ Payload = Annotated[
     | SkillFinished
     | SkillCancelled
     | MonitorVerdict
+    | RecoveryStarted
     | BtNodeChanged
     | RunFinished,
     Field(discriminator="type"),

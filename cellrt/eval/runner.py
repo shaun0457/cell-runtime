@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from cellrt.eval.faults import materialize
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.behaviours import ExecEnv
+from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
 from cellrt.executor.trees import Setting, build_tree
 from cellrt.runtime.clock import SimClock
@@ -37,6 +38,7 @@ def run_unit(
     *,
     registry: SkillRegistry | None = None,
     params: MockParams | None = None,
+    recovery: RecoveryConfig | None = None,
 ) -> RunResult:
     attempt = store.next_attempt(scenario.id, setting, seed)
     run_id = f"{scenario.id}/{setting}/{seed}/a{attempt}"
@@ -50,6 +52,7 @@ def run_unit(
             store,
             registry or mock_registry(),
             params or MockParams(),
+            recovery or RecoveryConfig(),
         )
     )
 
@@ -63,6 +66,7 @@ async def _run(
     store: EventStore,
     registry: SkillRegistry,
     params: MockParams,
+    recovery: RecoveryConfig,
 ) -> RunResult:
     clock = SimClock()
     # Keyed by scenario and seed only, never the setting: every setting faces the same world and
@@ -77,13 +81,13 @@ async def _run(
             seed=seed,
             attempt=attempt,
             task=scenario.task,
-            config_hash=config_hash(scenario, setting, params),
+            config_hash=config_hash(scenario, setting, params, recovery),
         )
     )
     env = ExecEnv(
         world=world, clock=clock, recorder=recorder, period_s=params.dt, fault_source=world
     )
-    root = build_tree(setting, registry, env)
+    root = build_tree(setting, registry, env, recovery)
     outcome, reason = await run_task(root, env, scenario.task)
     recorder.emit(
         RunFinished(
@@ -97,12 +101,18 @@ async def _run(
     return RunResult(run_id=run_id, outcome=outcome)
 
 
-def config_hash(scenario: Scenario, setting: Setting, params: MockParams) -> str:
-    """Everything that defines the run besides the seed: a changed scenario is a different run."""
+def config_hash(
+    scenario: Scenario, setting: Setting, params: MockParams, recovery: RecoveryConfig
+) -> str:
+    """Everything that defines the run besides the seed: a changed scenario is a different run.
+
+    Recovery parameters count only for settings that recover.
+    """
     config = {
         "scenario": scenario.model_dump(mode="json"),
         "setting": setting,
         "world": dataclasses.asdict(params),
+        "recovery": None if setting == "A" else recovery.as_dict(),
     }
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     return digest[:16]

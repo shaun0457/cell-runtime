@@ -13,6 +13,7 @@ import py_trees
 from py_trees.common import Status
 
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
+from cellrt.executor.recovery import Recovering
 from cellrt.runtime.events import (
     BtNodeChanged,
     FaultCleared,
@@ -117,6 +118,10 @@ def _record_status_changes(
 
 
 def _failure_reason(root: py_trees.behaviour.Behaviour) -> str:
+    # A recovering step knows why it gave up (iterate() visits children before their parent).
+    for node in root.iterate():
+        if isinstance(node, Recovering) and node.status == Status.FAILURE and node.failure_reason:
+            return node.failure_reason
     for node in root.iterate():
         if isinstance(node, SkillBehaviour) and node.status == Status.FAILURE:
             why = node.failure or node.note

@@ -22,7 +22,7 @@ Rules, checked in priority order:
 
 | Class | Rule | Applies to |
 |---|---|---|
-| SENSOR_DROPOUT | wrench invalid for 0.2 s | every skill |
+| SENSOR_DROPOUT | wrench invalid for 0.2 s | every skill but `wait_sensor` |
 | FORCE_LIMIT | force > 20 N for more than 1.0 s | every skill |
 | INSERT_STUCK | force > 10 N, < 0.2 mm descent over 0.5 s, XY within 1.0 mm | insert skills |
 | POSE_ERROR | XY error > 1.0 mm for 0.2 s | insert skills |

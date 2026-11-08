@@ -66,3 +66,19 @@ def test_replay_of_unknown_run_fails_clearly(tmp_path: Path) -> None:
 
     assert replay.returncode != 0
     assert "no events for run nope/A/0/a1" in replay.stderr
+
+
+def test_a_setting_b_run_shows_its_recovery_in_the_replay(tmp_path: Path) -> None:
+    db = str(tmp_path / "cli.sqlite")
+
+    run = _cellrt("run", "--scenarios", str(SCENARIOS), "--scenario", "pose_shift",
+                  "--setting", "B", "--seed", "0", "--db", db)  # fmt: skip
+
+    assert run.returncode == 0, run.stderr
+    replay = _cellrt("replay", run.stdout.strip().splitlines()[-1], "--db", db)
+
+    assert replay.returncode == 0, replay.stderr
+    recoveries = [line for line in replay.stdout.splitlines() if "recovery_started" in line]
+    assert recoveries[0].split()[3:] == [
+        "insert_scripted", "POSE_ERROR", "->", "realign", "(class", "1,", "total", "1)"
+    ]  # fmt: skip

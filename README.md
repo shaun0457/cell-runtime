@@ -20,6 +20,7 @@ Run one scenario on the mock world and replay it from its event log:
 
 ```sh
 uv run cellrt run --scenario baseline --setting A --seed 0   # prints outcome and run id
+uv run cellrt run --scenario pose_shift --setting B --seed 0 # B recovers known failures
 uv run cellrt replay baseline/A/0/a1                         # every step; add --signals for samples
 ```
 

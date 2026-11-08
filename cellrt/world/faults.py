@@ -51,16 +51,18 @@ class SensorDropout:
 
 @dataclass(frozen=True)
 class Obstacle:
-    """Something blocks the port at `depth_mm`; it takes effect when the plug reaches it."""
+    """Something blocks the port at `depth_mm` during the first `attempts` insertions; it takes
+    effect when the plug reaches it."""
 
     fault_id: str
     depth_mm: float
+    attempts: int = 1
     kind: str = "obstacle"
     label: FailureClass = FailureClass.INSERT_STUCK
 
     @property
     def params(self) -> Mapping[str, Any]:
-        return {"depth_mm": self.depth_mm}
+        return {"depth_mm": self.depth_mm, "attempts": self.attempts}
 
 
 @dataclass(frozen=True)
@@ -81,13 +83,15 @@ class TightFit:
 
 @dataclass(frozen=True)
 class PoseShift:
-    """The port moves sideways by `shift_mm` once the plug descends past `trigger_height_mm`
-    (after alignment, so the insertion starts off target)."""
+    """The port moves sideways by `shift_mm` when the plug descends past `trigger_height_mm`
+    (after alignment, so the insertion starts off target), on each of the first `attempts`
+    descents."""
 
     fault_id: str
     trigger_height_mm: float
     shift_mm: float
     angle_rad: float
+    attempts: int = 1
     kind: str = "pose_shift"
     label: FailureClass = FailureClass.POSE_ERROR
 
@@ -97,6 +101,7 @@ class PoseShift:
             "trigger_height_mm": self.trigger_height_mm,
             "shift_mm": self.shift_mm,
             "angle_rad": self.angle_rad,
+            "attempts": self.attempts,
         }
 
 

@@ -33,7 +33,7 @@ class MockParams:
     friction_base_n: float = 2.0
     friction_n_per_mm_s: float = 1.0
     # In a tight fit the plug moves down at this fraction of the commanded speed.
-    tight_fit_speed_ratio: float = 0.3
+    tight_fit_speed_ratio: float = 0.5
     xy_noise_mm: float = 0.05
     force_noise_n: float = 0.2
     # Sensor resolution: signals are quantised, so the log holds exactly what the runtime saw.
@@ -69,6 +69,8 @@ class MockWorld:
         self._pose_shifts = [f for f in faults if isinstance(f, PoseShift)]
         self._yaw_mismatches = [f for f in faults if isinstance(f, YawMismatch)]
         self._active: set[str] = set()
+        self._descents: dict[str, int] = {}  # descents past each pose shift's trigger height
+        self._entries = 0  # insertions so far: the plug tip going from above the port to inside
         self._transitions: list[FaultTransition] = []
         self._measured = self._measure()
 
@@ -93,6 +95,8 @@ class MockWorld:
             self._xy = (self._xy[0] + vx * dt, self._xy[1] + vy * dt)
         previous_height = self._height
         self._move_vertically(vz, dt, previous_height)
+        if previous_height > 0 >= self._height:
+            self._count_entry()
         self._shift_port(previous_height)
         self._measured = self._measure()
 
@@ -104,7 +108,8 @@ class MockWorld:
         floor = -p.full_depth_mm if in_hole else 0.0
         if in_hole:
             for obstacle in self._obstacles:
-                floor = max(floor, -obstacle.depth_mm)
+                if self._entries <= obstacle.attempts:
+                    floor = max(floor, -obstacle.depth_mm)
             for yaw in self._yaw_mismatches:
                 if self._target_height <= -yaw.stall_depth_mm and -yaw.stall_depth_mm > floor:
                     self._wedge(yaw)
@@ -116,7 +121,7 @@ class MockWorld:
         self._height = max(self._target_height, floor)
         if in_hole:
             for obstacle in self._obstacles:
-                if self._height <= -obstacle.depth_mm:
+                if self._entries <= obstacle.attempts and self._height <= -obstacle.depth_mm:
                     self._engage(obstacle)
         stretch = self._height - self._target_height  # > 0 when pushing against rim or bottom
         friction = 0.0
@@ -127,9 +132,12 @@ class MockWorld:
     def _shift_port(self, previous_height: float) -> None:
         """Pose shift: the port moves sideways when the plug descends past the trigger height."""
         for shift in self._pose_shifts:
-            if shift.fault_id in self._active:
-                continue  # the port moved once; descending past the height again does nothing
-            if previous_height > shift.trigger_height_mm >= self._height:
+            if not previous_height > shift.trigger_height_mm >= self._height:
+                continue
+            self._descents[shift.fault_id] = descent = self._descents.get(shift.fault_id, 0) + 1
+            if descent > shift.attempts:
+                self._clear(shift)
+            else:
                 self._engage(shift)
                 self._xy = (
                     self._xy[0] + shift.shift_mm * math.cos(shift.angle_rad),
@@ -172,8 +180,21 @@ class MockWorld:
                 kinds.add(fault.kind)
         return kinds
 
+    def _count_entry(self) -> None:
+        """A new insertion: faults whose attempts are used up stop affecting the plug."""
+        self._entries += 1
+        for fault in self._obstacles:
+            if self._entries > fault.attempts:
+                self._clear(fault)
+
+    def _clear(self, fault: Fault) -> None:
+        """A fault triggered by the plug's state stops affecting new attempts."""
+        if fault.fault_id in self._active:
+            self._active.discard(fault.fault_id)
+            self._transitions.append(FaultTransition(fault=fault, active=False))
+
     def _engage(self, fault: Fault) -> None:
-        """A fault triggered by the plug's state takes effect; it stays in effect from then on."""
+        """A fault triggered by the plug's state takes effect (until its attempts are used up)."""
         if fault.fault_id not in self._active:
             self._active.add(fault.fault_id)
             self._transitions.append(FaultTransition(fault=fault, active=True))

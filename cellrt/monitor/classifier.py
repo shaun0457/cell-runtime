@@ -36,6 +36,8 @@ class Verdict:
 class MonitorConfig:
     # Skills during which the insertion rules apply.
     insert_skills: frozenset[str] = frozenset({"insert_scripted", "insert_act"})
+    # Skills that wait for the sensor to come back; the dropout rule does not apply to them.
+    sensor_wait_skills: frozenset[str] = frozenset({"wait_sensor"})
     dropout_s: float = 0.2
     force_limit_n: float = 20.0
     force_limit_s: float = 1.0  # exceeded only when held for longer than this
@@ -92,7 +94,8 @@ class Monitor:
 
     def observe(self, signals: Signals) -> Verdict | None:
         self._window.append(signals)
-        if self._holds(lambda s: not s.wrench_valid, self._dropout_n):
+        waiting = self._skill in self.config.sensor_wait_skills
+        if not waiting and self._holds(lambda s: not s.wrench_valid, self._dropout_n):
             return Verdict(
                 FailureClass.SENSOR_DROPOUT,
                 rule="wrench_invalid",

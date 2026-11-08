@@ -111,6 +111,8 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         if self._task.done():
             result = self._finish()
             self.failure = result.failure
+            if not result.ok and isinstance(reason := result.detail.get("reason"), str):
+                self.note = reason
             return Status.SUCCESS if result.ok else Status.FAILURE
         if verdict := self._env.monitor.observe(self._env.world.signals()):
             self._record_verdict(verdict)
