@@ -13,6 +13,7 @@ from aic_fakes import SECRET, FakeNode
 
 from adapters.aic import run as aic_run
 from adapters.aic.run import run_goal
+from cellrt.replay import replay_lines
 from cellrt.runtime.events import (
     CommandDropped,
     Event,
@@ -363,3 +364,14 @@ def test_the_hold_check_comes_before_run_finished(store: EventStore) -> None:
     types = [type(e.payload).__name__ for e in _events(store)]
     assert types[-2:] == ["HoldChecked", "RunFinished"]
     assert _hold(store).result == "hold_confirmed"  # a cancelled goal still checks the stop
+
+
+def test_replay_reads_a_cell_run_to_its_end(store: EventStore) -> None:
+    node = FakeNode(task=TASK, goal_stop=("goal_cancel_requested", 40))
+    run_goal(node, TASK, store)
+
+    lines = list(replay_lines(_events(store), signals=True))
+
+    assert len(lines) == len(_events(store))
+    assert "hold_checked" in lines[-2] and "hold_confirmed (max 0.0mm/s, 3 samples" in lines[-2]
+    assert lines[-1].split()[2:4] == ["run_finished", "aborted:"]
