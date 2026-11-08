@@ -12,3 +12,5 @@ build/
 runs/
 reports/
 .env
+# Git Bash crash dumps
+*.stackdump
