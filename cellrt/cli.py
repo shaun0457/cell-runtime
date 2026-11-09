@@ -1,4 +1,4 @@
-"""`cellrt run | eval | replay`."""
+"""`cellrt run | eval | baseline | replay | trace`."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -20,7 +21,9 @@ from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.trees import SETTINGS
 from cellrt.replay import replay_lines
+from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
+from cellrt.trace_export import export_trace
 
 DEFAULT_DB = Path("runs") / "cellrt.sqlite"
 DEFAULT_SCENARIOS = Path("eval") / "scenarios" / "phase0.yaml"
@@ -110,7 +113,7 @@ def baseline(
             text = json.dumps(recorded, indent=2, sort_keys=True, allow_nan=False) + "\n"
         except ValueError:
             _fail(f"the eval gave a non-finite number; {path} not written")
-        _write_whole(path, text)
+        _write_whole(path, text, what="baseline file")
         typer.echo(f"wrote {path}")
         return
     try:
@@ -125,9 +128,9 @@ def baseline(
     typer.echo(f"matches {path}")
 
 
-def _write_whole(path: Path, text: str) -> None:
+def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
-    write leaves the old file whole. A failure names the error type only."""
+    write leaves the old file whole. A failure names `what` and the error type only."""
     tmp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +139,7 @@ def _write_whole(path: Path, text: str) -> None:
     except OSError as exc:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
-        _fail(f"cannot write baseline file {path} ({type(exc).__name__})")
+        _fail(f"cannot write {what} {path} ({type(exc).__name__})")
 
 
 def _baseline_table(config: BaselineConfig) -> dict[str, object]:
@@ -169,14 +172,53 @@ def replay(
     signals: Annotated[bool, typer.Option(help="include every signal sample")] = False,
 ) -> None:
     """Print every step of a run from its event log."""
+    for line in replay_lines(_run_events(run_id, db), signals=signals):
+        typer.echo(line)
+
+
+class TraceClockOption(StrEnum):
+    wall = "wall"
+    sim = "sim"
+
+
+@app.command()
+def trace(
+    run_id: Annotated[str, typer.Argument(help="run id printed by `cellrt run`")],
+    db: DbOption = DEFAULT_DB,
+    out: Annotated[Path | None, typer.Option(help="file to write; stdout when absent")] = None,
+    clock: Annotated[
+        TraceClockOption,
+        typer.Option(
+            help="wall: when each event was recorded, so a model call shows its real cost;"
+            " sim: the run's clock, as the robot saw it"
+        ),
+    ] = TraceClockOption.wall,
+) -> None:
+    """Export a run as Chrome trace event JSON, for https://ui.perfetto.dev or chrome://tracing."""
+    events = _run_events(run_id, db)
+    # Replacing the store would lose the log for good: it is append-only only through SQLite.
+    if out is not None and out.exists() and os.path.samefile(out, db):
+        _fail("--out is the event store itself; no trace written")
+    try:
+        text = json.dumps(export_trace(events, clock=clock.value), allow_nan=False)
+    except ValueError:
+        _fail(f"run {run_id} has a time that is not a finite number; no trace written")
+    if out is None:
+        typer.echo(text)
+        return
+    _write_whole(out, text + "\n", what="trace file")
+    typer.echo(f"wrote {out}")
+
+
+def _run_events(run_id: str, db: Path) -> list[Event]:
+    """Every event of `run_id`, or exit with a fixed message. A missing store is not created."""
     if not db.exists():
         _fail(f"no events for run {run_id} (no event store at {db})")
     with EventStore(db) as store:
         events = store.events(run_id)
     if not events:
         _fail(f"no events for run {run_id}")
-    for line in replay_lines(events, signals=signals):
-        typer.echo(line)
+    return events
 
 
 def _load(path: Path) -> list[Scenario]:
