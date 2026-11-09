@@ -17,10 +17,17 @@ the numbers.
    sound.
 3. **Shaun in an interview:** the order to tell it in, and the weaknesses to name first.
 
+**Revised after #28 (2026-11-09).** Shaun's interview is close, so the README and the interview
+one-pager are drafted as soon as Phase 3's first LLM path stands. They are revised when Phase 2
+results exist; they do not wait for them.
+
 ## Prerequisites
 
-- Phase 2 results exist (Phase 3 results too, if Phase 3 is done; otherwise the README says
-  where it stopped).
+- **Verifiable evidence of a real model in the loop.** Phase 3's first LLM path has a results
+  document that names the command and the store behind each number. A result showing no gain
+  over the simple policy counts.
+- Phase 2 results if they exist. Otherwise the README states what the sim run (#28) showed and
+  what it did not, and where the work stopped.
 - **Every ADR is accepted, and Shaun has read each one.** Decision and Why are drafted by
   Claude under his delegation; the report quotes the ADRs and an interviewer may open any of
   them, so he must be able to explain each in his own words (the interview cards help).
@@ -42,15 +49,21 @@ the numbers.
    still true from `docs/phase0-results.md` and the Phase 2 results.
 3. **ADR index** (`docs/decisions/README.md`): one line per ADR, its decision in plain words,
    accepted or superseded.
-4. **Demo video**, 3–4 minutes, recorded on the VM:
-   - one clean sim run;
-   - one run with an injected fault: the Monitor verdict, the recovery, the success;
-   - `cellrt replay` of that run, showing the force curve and each decision;
+4. **Demo video**, 3–4 minutes:
+   - one clean sim run (recorded on the VM);
+   - one run with a fault: the Monitor verdict, the recovery or the planner's decision, and the
+     outcome (a mock run is acceptable if no sim run shows one);
+   - `cellrt replay` of that run, showing the force curve and each decision, including the
+     model's prompt and answer;
    - the A/B/C table, with one sentence on what it does not show.
+
    Screen capture of Gazebo and the terminal, with captions; no voice-over required.
-5. **Interview one-pager** (kept outside the repo or in `docs/`): the 30-second version, the
-   three decisions Shaun is proudest of, the three weaknesses he names first, and the answer to
-   "what did you build and what did Claude Code build".
+5. **Interview one-pager** (kept outside the repo or in `docs/`). It holds:
+   - the 30-second version;
+   - the three decisions Shaun is proudest of;
+   - the three weaknesses he names first;
+   - questions and answers drawn from the attacks in `docs/reviews/2026-11-09-plan-grill.md`;
+   - the answer to "what did you build and what did Claude Code build".
 
 ## Decisions (plan mode)
 
