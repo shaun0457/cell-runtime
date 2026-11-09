@@ -23,9 +23,17 @@ uv run cellrt run --scenario baseline --setting A --seed 0   # prints outcome an
 uv run cellrt run --scenario pose_shift --setting B --seed 0 # B recovers known failures
 uv run cellrt run --scenario yaw_mismatch --setting C --seed 0 # C asks the planner about UNKNOWN
 uv run cellrt replay baseline/A/0/a1                         # every step; add --signals for samples
+uv run cellrt trace yaw_mismatch/C/0/a1 --out runs/yaw.json  # the run as a trace for Perfetto
 ```
 
 Events go to `runs/cellrt.sqlite` by default (`--db` to change).
+
+`cellrt trace` writes Chrome trace event JSON (stdout without `--out`); open it in
+<https://ui.perfetto.dev> or `chrome://tracing`. It has spans for the run, each skill run and
+each planner call (with the model's answer, tokens and latency when a model planner was asked),
+the Monitor's verdicts, recoveries and faults as instants, and tared force and depth as counters
+(at most 2,000 points each). Marks are timed by wall time, so a model call shows its real cost;
+`--clock sim` times them by the run's clock instead. Each mark has both clocks in its args.
 
 Run every scenario × setting × seed and print the metrics table, read from the event log
 (about 45 s for the defaults: 7 scenarios × A, B, C × 20 seeds):
