@@ -8,8 +8,8 @@ What happened when each run asked a model on NVIDIA NIM for its plan before anyt
 With the planner for UNKNOWN (setting C) every tree reached 100%, because the recovery layer
 repaired the model's plans. In these answers its choice of insert skill did not follow the plug
 type: it chose `insert_act` for 2 of 9 SC tasks and for 4 of 10 SFP tasks, and it gave two
-different plans to the same prompt at temperature 0. Every answer it gave was a valid plan; one call of 20 hit the
-30 s deadline.
+different plans to the same prompt at temperature 0. Every answer it gave was a valid plan; one
+call of 20 hit the 30 s deadline.
 
 Read this with three limits in mind:
 
@@ -42,8 +42,10 @@ S=eval/scenarios/phase3-tasks.yaml
 # NVIDIA_API_KEY in the environment; the openai SDK is the optional extra `llm`
 uv run --extra llm cellrt eval --scenarios $S --settings B,C --seeds 5 --k 1 --tree llm \
   --max-model-calls 20 --db runs/task-plan/llm.sqlite
-uv run cellrt eval --scenarios $S --settings B,C --seeds 5 --k 1 --tree table --db runs/task-plan/table.sqlite
-uv run cellrt eval --scenarios $S --settings B,C --seeds 5 --k 1 --tree fixed --db runs/task-plan/fixed.sqlite
+for t in table fixed; do
+  uv run cellrt eval --scenarios $S --settings B,C --seeds 5 --k 1 --tree $t \
+    --db runs/task-plan/$t.sqlite
+done
 uv run cellrt replay sfp/B/0/a1 --db runs/task-plan/llm.sqlite
 ```
 
