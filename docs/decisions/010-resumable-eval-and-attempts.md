@@ -123,6 +123,16 @@ Current shape:
 
 ## Consequences
 
+- In the AIC cell (Phase 1) a unit is one goal of an engine run: scenario
+  `<session>/goal<N>/<task id>`, setting A, seed 0. `CELLRT_SESSION` names the engine config, so
+  running it again gives new attempts of the same units. The engine sends no trial id, and in
+  its sample config every trial's task is `task_1`; keyed by task id alone, the three trials
+  would be three attempts of one unit. The cell never reruns a unit by itself. Two limits:
+  two engine configs run under the same session share scenario ids, and goal N is the
+  config's N-th task only when the engine sent every goal before it (a trial it skips because
+  the model was not ready, or a task it never sends after a timeout, shifts the later goals).
+  A Phase 2 runner that writes the engine configs can name the scenarios itself.
+
 - An eval command is safe to rerun any number of times; `ran N units, M already finished` on
   stderr says what it did.
 - The store grows with every interrupted or reconfigured attempt; nothing is ever removed, so

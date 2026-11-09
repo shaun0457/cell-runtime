@@ -85,6 +85,7 @@ def policy_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[t
     monkeypatch.setitem(sys.modules, "adapters.aic.ros_port", ros_port)
     monkeypatch.delitem(sys.modules, "adapters.aic.RuntimePolicy", raising=False)
     monkeypatch.setenv("CELLRT_STORE", str(tmp_path / "store" / "aic.sqlite"))
+    monkeypatch.delenv("CELLRT_SESSION", raising=False)
     _Port.closed, _Port.fail_on_init, _Port.fail_on_close = 0, False, False
     module = importlib.import_module("adapters.aic.RuntimePolicy")
     yield module
@@ -161,3 +162,76 @@ def test_a_failing_close_does_not_change_the_result(policy_module: types.ModuleT
 
     assert node.logger.errors == ["cell-runtime close failed: RuntimeError"]
     assert all(SECRET not in e for e in node.logger.errors)
+
+
+# --- one unit per goal (#24 F7) -----------------------------------------------------------------
+# aic_engine sends no trial id: each goal carries only its Task, and in the sample config every
+# trial's task is `task_1` (sample_config.yaml:142, :236, :318). One RuntimePolicy lives for
+# the whole engine run (created on the node's first configure, aic_engine.cpp:1081-1090), so it
+# numbers its goals; CELLRT_SESSION names the engine config they come from.
+
+
+def _units(tmp_path: Path) -> list[tuple[str, int]]:
+    with EventStore(tmp_path / "store" / "aic.sqlite") as store:
+        return [(r.scenario_id, r.attempt) for r in store.runs()]
+
+
+def test_each_goal_of_an_engine_run_is_its_own_unit(
+    policy_module: types.ModuleType, tmp_path: Path
+) -> None:
+    policy = policy_module.RuntimePolicy(_Node())
+
+    for _ in range(3):  # three trials, each with the task `task_1`
+        assert policy.insert_cable(TASK, None, None, None) is True
+
+    assert sorted(_units(tmp_path)) == [
+        ("aic/goal1/trial_1_task_1", 1),
+        ("aic/goal2/trial_1_task_1", 1),
+        ("aic/goal3/trial_1_task_1", 1),
+    ]
+
+
+def test_the_session_names_the_engine_config_and_a_rerun_is_a_new_attempt(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CELLRT_SESSION", "sample_config")
+
+    for _ in range(2):  # the same engine config run twice: a new policy each time
+        assert _insert(policy_module, _Node()) is True
+
+    assert sorted(_units(tmp_path)) == [
+        ("sample_config/goal1/trial_1_task_1", 1),
+        ("sample_config/goal1/trial_1_task_1", 2),
+    ]
+
+
+def test_a_goal_that_fails_before_its_run_still_takes_its_number(
+    policy_module: types.ModuleType, tmp_path: Path
+) -> None:
+    policy = policy_module.RuntimePolicy(_Node())
+
+    assert policy.insert_cable(object(), None, None, None) is False
+    assert policy.insert_cable(TASK, None, None, None) is True
+
+    assert _units(tmp_path) == [("aic/goal2/trial_1_task_1", 1)]
+
+
+@pytest.mark.parametrize("label", ["", "a" * 65, "../up", "has space", "-lead", "x/y"])
+def test_a_session_label_that_is_not_a_plain_name_is_refused_at_start(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, label: str
+) -> None:
+    monkeypatch.setenv("CELLRT_SESSION", label)
+
+    with pytest.raises(ValueError, match=r"^CELLRT_SESSION must be"):
+        policy_module.RuntimePolicy(_Node())
+
+
+def test_a_session_label_of_64_characters_is_accepted(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    label = "a" * 64
+    monkeypatch.setenv("CELLRT_SESSION", label)
+
+    assert _insert(policy_module, _Node()) is True
+
+    assert _units(tmp_path) == [(f"{label}/goal1/trial_1_task_1", 1)]
