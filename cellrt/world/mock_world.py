@@ -17,7 +17,14 @@ import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from cellrt.world.base import HOLD, FaultTransition, Signals, Velocity
+from cellrt.world.base import (
+    HOLD,
+    Command,
+    FaultTransition,
+    Signals,
+    UnsupportedCommand,
+    Velocity,
+)
 from cellrt.world.faults import Fault, Obstacle, PoseShift, TightFit, TimedFault, YawMismatch
 
 
@@ -81,7 +88,9 @@ class MockWorld:
         self._transitions: list[FaultTransition] = []
         self._measured = self._measure()
 
-    def command(self, cmd: Velocity) -> None:
+    def command(self, cmd: Command) -> None:
+        if not isinstance(cmd, Velocity):
+            raise UnsupportedCommand(f"the mock world takes velocities, not {type(cmd).__name__}")
         self._cmd = cmd
 
     def signals(self) -> Signals:
@@ -91,7 +100,12 @@ class MockWorld:
         transitions, self._transitions = self._transitions, []
         return transitions
 
-    def step(self, dt: float) -> None:
+    def step(self, dt: float) -> float:
+        """Move the world `dt` seconds on; exactly `dt` passes."""
+        self._advance(dt)
+        return dt
+
+    def _advance(self, dt: float) -> None:
         p = self.params
         self._steps += 1
         active = self._update_timed_faults(round(self._steps * dt, 9))

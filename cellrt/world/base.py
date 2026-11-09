@@ -1,4 +1,4 @@
-"""What the runtime sees of the world, and the one command it can send."""
+"""What the runtime sees of the world, and the commands it can send."""
 
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ class Signals:
     then take the magnitude, as the AIC scorer does; the difference of the two magnitudes
     underestimates contact force. Only `force_n`, the tared magnitude, means contact force.
     `torque_nm` is a magnitude an adapter must tare the same way (the mock has no torque offset).
+    `force_over_limit_s` is the time over the force limit within the step this sample closes,
+    when the world reads the F/T stream faster than it samples (AIC: the scorer's sum over every
+    wrench message, valid or not); None means the step counts as a whole, as in the mock.
+    Never negative, NaN or infinite: the event log rejects it.
     """
 
     height_mm: float
@@ -28,6 +32,7 @@ class Signals:
     tare_offset_n: tuple[float, float, float]
     torque_nm: float
     wrench_valid: bool
+    force_over_limit_s: float | None = None
 
     @property
     def force_n(self) -> float:
@@ -64,12 +69,37 @@ class Velocity:
 HOLD = Velocity()
 
 
+@dataclass(frozen=True)
+class PoseTarget:
+    """Cartesian pose target for the tool point, in the robot's base frame (AIC: `base_link`):
+    position in mm, orientation as a unit quaternion (w, x, y, z), identity by default. What the
+    AIC scripted skills command (position mode); the mock world does not accept it."""
+
+    x_mm: float
+    y_mm: float
+    z_mm: float
+    qw: float = 1.0
+    qx: float = 0.0
+    qy: float = 0.0
+    qz: float = 0.0
+
+
+Command = Velocity | PoseTarget
+
+
+class UnsupportedCommand(TypeError):
+    """A world was sent a kind of command it cannot execute."""
+
+
 class World(Protocol):
     def signals(self) -> Signals: ...
 
-    def command(self, cmd: Velocity) -> None: ...
+    def command(self, cmd: Command) -> None: ...
 
-    def step(self, dt: float) -> None: ...
+    def step(self, dt: float) -> float:
+        """Let about `dt` seconds pass and return the time that did pass, which the clock then
+        advances by: a world driven by its own clock (a sim) may take longer than asked."""
+        ...
 
 
 class SkillWorld(Protocol):
@@ -77,7 +107,7 @@ class SkillWorld(Protocol):
 
     def signals(self) -> Signals: ...
 
-    def command(self, cmd: Velocity) -> None: ...
+    def command(self, cmd: Command) -> None: ...
 
 
 class CommandLease:
@@ -122,7 +152,7 @@ class WorldView:
     def signals(self) -> Signals:
         return self._world.signals()
 
-    def command(self, cmd: Velocity) -> None:
+    def command(self, cmd: Command) -> None:
         if self._lease.active:
             self._world.command(cmd)
         else:

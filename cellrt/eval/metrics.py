@@ -65,7 +65,7 @@ class RunSummary:
     duration_s: float
     planner_calls: int
     recoveries: int  # recovery_started events
-    over_limit_s: float  # time with a valid tared force over UNSAFE_FORCE_N
+    over_limit_s: float  # time with a tared force over UNSAFE_FORCE_N (the fold's sum)
     verdicts: tuple[VerdictCheck, ...]
     missed: tuple[str, ...]  # labels of faults no verdict was attributed to
 

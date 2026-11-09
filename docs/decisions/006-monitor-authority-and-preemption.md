@@ -266,7 +266,12 @@ the planner adds over B. Phase 2 tests this against failures we did not design.
   difference of the two magnitudes would underestimate side contact. Torque needs the same.
 - The sum counts samples times the nominal period. AIC sums the real time between wrench
   messages, so in Phase 1 the Monitor must see every wrench sample (or sum the real dt), not
-  only the samples at the control rate.
+  only the samples at the control rate. Since #23 a sample may carry `force_over_limit_s`, the
+  time over the limit within its step summed over the faster F/T stream with the scorer's rule
+  (every message, valid or not); the fold adds that instead of the time since the previous
+  sample. A step whose stream went over the limit then counts as "a sample over the limit"
+  even if the sample itself reads under it, so contact that spikes between samples still fires
+  the rule. The mock never sets the field, so its results do not change.
 - Known misreads: a stalled controller during insertion reads as UNKNOWN, not TIMEOUT; an
   insert skill moving up for more than 1 s reads as stalled; a slow insert (`insert_act`, 2 mm/s)
   that meets an obstacle reads as UNKNOWN, because force builds too slowly to pass the 10 N stuck

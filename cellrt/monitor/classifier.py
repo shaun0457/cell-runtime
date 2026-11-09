@@ -150,11 +150,11 @@ class Monitor:
     def _force_limit(self, s: Signals) -> Verdict | None:
         c = self.config
         over_s = round(self._force_time(), 6)
-        if (
-            self._profile == "unload"
-            or not (s.wrench_valid and s.force_n > FORCE_LIMIT_N)
-            or over_s < c.force_trigger_s - 1e-9
-        ):
+        # Over the limit now: the sample reads over it, or the F/T stream was over it during
+        # the step (`force_over_limit_s`, a world that reads the stream faster than it samples:
+        # stick-slip contact can spike between samples).
+        over_now = (s.wrench_valid and s.force_n > FORCE_LIMIT_N) or bool(s.force_over_limit_s)
+        if self._profile == "unload" or not over_now or over_s < c.force_trigger_s - 1e-9:
             return None
         return Verdict(
             FailureClass.FORCE_LIMIT,

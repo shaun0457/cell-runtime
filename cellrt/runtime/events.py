@@ -13,9 +13,10 @@ Outcome = Literal["success", "failed", "aborted"]
 
 # The version of the event payloads a run was written with, recorded on `run_started`. Version 1
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
-# field itself. Bump it when a payload changes shape, and keep older rows readable: new fields
-# get defaults.
-SCHEMA_VERSION = 2
+# field itself; 3 added `signal_sampled.force_over_limit_s`. Bump it when a payload changes
+# shape (a test hashes every payload's schema per version), and keep older rows readable: new
+# fields get defaults.
+SCHEMA_VERSION = 3
 
 
 class _Payload(BaseModel):
@@ -71,6 +72,10 @@ class SignalSampled(_Payload):
     force_n: float  # tared, as the Monitor saw it
     torque_nm: float
     wrench_valid: bool
+    # Time over the force limit within this sample's step, when the world reads the F/T stream
+    # faster than it samples (AIC); None in the mock and in older logs (the step counts whole).
+    # Never negative or NaN: either would make the live fold and its replay disagree.
+    force_over_limit_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class SkillStarted(_Payload):
