@@ -26,7 +26,7 @@ WORLD_AND_MONITOR = {
     "monitor_verdict",
 }  # fmt: skip
 # Configuration parts that define the problem and the judge, not the recovery.
-SHARED_PARTS = ("scenario", "world", "monitor", "skills", "code")
+SHARED_PARTS = ("scenario", "world", "monitor", "skills", "code", "adapters", "lock")
 
 Logs = dict[tuple[str, int], dict[str, list[Event]]]  # (scenario, seed) -> setting -> events
 

@@ -16,7 +16,14 @@ from pathlib import Path
 import pytest
 
 from cellrt.eval import runner
-from cellrt.eval.runner import MAX_ATTEMPTS, code_fingerprint, run_eval, run_unit
+from cellrt.eval.runner import (
+    MAX_ATTEMPTS,
+    adapters_fingerprint,
+    code_fingerprint,
+    lock_fingerprint,
+    run_eval,
+    run_unit,
+)
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.runtime.events import Event, RunStarted, SkillStarted
 from cellrt.runtime.store import CRASH_AFTER_EVENTS_ENV, CRASH_EXIT_CODE, RUNS_SQL, EventStore
@@ -146,6 +153,87 @@ def test_the_code_fingerprint_follows_source_files_only(tmp_path: Path) -> None:
 
     assert before == unrelated == crlf
     assert edited != before
+
+
+def test_a_unit_whose_lock_file_changed_is_run_again(
+    store: EventStore, scenarios: list[Scenario], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_eval(scenarios[:1], ["A"], 1, store)
+    monkeypatch.setattr(runner, "lock_fingerprint", lambda: "upgraded-dependencies")
+
+    changed = run_eval(scenarios[:1], ["A"], 1, store)
+
+    assert changed.run_ids == ["baseline/A/0/a2"] and changed.ran == 1
+
+
+def test_a_unit_whose_adapter_code_changed_is_run_again(
+    store: EventStore, scenarios: list[Scenario], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_eval(scenarios[:1], ["A"], 1, store)
+    monkeypatch.setattr(runner, "adapters_fingerprint", lambda: "changed-adapter")
+
+    changed = run_eval(scenarios[:1], ["A"], 1, store)
+
+    assert changed.run_ids == ["baseline/A/0/a2"] and changed.ran == 1
+
+
+def test_the_lock_fingerprint_follows_the_lock_file_contents(tmp_path: Path) -> None:
+    lock = tmp_path / "uv.lock"
+    missing = lock_fingerprint.__wrapped__(lock)
+    lock.write_bytes(b'version = 1\n[[package]]\nname = "pydantic"\nversion = "2.7.0"\n')
+    before = lock_fingerprint.__wrapped__(lock)
+    lock.write_bytes(lock.read_bytes().replace(b"\n", b"\r\n"))  # Windows line endings
+    crlf = lock_fingerprint.__wrapped__(lock)
+    lock.write_bytes(b'version = 1\n[[package]]\nname = "pydantic"\nversion = "2.8.0"\n')
+    upgraded = lock_fingerprint.__wrapped__(lock)
+
+    assert before == crlf
+    assert upgraded != before
+    assert missing not in (before, upgraded)
+
+
+def test_the_adapters_fingerprint_follows_adapter_source_files(tmp_path: Path) -> None:
+    adapters = tmp_path / "adapters"
+    missing = adapters_fingerprint.__wrapped__(adapters)
+    (adapters / "aic").mkdir(parents=True)
+    source = adapters / "aic" / "world.py"
+    source.write_bytes(b"x = 1\n")
+    before = adapters_fingerprint.__wrapped__(adapters)
+    source.write_bytes(b"x = 2\n")
+    edited = adapters_fingerprint.__wrapped__(adapters)
+
+    assert edited != before
+    assert missing not in (before, edited)
+
+
+def test_the_lock_file_and_the_adapters_are_parts_of_the_config_hash(
+    store: EventStore, scenarios: list[Scenario]
+) -> None:
+    done = run_unit(scenarios[0], "A", 0, store)
+    parts = store.events(done.run_id)[0].payload.config_parts
+
+    assert {"code", "lock", "adapters"} <= parts.keys()
+
+
+def test_in_a_checkout_the_fingerprints_read_the_repo_lock_file_and_adapters_folder() -> None:
+    assert runner.LOCK_FILE == REPO / "uv.lock" and runner.ADAPTERS_ROOT == REPO / "adapters"
+    assert lock_fingerprint() == lock_fingerprint.__wrapped__(REPO / "uv.lock")
+    assert lock_fingerprint() != lock_fingerprint.__wrapped__(REPO / "missing.lock")
+
+
+def test_an_unchanged_checkout_gives_the_same_fingerprints_in_two_processes() -> None:
+    script = (
+        "from cellrt.eval.runner import adapters_fingerprint, code_fingerprint, lock_fingerprint;"
+        "print(code_fingerprint(), lock_fingerprint(), adapters_fingerprint())"
+    )
+    outputs = [
+        subprocess.run(
+            [sys.executable, "-c", script], cwd=REPO, check=True, capture_output=True, text=True
+        ).stdout
+        for _ in range(2)
+    ]
+
+    assert outputs[0] == outputs[1] and len(outputs[0].split()) == 3
 
 
 def test_a_unit_interrupted_max_attempts_times_is_given_up(

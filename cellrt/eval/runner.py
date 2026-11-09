@@ -36,6 +36,10 @@ from cellrt.world.mock_world import MockParams, MockWorld
 MAX_ATTEMPTS = 3
 # The core package: its source is part of every run's configuration.
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+# The adapters and the locked dependency versions count too. Both live beside the core package
+# in a checkout; an installed copy without them gets a fixed "absent" value instead.
+ADAPTERS_ROOT = PACKAGE_ROOT.parent / "adapters"
+LOCK_FILE = PACKAGE_ROOT.parent / "uv.lock"
 
 
 @dataclass(frozen=True)
@@ -251,7 +255,8 @@ def config_parts(
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
     counts the planner's type and budget (not how an instance of that type is set up). The core
-    source counts too, so changed code never reuses an old result.
+    source, the adapter source and the lock file count too, so changed code or a dependency
+    upgrade never reuses an old result.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -261,6 +266,8 @@ def config_parts(
         "monitor": monitor.as_dict(),
         "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
         "code": code_fingerprint(),
+        "adapters": adapters_fingerprint(),
+        "lock": lock_fingerprint(),
         "planner": None
         if planner is None
         else {
@@ -289,6 +296,23 @@ def code_fingerprint(root: Path = PACKAGE_ROOT) -> str:
         digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
         digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
     return digest.hexdigest()[:16]
+
+
+@functools.cache
+def adapters_fingerprint(root: Path = ADAPTERS_ROOT) -> str:
+    """`code_fingerprint` of the adapter source, or a fixed value when there is none."""
+    if not root.is_dir():
+        return _digest("no adapters")
+    return code_fingerprint.__wrapped__(root)
+
+
+@functools.cache
+def lock_fingerprint(path: Path = LOCK_FILE) -> str:
+    """A hash of the lock file with line endings normalised, or a fixed value when there is
+    none: a dependency upgrade changes every config hash."""
+    if not path.is_file():
+        return _digest("no lock file")
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:16]
 
 
 def _skill_config(skill: Skill) -> dict[str, object]:

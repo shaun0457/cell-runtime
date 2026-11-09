@@ -22,9 +22,11 @@ Current shape:
   interrupted attempt keeps its number and the rerun gets the next one.
 - A unit is complete when one of its attempts has `run_finished` **and** that attempt's
   `config_hash` equals the hash of the configuration the eval runs now. The hash covers the
-  parameters and a fingerprint of the core source (every `.py` under `cellrt/`, line endings
-  normalised), so changed code is a changed configuration. `run_started` also records a hash
-  per part (`config_parts`: scenario, setting, world, monitor, skills, code, recovery, planner), so the log
+  parameters, a fingerprint of the core source (every `.py` under `cellrt/`, line endings
+  normalised) and, since #20, of the adapter source (`adapters/`) and of `uv.lock`, so changed
+  code or dependencies are a changed configuration. `run_started` also records a hash per part
+  (`config_parts`: scenario, setting, world, monitor, skills, code, adapters, lock, recovery,
+  planner), so the log
   shows which parts two runs share; the fairness test uses it to check that A, B and C share
   everything but recovery and planner.
 - A unit interrupted `MAX_ATTEMPTS` (3) times under the current configuration is given up on:
@@ -47,6 +49,7 @@ Current shape:
 - Cons: any change under `cellrt/` (a comment included) reruns every unit; code outside
   `cellrt/` (adapters in Phase 1) is not covered, nor are dependency versions (a `py_trees` or
   `pydantic` upgrade in `uv.lock` reuses old results unless `uv.lock` is added to the hash).
+  (Closed in #20: see Consequences.)
 
 #### Option B — the same parameters plus the git commit (and a dirty flag)
 - Pros: names the code version a reader can check out.
@@ -130,3 +133,11 @@ Current shape:
   starting an eval stays fast as the store grows; a test checks the query plan.
 - The code fingerprint changes all config hashes whenever `cellrt/` changes: the first eval
   after any edit reruns everything (about 45 s in mock).
+- Since Phase 1 (#20) the gap noted under Option A is closed: `config_hash` also has an
+  `adapters` part (every `.py` under `adapters/`) and a `lock` part (`uv.lock`, line endings
+  normalised), so an adapter change or a dependency upgrade reruns every unit too. A copy
+  installed without them (no `adapters/`, no `uv.lock` beside the package) records a fixed
+  "absent" value. Stores written before this change rerun once, since every hash changed.
+  Such a copy therefore does not notice a dependency upgrade: evals are meant to run from a
+  checkout (the VM clones the repo). `uv.lock` includes the dev group, so a ruff or pytest
+  upgrade reruns everything too.
