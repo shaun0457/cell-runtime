@@ -15,10 +15,10 @@ Outcome = Literal["success", "failed", "aborted"]
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
-# `signal_sampled.wrench_dropped`; 7 added `planner_responded`. Bump it when a payload changes shape
-# (a test hashes every payload's schema per version), and keep older rows readable: new fields
-# get defaults.
-SCHEMA_VERSION = 7
+# `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`.
+# Bump it when a payload changes shape (a test hashes every payload's schema per version), and
+# keep older rows readable: new fields get defaults.
+SCHEMA_VERSION = 8
 
 
 class _Payload(BaseModel):
@@ -183,6 +183,16 @@ class PlannerResponded(_Payload):
     latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
 
 
+class PlannerTimedOut(_Payload):
+    """The planner did not answer within its wall-time deadline: the call was cancelled, and
+    any later answer is never read. The step fails without running anything."""
+
+    type: Literal["planner_timed_out"] = "planner_timed_out"
+    skill: str
+    deadline_s: float = Field(gt=0, allow_inf_nan=False)
+    waited_s: float = Field(ge=0, allow_inf_nan=False)  # wall time, from when the loop waited
+
+
 class PlannerDecided(_Payload):
     """The planner's output passed validation."""
 
@@ -241,6 +251,7 @@ Payload = Annotated[
     | RecoveryStarted
     | PlannerCalled
     | PlannerResponded
+    | PlannerTimedOut
     | PlannerDecided
     | PlannerOutputRejected
     | BtNodeChanged

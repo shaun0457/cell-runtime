@@ -124,10 +124,11 @@ Current shape:
 - The Phase 0 result says little about an LLM: the rule planner knows the one UNKNOWN fault the
   mock has. What it does show is that the plumbing (context, validation, budgets, events) holds,
   and the malformed-output tests show that bad output is contained.
-- While the planner runs, the world keeps stepping and signals are recorded, but no skill is
-  active, so the Monitor watches nothing; the arm holds (the failed skill's access was revoked
-  and HOLD sent), and the task time limit still applies. A planner timeout, late answers, and what the supervisor does during a slow LLM
-  call are open for Phase 3 (#14).
+- In Phase 0 the rule planner answered within the drain, so the world kept stepping and
+  signals were recorded while it ran. Since #47 a call that waits on outside work stops the
+  world instead: the arm holds (the failed skill's access was revoked and HOLD sent), the mock's
+  sim clock stands still, and the call has a wall-time deadline; a late answer is cancelled and
+  never read (ADR 016).
 - The hash named only the planner type in Phase 0, so two LLM planners of one type with
   different models or prompts would have shared a hash. Since #45 a planner that describes its
   configuration has it hashed too.

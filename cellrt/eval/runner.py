@@ -20,7 +20,7 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
 from cellrt.executor.trees import Setting, build_tree
 from cellrt.monitor.classifier import MonitorConfig
-from cellrt.planner.base import Planner
+from cellrt.planner.base import Planner, planner_deadline
 from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import SCHEMA_VERSION, Outcome, RunFinished, RunStarted
@@ -78,6 +78,8 @@ class _UnitConfig:
     ) -> _UnitConfig:
         if planner is not None and setting != "C":
             raise ValueError(f"a planner is used only in setting C, not {setting!r}")
+        if planner is not None:
+            planner_deadline(planner)  # refuse a bad deadline before a run is recorded
         return cls(
             registry or mock_registry(),
             params or MockParams(),
@@ -276,11 +278,12 @@ def config_parts(
 
 
 def _planner_config(planner: Planner, recovery: RecoveryConfig) -> dict[str, object]:
-    """The planner's type and budget, plus its own configuration if it describes one (a model
-    planner: model, prompt version, sampling). A planner without `describe` hashes as before."""
+    """The planner's type, budget and deadline, plus its own configuration if it describes one
+    (a model planner: model, prompt version, sampling)."""
     config: dict[str, object] = {
         "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
         "budget": recovery.planner_budget,
+        "deadline_s": planner_deadline(planner),
     }
     describe = getattr(planner, "describe", None)
     if callable(describe):

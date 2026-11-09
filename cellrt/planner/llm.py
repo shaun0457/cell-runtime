@@ -16,7 +16,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from cellrt.planner.base import FailureContext, PlannerTrace, Traced
+from cellrt.planner.base import (
+    DEFAULT_PLANNER_DEADLINE_S,
+    FailureContext,
+    PlannerTrace,
+    Traced,
+    checked_deadline,
+)
 from cellrt.planner.schemas import audit_text, decision_json_schema
 
 MAX_MODEL_CHARS = 128
@@ -104,6 +110,7 @@ class LlmPlannerConfig:
     max_tokens: int = 1_024
     temperature: float = 0.0
     mode: Literal["tool", "json"] = "tool"
+    deadline_s: float = DEFAULT_PLANNER_DEADLINE_S  # wall time per call
 
     def __post_init__(self) -> None:
         if not 0 < len(self.model) <= MAX_MODEL_CHARS:
@@ -112,6 +119,7 @@ class LlmPlannerConfig:
             raise ValueError(f"max_tokens must be in (0, {MAX_TOKENS_LIMIT}]")
         if not 0 <= self.temperature <= MAX_TEMPERATURE:
             raise ValueError(f"temperature must be in [0, {MAX_TEMPERATURE}]")
+        checked_deadline(self.deadline_s)  # the same check as at run time
         if self.mode not in SYSTEM_PROMPTS:
             raise ValueError(f"mode must be one of {', '.join(SYSTEM_PROMPTS)}")
 
@@ -132,12 +140,17 @@ class LlmPlanner:
         self.config = config
         self._timer = timer  # wall time, for the call's latency
 
+    @property
+    def deadline_s(self) -> float:
+        return self.config.deadline_s
+
     def describe(self) -> Mapping[str, object]:
         return {
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
             "mode": self.config.mode,
+            "deadline_s": self.config.deadline_s,
             "prompt_version": PROMPT_VERSION,
             "client": dict(self._client.describe()),
         }

@@ -16,6 +16,7 @@ from cellrt.runtime.events import (
     PlannerDecided,
     PlannerOutputRejected,
     PlannerResponded,
+    PlannerTimedOut,
     PreconditionFailed,
     RecoveryStarted,
     RunFinished,
@@ -82,6 +83,11 @@ def describe(event: Event) -> str:
             return (
                 f"{p.skill} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
                 f"finish={p.finish_reason or '?'}"
+            )
+        case PlannerTimedOut() as p:
+            return (
+                f"{p.skill} no answer within {p.deadline_s:.2f}s "
+                f"(waited {p.waited_s:.2f}s); call cancelled"
             )
         case PlannerDecided() as p:
             return f"{p.skill} -> {p.decision}"

@@ -73,7 +73,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "TID"]
 "tests/test_aic_ros_shell.py" = ["TID251"]
 # wall_ts is real time by design (debugging only, never folded).
 "cellrt/runtime/recorder.py" = ["TID251"]
-# drain() yields to the loop with asyncio.sleep(0); it never waits real time.
+# drain() yields to the loop with asyncio.sleep(0). The loop waits real time only on a planner
+# call, up to its deadline, while the world stands still (ADR 016).
 "cellrt/executor/runner.py" = ["TID251"]
 
 [dependency-groups]

@@ -30,6 +30,7 @@ from cellrt.planner.base import (
     Planner,
     PlannerTrace,
     Traced,
+    planner_deadline,
 )
 from cellrt.planner.schemas import Decision, Rejection, validate_decision
 from cellrt.runtime.clock import SimClock, to_ns
@@ -40,6 +41,7 @@ from cellrt.runtime.events import (
     PlannerDecided,
     PlannerOutputRejected,
     PlannerResponded,
+    PlannerTimedOut,
     PreconditionFailed,
     SkillCancelled,
     SkillFinished,
@@ -57,20 +59,43 @@ PROGRESS_STEP = 0.25
 MAX_DESCRIPTION_CHARS = 300
 
 
+@dataclass
+class OutsideWait:
+    """A task that waits on something outside the sim (a planner's network call), with its
+    wall-time deadline. The loop sets `started` when it begins to wait on it, and `waited_s`
+    when the deadline has passed; the planner node then cancels the task."""
+
+    task: asyncio.Task[Any]
+    deadline_s: float
+    started: float | None = None  # wall time
+    waited_s: float | None = None  # set once the deadline has passed
+
+
 class TaskTracker:
     """Every task the tree starts, so the loop can tell when all of them wait on the clock.
 
     The loop compares the number of live tasks with the number of pending clock sleeps, so two
     rules hold for everything that runs on the loop: every task is started through `spawn`, and
-    a task waits on at most one clock sleep at a time and on nothing else.
+    a skill task waits on at most one clock sleep at a time and on nothing else. A task started
+    with a deadline is an outside wait instead (a planner call): it may await anything, the loop
+    waits on it in wall time while the world stands still, and it never waits on the clock.
     """
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._outside: dict[asyncio.Task[Any], OutsideWait] = {}
+        self._held = False  # a call was still running after its first step, this tick
 
-    def spawn(self, coro: Coroutine[Any, Any, Any], name: str) -> asyncio.Task[Any]:
+    def spawn(
+        self, coro: Coroutine[Any, Any, Any], name: str, *, deadline_s: float | None = None
+    ) -> asyncio.Task[Any]:
         task = asyncio.get_running_loop().create_task(coro, name=name)
         self._tasks.add(task)
+        if deadline_s is not None:
+            self._outside[task] = OutsideWait(task, deadline_s)
+            # A cancelled call may still fail in its cleanup, after its node let go of it: read
+            # the exception so asyncio never logs it (its text may hold a URL or a header).
+            task.add_done_callback(_retrieve_exception)
         return task
 
     def live(self) -> int:
@@ -78,7 +103,40 @@ class TaskTracker:
 
     def live_names(self) -> list[str]:
         self._tasks = {t for t in self._tasks if not t.done()}
+        self._outside = {t: w for t, w in self._outside.items() if not t.done()}
         return sorted(t.get_name() for t in self._tasks)
+
+    def clock_bound_live(self) -> int:
+        """Live tasks that must wait only on the clock (every live task but outside waits)."""
+        self.live_names()
+        return sum(1 for t in self._tasks if t not in self._outside)
+
+    def outside_waits(self) -> list[OutsideWait]:
+        """Outside waits still running, not cancelled, whose deadline has not passed."""
+        self.live_names()
+        return [w for w in self._outside.values() if w.waited_s is None and not w.task.cancelling()]
+
+    def hold_running(self) -> None:
+        """Called once a tick, after every new task has taken its first step: a call still
+        running then has awaited something, so the world holds this tick, however soon it
+        answers. A call that answers in its first step (the rule planner) never holds it."""
+        if self.outside_waits():
+            self._held = True
+
+    def take_held(self) -> bool:
+        """Whether a call held the world this tick; clears it for the next tick."""
+        held, self._held = self._held, False
+        return held
+
+    def outside_tasks(self) -> list[asyncio.Task[Any]]:
+        """Outside waits still running, cancelled ones included."""
+        self.live_names()
+        return list(self._outside)
+
+    def expired(self, task: asyncio.Task[Any]) -> OutsideWait | None:
+        """The outside wait of `task` if its deadline has passed, else None."""
+        wait = self._outside.get(task)
+        return wait if wait is not None and wait.waited_s is not None else None
 
 
 @dataclass
@@ -270,7 +328,9 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
     and starts `triage` as a task; when the task is done it validates the output: a valid
     decision is recorded (`planner_decided`) and the node succeeds with `decision` set; anything
     else, a planner that raised included, is recorded (`planner_output_rejected`) and the node
-    fails with `rejection` set.
+    fails with `rejection` set. The task is an outside wait with the planner's deadline: when
+    the deadline passes the call is cancelled, `planner_timed_out` is recorded and the node
+    fails with `timed_out` set (ADR 016).
     """
 
     def __init__(
@@ -286,11 +346,13 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self._planner = planner
         self._registry = registry
         self.options = options  # skills a SwitchSkill may name for this step
+        self.deadline_s = planner_deadline(planner)  # wall time per call
         self._env = env
         self._task: asyncio.Task[object] | None = None
         self._ctx: FailureContext | None = None
         self.decision: Decision | None = None
         self.rejection: Rejection | None = None
+        self.timed_out = False  # the last call passed its deadline
 
     def ask(self, ctx: FailureContext) -> None:
         self._ctx = ctx
@@ -311,6 +373,7 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self._task = None
         self.decision = None
         self.rejection = None
+        self.timed_out = False
 
     def update(self) -> Status:
         ctx = self._ctx
@@ -325,10 +388,15 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
                     context=ctx.as_dict(),
                 )
             )
-            self._task = self._env.tracker.spawn(self._planner.triage(ctx), name=self.name)
+            self._task = self._env.tracker.spawn(
+                self._planner.triage(ctx), name=self.name, deadline_s=self.deadline_s
+            )
             return Status.RUNNING
         if not self._task.done():
-            return Status.RUNNING
+            expired = self._env.tracker.expired(self._task)
+            if expired is None:
+                return Status.RUNNING
+            return self._time_out(ctx, expired)
         task, self._task = self._task, None
         try:
             raw = task.result()
@@ -347,6 +415,23 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self.decision = result
         self._env.recorder.emit(PlannerDecided(skill=ctx.skill, decision=result.model_dump()))
         return Status.SUCCESS
+
+    def _time_out(self, ctx: FailureContext, wait: OutsideWait) -> Status:
+        """The call passed its deadline: cancel it (any later answer is never read), record it,
+        and fail the node like a rejected answer."""
+        task, self._task = self._task, None
+        assert task is not None
+        task.cancel()
+        self.timed_out = True
+        assert wait.waited_s is not None
+        self._env.recorder.emit(
+            PlannerTimedOut(
+                skill=ctx.skill,
+                deadline_s=wait.deadline_s,
+                waited_s=round(max(wait.waited_s, 0.0), 6),
+            )
+        )
+        return Status.FAILURE
 
     def _check(self, ctx: FailureContext, raw: object) -> Decision | Rejection:
         """Record a traced answer's trace, then validate the answer. Nothing a planner returns
@@ -375,6 +460,11 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
             # Stopped before its result was read: mark the exception retrieved, so asyncio does
             # not print it (with its text) when the task is collected.
             task.exception()
+
+
+def _retrieve_exception(task: asyncio.Task[Any]) -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 def _succeeded(task: asyncio.Task[SkillResult]) -> bool:

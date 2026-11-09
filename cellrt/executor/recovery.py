@@ -267,7 +267,8 @@ class Recovering(py_trees.composites.Composite):
         decision = planner.decision
         if planner.status != Status.SUCCESS or decision is None:
             self.aborted = True
-            self.failure_reason = f"{skill} failed: UNKNOWN (planner output rejected)"
+            why = "planner timed out" if planner.timed_out else "planner output rejected"
+            self.failure_reason = f"{skill} failed: UNKNOWN ({why})"
             return False
         match decision:
             case Abort(reason=reason):

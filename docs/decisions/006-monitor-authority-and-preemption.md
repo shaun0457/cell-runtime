@@ -25,8 +25,8 @@ Force is tared: a sample carries the raw F/T reading and the offset published be
 rules read raw minus offset, as AIC's scorer does (`wrist_wrench` is not tared;
 `controller_state.fts_tare_offset` is the offset). Time over the force limit (20 N, the AIC's,
 not configurable) is a running sum over the task, never reset; it is part of the folded run
-state (`RunState.over_limit_s`, from every `signal_sampled`, also those logged while the planner
-runs and no skill does), and the Monitor and the metrics both read it, so the two cannot
+state (`RunState.over_limit_s`, from every `signal_sampled`, also those logged between skills;
+none are logged while the loop waits on a planner call, ADR 016), and the Monitor and the metrics both read it, so the two cannot
 disagree and `state_at(seq)` rebuilds it. Two bounded windows: the sensor window (validity) runs across skills
 and restarts after a dropout verdict; the insertion window covers the current skill only
 (`reset` on skill start). Timeouts are

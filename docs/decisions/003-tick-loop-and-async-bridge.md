@@ -52,6 +52,10 @@ Behaviours submit coroutines with `run_coroutine_threadsafe` and poll the future
 - When a skill is stopped (finished, preempted, timed out, terminated) both its command access
   and its progress callback are revoked, so a stopped skill cannot move the arm or report
   progress that would land on the node's next attempt.
+- Since #47 a planner call may wait on outside work (a model's answer): a task started with a
+  deadline does not count as clock-bound in drain. While it runs the loop does not step the
+  world; it waits on the call in wall time up to its deadline (ADR 016). Skill tasks keep the
+  rule above.
 - The Monitor judges the sample as it was logged (`executor.samples.signals_of` of the run
   state's last sample), not a fresh `world.signals()`: a world fed by callbacks (Phase 1) may
   change between two steps, and every verdict stays checkable from the log.

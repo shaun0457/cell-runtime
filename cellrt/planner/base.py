@@ -12,6 +12,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+# Wall time a planner call may take before it is cancelled: a planner may set `deadline_s`.
+DEFAULT_PLANNER_DEADLINE_S = 30.0
+MAX_PLANNER_DEADLINE_S = 120.0
 # How much of a model call's prompt and response the event log keeps (`planner_responded`).
 MAX_STORED_PROMPT_CHARS = 16_000
 MAX_STORED_RESPONSE_CHARS = 4_000
@@ -95,12 +98,32 @@ class Planner(Protocol):
     """Triage one failure. Returns raw output (a mapping or JSON text), or a `Traced` answer
     that also carries the call's trace; either way it is validated afterwards.
 
-    It runs as a task on the loop, like a skill. In Phase 0 it is given no clock: it must
-    answer without awaiting anything (the loop would report it as stuck). Waiting on a model,
-    a deadline and late answers come with #47.
+    It runs as a task on the loop and may await outside work (a network call) but never the
+    sim clock. While it runs the arm holds and the world is not stepped, so in the mock the sim
+    clock stands still; the wait costs wall time only, up to the planner's deadline (ADR 016).
 
-    A planner may also have `describe() -> Mapping[str, object]`: its configuration, which then
-    counts in the run's config hash (a model planner names its model and prompt there).
+    A planner may also have:
+    - `describe() -> Mapping[str, object]`: its configuration, which then counts in the run's
+      config hash (a model planner names its model and prompt there);
+    - `deadline_s: float`: its wall-time deadline per call (default DEFAULT_PLANNER_DEADLINE_S,
+      at most MAX_PLANNER_DEADLINE_S).
     """
 
     async def triage(self, ctx: FailureContext) -> object: ...
+
+
+def planner_deadline(planner: object) -> float:
+    """The planner's deadline per call (`deadline_s`, default DEFAULT_PLANNER_DEADLINE_S),
+    checked."""
+    return checked_deadline(getattr(planner, "deadline_s", DEFAULT_PLANNER_DEADLINE_S))
+
+
+def checked_deadline(deadline: object) -> float:
+    """A planner deadline, checked: a number, not a bool, in (0, MAX_PLANNER_DEADLINE_S]."""
+    if (
+        isinstance(deadline, bool)
+        or not isinstance(deadline, int | float)
+        or not 0 < deadline <= MAX_PLANNER_DEADLINE_S
+    ):
+        raise ValueError(f"planner deadline_s must be in (0, {MAX_PLANNER_DEADLINE_S}] seconds")
+    return float(deadline)
