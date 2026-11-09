@@ -117,6 +117,9 @@ class LlmPlannerConfig:
     def __post_init__(self) -> None:
         if not 0 < len(self.model) <= MAX_MODEL_CHARS:
             raise ValueError(f"model must be 1 to {MAX_MODEL_CHARS} characters")
+        # The id is printed and stored: no control characters, escapes or spaces.
+        if not self.model.isprintable() or any(c.isspace() for c in self.model):
+            raise ValueError("model must be printable, without spaces")
         if not 0 < self.max_tokens <= MAX_TOKENS_LIMIT:
             raise ValueError(f"max_tokens must be in (0, {MAX_TOKENS_LIMIT}]")
         if not 0 <= self.temperature <= MAX_TEMPERATURE:

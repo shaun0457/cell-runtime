@@ -126,8 +126,8 @@ Option 1A, Option 2A, Option 3B, Option 4A.
   with a fixed reason: it stops by its own decision before a budget runs out. With the default
   budgets: retry on the first call, abort on the second.
 - **`--planner rule|fixed`** on `cellrt eval` and `cellrt run`. The default is `rule`; only
-  setting C uses it. Names map to planners in one table (`PLANNERS` in `cellrt/cli.py`), where
-  #49 adds `llm`.
+  setting C uses it. Names map to planners in one place (`build_planner` in
+  `cellrt/planner/factory.py`), where #49 adds `llm`.
 - **Both scenarios are designed by us, and so are their right answers.** `yaw_mismatch` is won by
   switching to `insert_act`. `damaged_port` cannot be won: the best a planner can do is stop at
   its first call. Results on this file say so.

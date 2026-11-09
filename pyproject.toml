@@ -13,6 +13,11 @@ dependencies = [
     "pyyaml>=6,<7",
 ]
 
+[project.optional-dependencies]
+# The model planner's client (ADR 017). Imported lazily by `cellrt.planner.nim`; the core, the
+# base install and CI run without it. A new major version means checking the mapping again.
+llm = ["openai>=3.46,<4"]
+
 [project.scripts]
 cellrt = "cellrt.cli:app"
 

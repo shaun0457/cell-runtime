@@ -1,4 +1,4 @@
-"""`cellrt run | eval | replay`."""
+"""`cellrt run | eval | baseline | replay | smoke-llm`."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import contextlib
 import json
 import os
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -19,10 +18,25 @@ from cellrt.eval.metrics import compute_metrics
 from cellrt.eval.report import NOTES, render_confusion, render_gains, render_table
 from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
+from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.trees import SETTINGS
 from cellrt.planner.base import Planner
-from cellrt.planner.fixed_planner import FixedPlanner
-from cellrt.planner.rule_planner import RulePlanner
+from cellrt.planner.factory import (
+    DEFAULT_MAX_MODEL_CALLS,
+    PLANNER_KINDS,
+    build_planner,
+    check_call_budget,
+    llm_client_and_config,
+    model_call_cap,
+)
+from cellrt.planner.nim import (
+    DEFAULT_MODEL,
+    KEY_ENV,
+    MAX_MODEL_CALLS_LIMIT,
+    LlmSetupError,
+    ModelCallCap,
+)
+from cellrt.planner.smoke import run_smoke
 from cellrt.replay import replay_lines
 from cellrt.runtime.store import EventStore
 
@@ -34,15 +48,25 @@ BASELINE_SEEDS = 3
 BASELINE_K = 2
 # Validation errors shown for an invalid scenarios file (location and type only).
 MAX_SHOWN_ERRORS = 5
-# The planners setting C can ask, by the name `--planner` takes. Each entry builds one planner
-# that serves every run of the command (ADR 019).
-PLANNERS: dict[str, Callable[[], Planner]] = {"rule": RulePlanner, "fixed": FixedPlanner}
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
 
 DbOption = Annotated[Path, typer.Option(help="SQLite event store")]
+# The planners setting C can ask, by the name `--planner` takes (`build_planner`, ADR 019). One
+# planner serves every run of the command.
 PlannerOption = Annotated[
-    str, typer.Option(help=f"planner for setting C: one of {', '.join(PLANNERS)}")
+    str, typer.Option(help=f"planner for setting C: one of {', '.join(PLANNER_KINDS)}")
+]
+ModelOption = Annotated[
+    str, typer.Option(help=f"model id on NVIDIA NIM, for --planner llm (key in {KEY_ENV})")
+]
+MaxModelCallsOption = Annotated[
+    int,
+    typer.Option(
+        min=0,
+        max=MAX_MODEL_CALLS_LIMIT,
+        help="most model calls this command may make; it does not start if it could make more",
+    ),
 ]
 
 
@@ -54,22 +78,30 @@ def run(
     scenarios: Annotated[Path, typer.Option(help="scenarios YAML file")] = DEFAULT_SCENARIOS,
     db: DbOption = DEFAULT_DB,
     planner: PlannerOption = "rule",
+    model: ModelOption = DEFAULT_MODEL,
+    max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
 ) -> None:
     """Run one (scenario, setting, seed) and print its run id."""
     if setting not in SETTINGS:
         _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
-    chosen = _planner(planner)
     by_id = {s.id: s for s in _load(scenarios)}
     if scenario not in by_id:
         _fail(f"unknown scenario {scenario!r}; known: {', '.join(by_id)}")
+    cap = _cap(max_model_calls)
+    recovery = RecoveryConfig()  # one config for the call pre-check and the run
+    units_with_planner = int(setting == "C")
+    chosen = _planner(planner, units_with_planner, recovery, model=model, cap=cap)
     with EventStore(db) as store:
         result = run_unit(
             by_id[scenario],
             setting,  # type: ignore[arg-type]
             seed,
             store,
-            planner=chosen if setting == "C" else None,
+            recovery=recovery,
+            planner=chosen,
         )
+    if planner == "llm" and chosen is not None:
+        typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
     typer.echo(f"outcome: {result.outcome}")
     typer.echo(result.run_id)
 
@@ -82,18 +114,33 @@ def eval_(
     k: Annotated[int, typer.Option(min=1, help="k for pass^k")] = 5,
     db: DbOption = DEFAULT_DB,
     planner: PlannerOption = "rule",
+    model: ModelOption = DEFAULT_MODEL,
+    max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
 ) -> None:
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
-    chosen_planner = _planner(planner)
     loaded = _load(scenarios)
+    cap = _cap(max_model_calls)
+    recovery = RecoveryConfig()  # one config for the call pre-check and the eval
+    # Every unit of setting C may ask the planner, finished ones included: an upper bound.
+    units_with_planner = len(loaded) * seeds if "C" in chosen else 0
+    chosen_planner = _planner(planner, units_with_planner, recovery, model=model, cap=cap)
     with EventStore(db) as store:
-        runs = run_eval(loaded, chosen, seeds, store, planner=chosen_planner)  # type: ignore[arg-type]
+        runs = run_eval(
+            loaded,
+            chosen,  # type: ignore[arg-type]
+            seeds,
+            store,
+            recovery=recovery,
+            planner=chosen_planner,
+        )
         table = compute_metrics((store.events(r) for r in runs.run_ids), k)
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
     if "C" in chosen:  # the table's C row does not say which planner it ran with
-        typer.echo(f"planner for setting C: {planner}", err=True)
+        typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)
+    if planner == "llm" and chosen_planner is not None:
+        typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
     if runs.gave_up:
         typer.echo(
             f"gave up on {len(runs.gave_up)} units interrupted {MAX_ATTEMPTS} times"
@@ -184,11 +231,62 @@ def _settings(settings: str) -> list[str]:
     return chosen
 
 
-def _planner(name: str) -> Planner:
-    """The planner `--planner` names (used by setting C only); exit on an unknown name."""
-    if name not in PLANNERS:
-        _fail(f"unknown planner {name!r}; known: {', '.join(PLANNERS)}")
-    return PLANNERS[name]()
+def _planner(
+    name: str,
+    units_with_planner: int,
+    recovery: RecoveryConfig,
+    *,
+    model: str,
+    cap: ModelCallCap,
+) -> Planner | None:
+    """The planner `--planner` names, for the units of setting C; None when there are none, so
+    a command without setting C needs no key. A model planner is built only once the most
+    model calls those units can make under `recovery` fit `cap`. Exits with a fixed message
+    on an unknown name or a refused setting; the key is in no message."""
+    if name not in PLANNER_KINDS:
+        _fail(f"unknown planner {name!r}; known: {', '.join(PLANNER_KINDS)}")
+    if units_with_planner == 0:
+        return None
+    try:
+        if name == "llm":
+            check_call_budget(units_with_planner, recovery.planner_budget, cap.max_calls)
+        return build_planner(name, model=model, cap=cap)
+    except LlmSetupError as exc:
+        _fail(str(exc))
+
+
+def _planner_name(name: str, model: str) -> str:
+    return f"{name} ({model})" if name == "llm" else name
+
+
+def _cap(max_model_calls: int) -> ModelCallCap:
+    """One cap for every model call the command makes."""
+    try:
+        return model_call_cap(max_model_calls)
+    except LlmSetupError as exc:
+        _fail(str(exc))
+
+
+@app.command(name="smoke-llm")
+def smoke_llm(
+    model: ModelOption = DEFAULT_MODEL,
+    mode: Annotated[str, typer.Option(help="how the model answers: tool or json")] = "tool",
+) -> None:
+    """Send one fixed failure (the yaw mismatch) to the model planner, once, and print how the
+    model answered as JSON: through the tool or as text, valid or not, tokens and latency.
+    Exits 1 unless the answer passed the planner's validation."""
+    try:
+        client, config = llm_client_and_config(
+            model=model,
+            mode=mode,  # type: ignore[arg-type]  # checked by the config
+            cap=model_call_cap(1),
+        )
+    except LlmSetupError as exc:
+        _fail(str(exc))
+    report = run_smoke(client, config)
+    typer.echo(json.dumps(report.as_dict(), indent=2, sort_keys=True))
+    if not report.valid:
+        raise typer.Exit(code=1)
 
 
 @app.command()

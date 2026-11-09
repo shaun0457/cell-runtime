@@ -54,6 +54,20 @@ reading the evidence. stderr names the planner, since the table's C row does not
 uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --planner fixed
 ```
 
+`--planner llm` asks a model on NVIDIA NIM (ADR 017; Nemotron 3.5 Lightning by default,
+`--model` to change). It needs the optional `llm` extra and a key in `NVIDIA_API_KEY`; the
+base install, the tests and CI need neither, and no network. Before an eval starts, it checks
+that setting C's units × the planner budget per task fit `--max-model-calls` (default 100), and
+refuses otherwise; stderr reports the calls made. `cellrt smoke-llm` sends one fixed failure to
+the model and prints how it answered, as JSON:
+
+```sh
+uv sync --extra llm
+export NVIDIA_API_KEY=...   # never in a file of the repo
+uv run cellrt smoke-llm
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings C --seeds 3 --planner llm
+```
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
