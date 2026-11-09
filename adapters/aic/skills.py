@@ -2,6 +2,14 @@
 CheatCode.py` @ `3ab0653`). They command position targets (ADR 014) computed from ground-truth
 poses (`AicWorld.geometry`), which they get at construction: the executor hands skills only
 `signals` and `command`.
+
+For recovery (settings B and C) approach, align and insert_scripted take `speed_scale` (a
+recovery's slow variant), and align and insert_scripted carry on from wherever the descent
+is. A retract takes the descent up from where the arm measurably is (a pressed plug holds
+the TCP far above its target) and then 5 mm, so align and insert go on down from the
+retracted pose instead of from below it or from the approach pose; align first comes back
+up to z_offset 0.01 if the retract left the descent below that. Run once at full speed,
+every skill commands exactly what CheatCode does.
 """
 
 from __future__ import annotations
@@ -10,7 +18,7 @@ import math
 from collections.abc import Callable
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
-from adapters.aic.geometry import XYIntegrator, gripper_target
+from adapters.aic.geometry import XYIntegrator, gripper_target, z_offset_at
 from adapters.aic.world import Geometry
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState
@@ -21,6 +29,18 @@ from cellrt.skills.base import SkillContext, SkillResult
 # ends, see the quirk in `geometry`).
 APPROACH_STEPS = 100
 APPROACH_HEIGHT_M = 0.2
+# The slowest a recovery may run a skill (`RecoveryConfig.slow_speed_scale`, 0.5 by default).
+# A skill that moves gets twice its duration at this speed as its timeout.
+SLOWEST_SCALE = 0.5
+
+
+def speed_scale(ctx: SkillContext) -> float:
+    """The `speed_scale` a recovery's slow variant passes (1.0 otherwise). Slower than
+    SLOWEST_SCALE the skill would run into its timeout, so that is refused."""
+    scale = float(ctx.params.get("speed_scale", 1.0))
+    if not SLOWEST_SCALE <= scale <= 1.0:
+        raise ValueError("speed_scale out of range")
+    return scale
 
 
 class AicApproach:
@@ -28,7 +48,7 @@ class AicApproach:
 
     name = "approach"
     monitor_profile: MonitorProfile = "motion"
-    timeout_s = 10.0  # twice CheatCode's 5 s
+    timeout_s = 2 * 5.0 / SLOWEST_SCALE  # twice CheatCode's 5 s, at the slowest speed
 
     def __init__(self, geometry: Callable[[], Geometry]) -> None:
         self._geometry = geometry
@@ -48,9 +68,10 @@ class AicApproach:
         return True
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        for t in range(APPROACH_STEPS):
+        steps = round(APPROACH_STEPS / speed_scale(ctx))
+        for t in range(steps):
             g = self._geometry()
-            fraction = t / APPROACH_STEPS  # 0 .. 0.99, as CheatCode
+            fraction = t / steps  # 0 .. 0.99, as CheatCode
             target, _ = gripper_target(
                 g.port,
                 g.plug,
@@ -60,7 +81,7 @@ class AicApproach:
                 position_fraction=fraction,
             )
             ctx.world.command(to_pose_target(target))
-            ctx.progress((t + 1) / APPROACH_STEPS)
+            ctx.progress((t + 1) / steps)
             await ctx.clock.sleep(ctx.period_s)
         g = self._geometry()
         height_mm, _ = plug_to_port_mm(g.port, g.plug)
@@ -118,6 +139,21 @@ ALIGN_STEPS = len(descent_offsets()[0])
 INSERT_STEPS = len(descent_offsets()[1])
 
 
+def descent_from(offsets: list[float], start_m: float | None, scale: float = 1.0) -> list[float]:
+    """The z_offsets still to command of `offsets` (one part of CheatCode's descent), from
+    `start_m`, the last one commanded (None: the descent has not begun, so from the approach
+    height). Going on at full speed from where CheatCode's descent left off, they are its own
+    offsets. From anywhere else (after a retract) or slower, they go down from `start_m` in
+    steps of `scale` x 0.5 mm and end on the same offset; from below that end, the end alone."""
+    start = APPROACH_HEIGHT_M if start_m is None else start_m
+    if scale == 1.0 and math.isclose(start - DESCENT_STEP_M, offsets[0], abs_tol=1e-9):
+        return list(offsets)
+    step = DESCENT_STEP_M * scale
+    end = offsets[-1]
+    count = max(0, math.ceil((start - end) / step - 1e-9) - 1)  # the steps above the end
+    return [*(start - k * step for k in range(1, count + 1)), end]
+
+
 class Descent:
     """CheatCode's XY integrator, shared by align and insert_scripted: CheatCode resets it only
     during the approach, so it carries on from one part of the descent to the next."""
@@ -125,13 +161,31 @@ class Descent:
     def __init__(self) -> None:
         self.integrator = XYIntegrator()
         self.last_height_mm: float | None = None  # the tip's height at the last command
+        self.z_offset_m: float | None = None  # the last z_offset commanded
 
     def command(self, ctx: SkillContext, g: Geometry, z_offset_m: float) -> None:
         self.last_height_mm, _ = plug_to_port_mm(g.port, g.plug)
+        self.z_offset_m = z_offset_m
         target, self.integrator = gripper_target(
             g.port, g.plug, g.gripper, z_offset_m=z_offset_m, integrator=self.integrator
         )
         ctx.world.command(to_pose_target(target))
+
+    def follow(self, g: Geometry) -> None:
+        """Take the descent up from where the arm is, not where it was sent (a
+        retract's start): a pressed plug holds the TCP above its target by the force over
+        the controller's stiffness (90 N/m in position mode, so 10 N is 111 mm), and the
+        z_offset last commanded can lie that far below the arm. Before the descent has
+        begun there is nothing to take up."""
+        if self.z_offset_m is not None:
+            self.z_offset_m = z_offset_at(g.port, g.plug, g.gripper)
+
+    def raised(self, m: float) -> None:
+        """The arm went `m` straight up, plug and all (a retract): z_offset is that much
+        higher (`gripper_target` keeps the TCP-to-tip offset), and the descent goes on from
+        there."""
+        if self.z_offset_m is not None:
+            self.z_offset_m += m
 
 
 def seated(g: Geometry) -> tuple[bool, float]:
@@ -171,7 +225,7 @@ class AicAlign(_AicSkill):
 
     name = "align"
     monitor_profile: MonitorProfile = "motion"
-    timeout_s = 2 * ALIGN_STEPS * STEP_S
+    timeout_s = 2 * ALIGN_STEPS * STEP_S / SLOWEST_SCALE
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry
@@ -182,7 +236,7 @@ class AicAlign(_AicSkill):
         return {"steps": ALIGN_STEPS, "height_m": ALIGN_HEIGHT_M, "xy_mm": ALIGN_XY_MM}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        align, _ = descent_offsets()
+        align = descent_from(descent_offsets()[0], self._descent.z_offset_m, speed_scale(ctx))
         for i, z in enumerate(align):
             self._descent.command(ctx, self._geometry(), z)
             ctx.progress((i + 1) / len(align))
@@ -200,7 +254,7 @@ class AicInsertScripted(_AicSkill):
 
     name = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
-    timeout_s = 2 * INSERT_STEPS * STEP_S
+    timeout_s = 2 * INSERT_STEPS * STEP_S / SLOWEST_SCALE
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry
@@ -216,7 +270,7 @@ class AicInsertScripted(_AicSkill):
         }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        _, insert = descent_offsets()
+        insert = descent_from(descent_offsets()[1], self._descent.z_offset_m, speed_scale(ctx))
         for i, z in enumerate(insert):
             g = self._geometry()
             on_seat, height_mm = seated(g)
@@ -260,27 +314,38 @@ class AicVerify(_AicSkill):
 
 
 class AicRetract(_AicSkill):
-    """Raise the TCP 5 mm straight up from where it is, 0.5 mm per step (for recovery)."""
+    """Raise the TCP 5 mm straight up from where it is, 0.5 mm per step (for recovery).
+
+    It ignores `to_height_mm`, the mock's height above the port to retract to: here the port
+    frame lies at a different depth for each port type (#28), so a height above it means
+    different things. Given the descent, it first takes it up from where the arm is, then
+    raises it step by step, so the descent goes on from the retracted pose."""
 
     name = "retract"
     monitor_profile: MonitorProfile = "unload"
     timeout_s = 2 * RETRACT_STEPS * STEP_S
 
-    def __init__(self, geometry: Callable[[], Geometry]) -> None:
+    def __init__(self, geometry: Callable[[], Geometry], descent: Descent | None = None) -> None:
         self._geometry = geometry
+        self._descent = descent
 
     @classmethod
     def _parameters(cls) -> dict[str, object]:
         return {"steps": RETRACT_STEPS, "distance_m": RETRACT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        start = self._geometry().gripper
+        g = self._geometry()
+        if self._descent is not None:
+            self._descent.follow(g)
+        start = g.gripper
         x, y, z = start.position
         for i in range(1, RETRACT_STEPS + 1):
             up = Pose(
                 position=(x, y, z + RETRACT_M * i / RETRACT_STEPS), orientation=start.orientation
             )
             ctx.world.command(to_pose_target(up))
+            if self._descent is not None:
+                self._descent.raised(RETRACT_M / RETRACT_STEPS)
             ctx.progress(i / RETRACT_STEPS)
             await ctx.clock.sleep(ctx.period_s)
-        return SkillResult(ok=True, detail={})
+        return SkillResult(ok=True, detail={"raised_mm": round(RETRACT_M * 1000, 3)})

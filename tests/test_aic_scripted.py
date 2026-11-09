@@ -252,17 +252,21 @@ def test_a_plug_on_its_seat_height_but_off_the_port_axis_fails_verify(
 
 
 @pytest.mark.parametrize(
-    ("skill", "nominal_s"),
+    ("skill", "nominal_s", "slowest"),
     [
-        (AicApproach, 100 * 0.05),
-        (AicAlign, 380 * 0.05),
-        (AicInsertScripted, 50 * 0.05),
-        (AicVerify, 5.0),
-        (AicRetract, 10 * 0.05),
+        (AicApproach, 100 * 0.05, 0.5),
+        (AicAlign, 380 * 0.05, 0.5),
+        (AicInsertScripted, 50 * 0.05, 0.5),
+        (AicVerify, 5.0, 1.0),
+        (AicRetract, 10 * 0.05, 1.0),
     ],
 )
-def test_each_skills_timeout_is_twice_its_nominal_duration(skill: type, nominal_s: float) -> None:
-    assert skill.timeout_s == pytest.approx(2 * nominal_s)
+def test_each_skills_timeout_is_twice_its_nominal_duration_at_its_slowest(
+    skill: type, nominal_s: float, slowest: float
+) -> None:
+    # A recovery may run approach, align and insert at half speed (#59); verify only waits,
+    # and retract never runs slowed.
+    assert skill.timeout_s == pytest.approx(2 * nominal_s / slowest)
     assert skill.config()["timeout_s"] == skill.timeout_s
 
 
@@ -314,7 +318,7 @@ def test_align_that_never_gets_within_1_mm_times_out(store: EventStore) -> None:
 def test_retract_raises_the_tcp_5_mm_straight_up_from_where_it_is(
     store: EventStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def retract_only(world: AicWorld, env: ExecEnv) -> py_trees.behaviour.Behaviour:
+    def retract_only(world: AicWorld, env: ExecEnv, goal: object) -> py_trees.behaviour.Behaviour:
         retract = SkillBehaviour(AicRetract(world.geometry), env)
         return py_trees.composites.Sequence(name="retract", memory=True, children=[retract])
 
@@ -347,7 +351,9 @@ def test_progress_feedback_is_sent_at_most_once_per_sim_second(
 ) -> None:
     # approach logs progress every 1.25 s, and retract right after it every 0.125 s, so the bound
     # is hit. (Setting A no longer hits it: insert_scripted ends once the plug is seated.)
-    def approach_then_retract(world: AicWorld, env: ExecEnv) -> py_trees.behaviour.Behaviour:
+    def approach_then_retract(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
         children = [
             SkillBehaviour(AicApproach(world.geometry), env),
             SkillBehaviour(AicRetract(world.geometry), env),

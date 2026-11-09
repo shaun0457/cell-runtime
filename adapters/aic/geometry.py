@@ -123,3 +123,12 @@ def gripper_target(
         f * target[2] + (1 - f) * gz,
     )
     return Pose(position=blend, orientation=q_slerp), acc
+
+
+def z_offset_at(port: Pose, plug: Pose, gripper: Pose) -> float:
+    """The z_offset whose `gripper_target` is the gripper's own height: its target z,
+    port z + z_offset - (gripper z - plug z), solved for z_offset. Where the arm is, as a
+    z_offset: in free space the one last commanded; pressed on something, higher by the
+    force over the controller's stiffness."""
+    gz, pz = gripper.position[2], plug.position[2]
+    return gz - port.position[2] + (gz - pz)

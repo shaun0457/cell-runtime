@@ -275,16 +275,16 @@ def config_parts(
         "world": dataclasses.asdict(params),
         "recovery": None if setting == "A" else recovery.as_dict(),
         "monitor": monitor.as_dict(),
-        "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
+        "skills": {n: skill_config(registry.get(n)) for n in sorted(registry.names())},
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),
-        "planner": None if planner is None else _planner_config(planner, recovery, planner_wait),
+        "planner": None if planner is None else planner_config(planner, recovery, planner_wait),
     }
     return {name: _digest(value) for name, value in config.items()}
 
 
-def _planner_config(
+def planner_config(
     planner: Planner, recovery: RecoveryConfig, planner_wait: PlannerWait
 ) -> dict[str, object]:
     """The planner's type, budget, deadline and wait mode, plus its own configuration if it
@@ -338,8 +338,12 @@ def lock_fingerprint(path: Path = LOCK_FILE) -> str:
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:16]
 
 
-def _skill_config(skill: Skill) -> dict[str, object]:
-    """A skill's identity and parameters: all fields of a dataclass skill, else its contract."""
+def skill_config(skill: Skill) -> dict[str, object]:
+    """A skill's identity and parameters: what it reports itself (`config()`, the AIC skills),
+    else all fields of a dataclass skill, else its contract."""
+    own = getattr(skill, "config", None)
+    if callable(own):
+        return dict(own())
     if dataclasses.is_dataclass(skill) and not isinstance(skill, type):
         return {"type": type(skill).__qualname__, **dataclasses.asdict(skill)}
     return {

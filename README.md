@@ -120,7 +120,8 @@ uv run cellrt baseline eval/baselines/phase0-small.json --write    # regenerate 
 `adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch
 the model with `policy:=adapters.aic.RuntimePolicy`, with cell-runtime installed in its
 environment. Each goal (one task) becomes one run in the store named by `CELLRT_STORE`
-(default `runs/aic.sqlite`): setting A, seed 0, and one scenario per goal,
+(default `runs/aic.sqlite`): the setting `CELLRT_SETTING` names (A, B or C; default A), seed
+0, and one scenario per goal,
 `<session>/goal<N>/<task id>`, where `CELLRT_SESSION` names the engine config (default `aic`):
 the engine sends no trial id, and every sample-config trial's task is `task_1`. Running the same
 config again gives new attempts of the same scenarios, so set a new `CELLRT_SESSION` for every
@@ -129,7 +130,7 @@ could not be told apart. Goal N matches the config's N-th task only when the eng
 goal before it (a trial it skips shifts the later ones). `cellrt replay` reads those
 runs like any other.
 
-The policy runs setting A as CheatCode's two phases split into skills: `approach`, `align`
+By default (setting A) the policy runs CheatCode's two phases split into skills: `approach`, `align`
 (down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
 -0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then the
 tip's height and offset from ground truth, against the seated band measured in the #28 sim
@@ -137,6 +138,18 @@ run); `retract` is there for recovery. z_offset is CheatCode's height above the 
 the plug tip actually ends depends on CheatCode's tip-offset quirk
 (`adapters/aic/geometry.py`): in #28 it seated two of the three plugs during align. Skill
 starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
+`CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
+wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
+at half speed. After a retract, align and insert go on down from the retracted pose, taken from
+where the arm is measured, not where it was last sent: a plug pressed on something holds the
+TCP far above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the retract left the
+descent below z_offset 0.01, align first comes back up to it. `retract`
+always rises 5 mm: the mock's retract height above the port does not carry over, since the
+port frame sits at a different depth for each port type. Setting C asks the planner
+`CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
+`NVIDIA_API_KEY` only). The executor runs in `live` mode (ADR 020): the sim does not stop
+while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching. A
+bad value in either variable refuses every goal, before the arm moves.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS
