@@ -83,11 +83,20 @@ Current shape (since #25, the plan's defaults):
 
 #### Option B — `aborted` for every stop in the cell, as the plan says
 - Pros: one outcome for "the arm was stopped"; the reason tells them apart.
-- Cons: the cell's runs and the mock's runs disagree on what `failed` means, unless the core
-  changes too. Changing the core (`cellrt/executor/runner.py:56`) means no run ends `failed`
-  any more, so the outcome no longer tells a known failure from a run stopped from outside,
-  and about 20 test assertions on a `failed` outcome change with it. No metric changes either
-  way: the metrics and the report only tell success from the rest (`cellrt/eval/metrics.py`).
+- Cons: done in the adapter only, the cell's runs and the mock's runs disagree on what
+  `failed` means, and 4 cell test assertions change. Done in the core, where every tree
+  FAILURE that is not a raise or a planner abort becomes `failed`
+  (`cellrt/executor/runner.py:56`, as of `7329a75`), it has two forms:
+  - every such end becomes `aborted`: a skill that reports its own failure and a failed
+    precondition too. No run ends `failed` any more, so `failed` in `Outcome` and in the fold
+    becomes unreachable, and about 20 assertions on a run's outcome change (16 outside the
+    cell tests);
+  - only the stops the Monitor decides (preemption and skill timeout; the executor already
+    tells them apart, `failure_source == "monitor"` in `cellrt/executor/behaviours.py`): a
+    skill's own failure stays `failed`, and fewer assertions change.
+
+  No metric changes in either form: the metrics and the report only tell success from the rest
+  (`cellrt/eval/metrics.py`).
 
 ### Confirming the arm stopped
 
