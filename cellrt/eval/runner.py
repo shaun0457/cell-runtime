@@ -258,7 +258,7 @@ async def _run(
         time_limit_s=scenario.task.time_limit,
         planner_wait=config.planner_wait,
     )
-    steps = SKILL_SEQUENCE
+    steps: tuple[str, ...] = SKILL_SEQUENCE
     if config.tree is not None:
         # Before the tree is built and before anything moves: a rejected plan ends the run here.
         planned = await plan_task(config.tree, scenario.task, registry)
