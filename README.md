@@ -53,6 +53,18 @@ code under `cellrt/` or `adapters/`, `uv.lock` or a parameter, and every affecte
 again (the configuration hash covers them all). A unit interrupted 3 times under the same configuration is given up on and
 reported on stderr, so a unit that crashes every time cannot block the rest.
 
+A small eval (every scenario × A, B, C × 3 seeds, k 2, about 8 s) is the behavioural
+regression gate: CI checks that it still gives the table recorded in
+`eval/baselines/phase0-small.json`, and a mismatch lists every differing cell. Counts must match
+exactly; rates and means may differ by at most 1e-9. When a change in behaviour is intended,
+regenerate the file and label the pull request `baseline-update` (CI fails a baseline change
+without that label):
+
+```sh
+uv run cellrt baseline eval/baselines/phase0-small.json            # check
+uv run cellrt baseline eval/baselines/phase0-small.json --write    # regenerate (A,B,C, 3 seeds, k 2)
+```
+
 ## The AIC cell (Phase 1, in progress)
 
 `adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch

@@ -1,0 +1,32 @@
+name: baseline-label
+
+# A pull request that changes a committed eval baseline must carry the `baseline-update` label,
+# so a change in behaviour is accepted on purpose, never by regenerating the file in passing.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Baseline changes need the baseline-update label
+        env:
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-update') }}
+        run: |
+          # HEAD is the merge commit GitHub built for the PR; its first parent is the base it was
+          # built on, so this lists only the PR's own changes, also for stacked PRs.
+          changed=$(git diff --name-only HEAD^1 HEAD -- eval/baselines/)
+          if [ -n "$changed" ] && [ "$HAS_LABEL" != "true" ]; then
+            echo "::error::baseline files changed without the baseline-update label (create the label in the repository first if it does not exist):"
+            echo "$changed"
+            exit 1
+          fi
+          echo "baseline files changed: ${changed:-none}; label present: $HAS_LABEL"
