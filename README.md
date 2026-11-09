@@ -98,3 +98,8 @@ The skills read plug and port poses from the sim's ground-truth TF (launch the s
 `ground_truth:=true`; every run records `geometry_source: ground_truth`). That is for local
 development only: the AIC submission environment blocks those topics (`docs/access_control.md`
 in the AIC repository).
+
+## License
+
+Apache License 2.0: see `LICENSE`. The AIC simulation this project runs on
+([intrinsic-dev/aic](https://github.com/intrinsic-dev/aic)) is under the same license.
