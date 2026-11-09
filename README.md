@@ -58,7 +58,10 @@ regression gate: CI checks that it still gives the table recorded in
 `eval/baselines/phase0-small.json`, and a mismatch lists every differing cell. Counts must match
 exactly; rates and means may differ by at most 1e-9. When a change in behaviour is intended,
 regenerate the file and label the pull request `baseline-update` (CI fails a baseline change
-without that label):
+without that label). A failing check marks the pull request red but does not block the merge,
+because the repository has no branch protection. The owner's Claude Code setup also holds an
+agent's commit to the baseline, the comparison (`cellrt/eval/baseline.py`) or its tests until
+the owner approves it (`.claude/one-way-doors`); nothing enforces that for other contributors:
 
 ```sh
 uv run cellrt baseline eval/baselines/phase0-small.json            # check
