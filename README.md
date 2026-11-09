@@ -88,6 +88,9 @@ uv run cellrt agent-report --db B=runs/b.sqlite --db C-rule=runs/rule.sqlite \
   --db "C-llm#1=runs/llm1.sqlite" --db "C-llm#2=runs/llm2.sqlite"
 ```
 
+The first run with a real model, and what it did and did not show, is in
+[`docs/phase3-llm-results.md`](docs/phase3-llm-results.md).
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
