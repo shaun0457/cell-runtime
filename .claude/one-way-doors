@@ -1,0 +1,6 @@
+# The committed eval baseline, the comparison that judges it, and its tests (#22). A change
+# here changes what CI accepts as unchanged behaviour, so it is approved on purpose, never in
+# passing.
+eval/baselines/
+cellrt/eval/baseline.py
+tests/test_baseline.py
