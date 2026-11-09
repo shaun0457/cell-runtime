@@ -59,6 +59,24 @@ after promotion.
 - Keep `monitor_verdict` evidence rich (force, torque, progress, XY, the rules that also
   matched).
 
+## Constraints learned in Phase 1 and 2
+
+- **Sim time keeps running while the LLM thinks.** A planner call takes wall time; at a
+  real-time factor below 1 it costs less sim time, at 1 the same. Either way the arm must be in
+  a confirmed HOLD before the call (ADR 012 confirms the stop only at run end today; Phase 2 adds
+  it between skills), and the wait comes out of `Task.time_limit` (180 s in the sample config).
+- **Replay must stay exact.** Record the planner's prompt and raw response in the event log
+  (`planner_called`, `planner_decided`), so `cellrt replay` never calls a model. An eval with a
+  real model is a sample, not a deterministic run: report its variance across repeats, as Phase 2
+  does for sim noise.
+- **Promotion can only use what was recorded.** A candidate rule can read only the fields in
+  `signal_sampled` (per step: tared force and torque, depth, XY error, wrench validity,
+  `force_over_limit_s`). A rule that needs a new signal needs new runs before it can be
+  validated; old stores cannot check it.
+- **Where the model runs.** Calls go from the Spot VM to an API: the key lives in a secret
+  store, never in the repo or the engine config, and the opt-in CI job uses a protected secret
+  with a call cap.
+
 ## Out of scope
 
 - An LLM in the control loop, or emitting velocities, gains or overrides of safety verdicts

@@ -1,0 +1,77 @@
+# Phase 4 brief: the report, the README and the demo
+
+Input for `to-spec`. Phase 4 turns the project into something a hiring manager can judge in
+five minutes and an engineer can check in an hour. It adds no runtime features.
+
+## Problem
+
+The work is spread over 14+ ADRs, three results documents, a runbook and hundreds of tests. A
+reader who opens the repo cold cannot tell what was built, what was measured or how much to
+trust it. In an interview Shaun has minutes, not an hour, and the first question will be about
+the numbers.
+
+## Audiences
+
+1. **Hiring manager or PM (5 minutes):** what problem, what result, what Shaun decided.
+2. **Engineer reviewing the repo (1 hour):** can I run it, are the numbers honest, is the design
+   sound.
+3. **Shaun in an interview:** the order to tell it in, and the weaknesses to name first.
+
+## Prerequisites
+
+- Phase 2 results exist (Phase 3 results too, if Phase 3 is done; otherwise the README says
+  where it stopped).
+- **Every ADR is accepted, with Decision and Why written or rewritten by Shaun.** This is a
+  hard gate: the report quotes the ADRs, and an interviewer may open any of them.
+
+## Deliverables
+
+1. **README** (the front page):
+   - one paragraph: the problem and the result, with the headline numbers and their caveat;
+   - one architecture diagram (the layers, the Monitor, the event log, the eval harness);
+   - "run it in one command": the mock eval with `uv`, no ROS needed, finishes in under a
+     minute;
+   - "what is real and what is mocked": ground-truth TF instead of perception, which faults are
+     scene faults and which are injected, and that ground truth is blocked in the AIC
+     submission environment;
+   - links to the eval report, the ADR index and the runbook.
+2. **Eval report** (`docs/eval-report.md`): method (settings, fault channels, the held-out
+   split, the noise floor, the budget), results with intervals, the per-scenario breakdown, the
+   reconciliation with the AIC scorer, negative results, and threats to validity. Merges what is
+   still true from `docs/phase0-results.md` and the Phase 2 results.
+3. **ADR index** (`docs/decisions/README.md`): one line per ADR, its decision in plain words,
+   accepted or superseded.
+4. **Demo video**, 3–4 minutes, recorded on the VM:
+   - one clean sim run;
+   - one run with an injected fault: the Monitor verdict, the recovery, the success;
+   - `cellrt replay` of that run, showing the force curve and each decision;
+   - the A/B/C table, with one sentence on what it does not show.
+   Screen capture of Gazebo and the terminal, with captions; no voice-over required.
+5. **Interview one-pager** (kept outside the repo or in `docs/`): the 30-second version, the
+   three decisions Shaun is proudest of, the three weaknesses he names first, and the answer to
+   "what did you build and what did Claude Code build".
+
+## Decisions (plan mode)
+
+1. **Repository visibility.** The repo is private today. Before it goes public: check history
+   for secrets and personal paths, pick a licence compatible with the AIC fork (Apache 2.0), and
+   decide whether internal docs (kickoff prompts, briefs) stay in the public tree.
+2. **Headline numbers.** Which single table leads the README, and which caveat travels with it
+   in the same paragraph. Mock and sim numbers are never shown in one table without labels.
+3. **Where the video lives** (repo release asset, YouTube unlisted, or a link in the README) and
+   how it is reproduced (the exact scenario, setting and seed are named, so anyone can rerun it).
+
+## Exit criteria
+
+1. A reader with only the README can run the mock eval and get the published Phase 0 table.
+2. Every number in the README and the eval report links to the command or the store that
+   produced it.
+3. The ADR index lists every ADR as accepted or superseded; no Decision section is a draft.
+4. The video shows a fault, a verdict, a recovery and a replay, and names the unit it shows.
+5. Shaun has given the 30-second version and answered five follow-up questions from the
+   one-pager without notes.
+
+## Out of scope
+
+- New runtime features, new scenarios, or rerunning evals to improve numbers.
+- Polishing code that is not on the reader's path.

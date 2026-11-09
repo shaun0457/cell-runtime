@@ -19,6 +19,17 @@ Boundary between 1 and 2: Phase 1 ends when the pipeline works end to end with *
 Fault injection, the eval in the sim and the ACT skill are Phase 2. An adapter that has never run
 in the sim is not done, so Phase 1 includes one real run.
 
+## Briefs
+
+Each phase spec is cut from its brief with `to-spec`.
+
+| Phase | Brief | Open decisions |
+|---|---|---|
+| 1 | `briefs/phase-1-aic-adapter.md` | #12 |
+| 2 | `briefs/phase-2-sim-eval.md` | #13 |
+| 3 | `briefs/phase-3-unknown-promotion.md` | #14 |
+| 4 | `briefs/phase-4-report-and-demo.md` | — |
+
 ## Where each capability is designed
 
 The rows follow the Agentic Robotics Engineer JD this project is measured against.
