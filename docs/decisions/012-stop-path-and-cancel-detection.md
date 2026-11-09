@@ -91,9 +91,11 @@ Current shape (since #25, the plan's defaults):
     precondition too. No run ends `failed` any more, so `failed` in `Outcome` and in the fold
     becomes unreachable, and about 20 assertions on a run's outcome change (16 outside the
     cell tests);
-  - only the stops the Monitor decides (preemption and skill timeout; the executor already
-    tells them apart, `failure_source == "monitor"` in `cellrt/executor/behaviours.py`): a
-    skill's own failure stays `failed`, and fewer assertions change.
+  - only the skills that were stopped (preemption and skill timeout, recorded as
+    `skill_cancelled` with reason `preempted` or `timeout` in `cellrt/executor/behaviours.py`):
+    a skill's own failure stays `failed`, also when the Monitor overrules a skill that ended by
+    itself (that sets `failure_source == "monitor"` without stopping anything), and fewer
+    assertions change.
 
   No metric changes in either form: the metrics and the report only tell success from the rest
   (`cellrt/eval/metrics.py`).
