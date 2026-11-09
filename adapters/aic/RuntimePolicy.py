@@ -8,6 +8,8 @@ the goals it receives: goal N of the engine config named by `CELLRT_SESSION` (de
 the scenario `<session>/goal<N>/<task id>`. `CELLRT_SETTING` (A, B or C) and `CELLRT_PLANNER`
 (rule, fixed or llm) choose the tree and setting C's planner; they are read on the first goal,
 and a bad value refuses every goal, before the arm moves, with a fixed message.
+`CELLRT_FAULT` (JSON, see `adapters/aic/faults.py`) injects a fault into the goals it names;
+it is read on the first goal too, and refused the same way.
 Nothing heavy is imported here, so loading stays inside aic_model's GetState timeout.
 """
 
@@ -21,9 +23,11 @@ from typing import Any
 from aic_model.policy import Policy
 
 from adapters.aic.convert import core_task
+from adapters.aic.faults import FaultSpec
 from adapters.aic.ros_port import RosNodePort
 from adapters.aic.run import (
     PolicySetupError,
+    fault_setup,
     goal_scenario_id,
     policy_setup,
     run_goal,
@@ -44,10 +48,10 @@ class RuntimePolicy(Policy):
         # insert_cable runs in aic_model's action thread, a new one per goal (ADR 012).
         self._goals_lock = threading.Lock()
         self._goals = 0
-        # The setting and planner, made on the first goal that can use them and kept for the
-        # engine run (a model planner's call cap counts over every goal). The engine sends goals
-        # one after another, so the planner and its cap are never used by two goals at once.
-        self._setup: tuple[Setting, Planner | None] | None = None
+        # The setting, planner and fault spec, made on the first goal that can use them and kept
+        # for the engine run (a model planner's call cap counts over every goal). The engine sends
+        # goals one after another, so the planner and its cap are never used by two goals at once.
+        self._setup: tuple[Setting, Planner | None, FaultSpec | None] | None = None
 
     def insert_cable(
         self, task: Any, get_observation: Any, move_robot: Any, send_feedback: Any
@@ -58,7 +62,7 @@ class RuntimePolicy(Policy):
             self._goals += 1
             goal = self._goals
         try:
-            setting, planner = self._settings()
+            setting, planner, faults = self._settings()
         except PolicySetupError as ex:  # a fixed message; the arm has not moved
             self.get_logger().error(f"cell-runtime goal refused: {ex}")
             return False
@@ -73,7 +77,13 @@ class RuntimePolicy(Policy):
             scenario = goal_scenario_id(self._session, goal, core.id)
             with EventStore(self._store_path) as store:
                 return run_goal(
-                    port, core, store, scenario_id=scenario, setting=setting, planner=planner
+                    port,
+                    core,
+                    store,
+                    scenario_id=scenario,
+                    setting=setting,
+                    planner=planner,
+                    fault=None if faults is None else faults.for_goal(goal),
                 )
         except Exception as ex:  # before or outside a run: run_goal records its own stops
             self._log_failure("goal", ex)
@@ -85,10 +95,11 @@ class RuntimePolicy(Policy):
                 except Exception as ex:
                     self._log_failure("close", ex)
 
-    def _settings(self) -> tuple[Setting, Planner | None]:
+    def _settings(self) -> tuple[Setting, Planner | None, FaultSpec | None]:
         with self._goals_lock:
             if self._setup is None:
-                self._setup = policy_setup(os.environ)
+                faults = fault_setup(os.environ)  # first: it needs no key
+                self._setup = (*policy_setup(os.environ), faults)
             return self._setup
 
     def _log_failure(self, what: str, ex: Exception) -> None:

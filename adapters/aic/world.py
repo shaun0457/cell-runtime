@@ -23,6 +23,10 @@ Stops (ADR 012): the goal's state is checked when the world is built and on ever
 step waits, so a cancel stops the run within one step (`goal_cancel_requested`, `goal_aborted`,
 `node_deactivated`). A node call that raises during a step stops it as `node_error`; its text is
 dropped. All of these raise `WorldStopped`, which the runner turns into its one stop.
+
+Faults (#60): a world built with a `CommandDropout` loses every command while the dropout
+is active (see `adapters/aic/faults.py`) and reports its transitions to the runner, as the
+mock world does; nothing about it reaches the signals.
 """
 
 from __future__ import annotations
@@ -32,11 +36,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from adapters.aic.convert import Pose, motion_command, plug_to_port_mm
+from adapters.aic.faults import CommandDropout, Dropout
 from adapters.aic.force import TaredWrench, time_over_limit
 from adapters.aic.node import NodePort
 from cellrt.executor.runner import STEP_TOLERANCE_S
 from cellrt.runtime.task import Task
-from cellrt.world.base import HOLD, Command, Signals, WorldStopped
+from cellrt.world.base import HOLD, Command, FaultTransition, Signals, WorldStopped
 
 # A 50 ms step that takes longer than this in real time means a real-time factor below 0.005.
 SIM_STALL_WALL_S = 10.0
@@ -86,6 +91,7 @@ class AicWorld:
         stall_wall_s: float = SIM_STALL_WALL_S,
         poll_wall_s: float = POLL_WALL_S,
         on_wait: Callable[[float], None] | None = None,
+        fault: CommandDropout | None = None,
     ) -> None:
         if not (math.isfinite(stall_wall_s) and stall_wall_s > 0):
             raise ValueError("stall_wall_s must be a positive number of seconds")
@@ -99,6 +105,7 @@ class AicWorld:
         self._hold_failed = False
         self._last_reading: TaredWrench | None = None  # for the pair across a step boundary
         self._newest: TaredWrench | None = None  # the newest finite reading
+        self._dropout = None if fault is None else Dropout(fault)
         try:
             self._check_goal()  # fail fast, before reading anything else
             self._sim_s = node.sim_now_s()
@@ -114,6 +121,8 @@ class AicWorld:
         return self._signals
 
     def command(self, cmd: Command) -> None:
+        if self._dropout is not None and self._dropout.active:
+            return  # the injected dropout: the command never reaches the arm
         try:
             state = self._node.controller_state()
             self._node.send(motion_command(cmd, None if state is None else state.tcp))
@@ -128,6 +137,17 @@ class AicWorld:
         if self._hold_failed:
             raise WorldStopped("node_error")
         return self._wait(dt, check_goal=True)
+
+    def take_fault_transitions(self) -> list[FaultTransition]:
+        return [] if self._dropout is None else self._dropout.take_transitions()
+
+    def final_fault_transitions(self) -> list[FaultTransition]:
+        """At the end of a run: the transitions decided at its last sample, which no step
+        reported."""
+        if self._dropout is None:
+            return []
+        self._dropout.flush()
+        return self._dropout.take_transitions()
 
     # for the adapter ----------------------------------------------------------------------------
 
@@ -175,6 +195,8 @@ class AicWorld:
         if read:
             self._geometry = self._read_geometry()
             self._signals = self._read_signals()
+            if self._dropout is not None:
+                self._dropout.observe(now, self._signals.height_mm)
         return now - start
 
     def _wait_until_ready(self, on_wait: Callable[[float], None] | None) -> None:

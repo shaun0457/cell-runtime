@@ -148,8 +148,16 @@ always rises 5 mm: the mock's retract height above the port does not carry over,
 port frame sits at a different depth for each port type. Setting C asks the planner
 `CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
 `NVIDIA_API_KEY` only). The executor runs in `live` mode (ADR 020): the sim does not stop
-while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching. A
-bad value in either variable refuses every goal, before the arm moves.
+while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching.
+`CELLRT_FAULT` injects a fault with a ground-truth label (#60), as JSON:
+`{"kind": "command_dropout", "onset_height_mm": 20, "duration_s": 15, "goals": [2]}` drops
+every motion command for 15 s of sim time from when the plug tip first comes within 20 mm of
+the port (the default), in goal 2 only (every goal without `goals`). The arm stays at its last
+target and the plug hangs; if that lasts past the Monitor's stall window in insert_scripted,
+the verdict is UNKNOWN. The onset is keyed to height, not to a skill, because the plug seats
+during align in the sim. The fault is recorded as `fault_injected` and `fault_cleared` and is
+part of the run's configuration hash. A bad value in any of these variables refuses every
+goal, before the arm moves.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS

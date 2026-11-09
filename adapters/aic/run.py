@@ -5,13 +5,16 @@ own asyncio loop (`asyncio.run`), its own `SimClock` starting at 0 and its own r
 store: the setting asked for (A by default), seed 0, the next attempt number, and the scenario
 the caller names (by default the task id). `RuntimePolicy` names one per goal with
 `goal_scenario_id`: aic_engine sends no trial id, and in its sample config every trial's task
-is `task_1`, and it takes the setting and the planner from the environment (`policy_setup`).
+is `task_1`, and it takes the setting and the planner from the environment (`policy_setup`), and the
+fault to inject, if any, from `CELLRT_FAULT` (`fault_setup`, #60).
 
 Settings B and C build the same trees as the mock, from the AIC skills plus a wait for the
 F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop while a planner
 thinks, so the arm holds, the world keeps stepping and the Monitor keeps watching.
 
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
+(unless an injected command dropout is still active: the HOLD is lost too, and the arm stays at
+its last target, #60)
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
 sim time; the result is recorded as `hold_checked` just before `run_finished`. A run that stops
 while the world is being built (which includes the wait for the cell to be ready, counted on
@@ -33,6 +36,7 @@ from typing import cast
 import py_trees
 from py_trees.common import Status
 
+from adapters.aic.faults import FAULT_ENV, CommandDropout, FaultSpec, FaultSpecError
 from adapters.aic.feedback import FeedbackRecorder
 from adapters.aic.node import NodePort
 from adapters.aic.skills import (
@@ -66,6 +70,8 @@ from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
+    FaultCleared,
+    FaultInjected,
     HoldChecked,
     Outcome,
     RunFinished,
@@ -120,6 +126,18 @@ def policy_setup(
         raise PolicySetupError(str(exc)) from None
 
 
+def fault_setup(environ: Mapping[str, str]) -> FaultSpec | None:
+    """The fault `CELLRT_FAULT` names, or None if it is unset or blank. Raises
+    PolicySetupError with `SPEC_REFUSED`, which never repeats the value it refuses."""
+    raw = environ.get(FAULT_ENV, "")
+    if not raw.strip():
+        return None
+    try:
+        return FaultSpec.parse(raw)
+    except FaultSpecError as exc:
+        raise PolicySetupError(str(exc)) from None
+
+
 def aic_registry(geometry: Callable[[], Geometry]) -> SkillRegistry:
     """The AIC skills under the names the trees use: CheatCode's phases sharing one descent,
     the retract, and the mock's wait for the F/T sensor, which only holds and reads whether
@@ -171,11 +189,12 @@ def run_goal(
     setting: Setting = DEFAULT_SETTING,
     planner: Planner | None = None,
     recovery: RecoveryConfig | None = None,
+    fault: CommandDropout | None = None,
 ) -> bool:
     """Run `task` to its end in the calling thread and record it; True if the run succeeded.
     The calling thread must not be running an event loop. `planner` is setting C's (the rule
-    planner if None) and is ignored in A and B. A recovery slower than the skills allow
-    raises ValueError before anything runs."""
+    planner if None) and is ignored in A and B. `fault` is injected into the cell (#60).
+    A recovery slower than the skills allow raises ValueError before anything runs."""
     if setting not in SETTINGS:
         raise ValueError(f"setting must be one of: {', '.join(SETTINGS)}")
     recovery = recovery or RecoveryConfig()
@@ -188,6 +207,7 @@ def run_goal(
         monitor=monitor or MonitorConfig(),
         stall_wall_s=stall_wall_s,
         poll_wall_s=poll_wall_s,
+        fault=fault,
     )
     scenario = task.id if scenario_id is None else scenario_id
     return asyncio.run(_run_goal(node, task, scenario, store, goal))
@@ -203,6 +223,7 @@ class _Goal:
     monitor: MonitorConfig
     stall_wall_s: float
     poll_wall_s: float
+    fault: CommandDropout | None = None
 
 
 async def _run_goal(
@@ -235,6 +256,7 @@ async def _run_goal(
             stall_wall_s=goal.stall_wall_s,
             poll_wall_s=goal.poll_wall_s,
             on_wait=clock.advance,
+            fault=goal.fault,
         )
     except WorldStopped as stopped:
         outcome, reason = "aborted", stopped.reason
@@ -259,6 +281,7 @@ async def _run_goal(
             monitor_config=goal.monitor,
             time_limit_s=task.time_limit,
             planner_wait=PLANNER_WAIT,
+            fault_source=world,
         )
         root = _tree(world, env, goal)
         try:
@@ -266,6 +289,7 @@ async def _run_goal(
         except Exception as ex:  # a bug in the runtime: still stop the arm and end the run
             outcome, reason = "aborted", f"runtime raised {type(ex).__name__}"
             await _hold_after_crash(root, world, env)
+        _record_last_faults(world, recorder)
         duration = clock.now()  # before the check, which only confirms the stop
         recorder.emit(_confirm_hold(world, clock, wait=reason not in _CLOCK_STOPPED))
     recorder.emit(
@@ -291,6 +315,21 @@ async def _hold_after_crash(
     for t in others:  # take each task's exception, so asyncio never prints its text
         if t.done() and not t.cancelled():
             t.exception()
+
+
+def _record_last_faults(world: AicWorld, recorder: FeedbackRecorder) -> None:
+    """A fault change decided at the run's last sample took effect, but no step reported it:
+    record it before the stop is confirmed, as the runner records the others."""
+    for t in world.final_fault_transitions():
+        event = FaultInjected if t.active else FaultCleared
+        recorder.emit(
+            event(
+                fault_id=t.fault.fault_id,
+                kind=t.fault.kind,
+                label=str(t.fault.label),
+                params=dict(t.fault.params),
+            )
+        )
 
 
 def _confirm_hold(world: AicWorld, clock: SimClock, *, wait: bool) -> HoldChecked:
@@ -330,11 +369,16 @@ def _no_geometry() -> Geometry:
 
 def _config_parts(task: Task, goal: _Goal) -> dict[str, str]:
     """One hash per part, as for mock runs (`cellrt.eval.runner.config_parts`): recovery for
-    the settings that recover, the planner (with the wait mode) for setting C."""
+    the settings that recover, the planner (with the wait mode) for setting C. An injected
+    fault is part of the scenario, as a mock scenario holds its faults, so runs of one
+    setting stay one configuration for the agent report; without one the scenario part is
+    the task alone, as before #60."""
     registry = aic_registry(_no_geometry)
     planner = goal.planner
     config = {
-        "scenario": task.model_dump(mode="json"),
+        "scenario": task.model_dump(mode="json")
+        if goal.fault is None
+        else {**task.model_dump(mode="json"), "faults": [goal.fault.config()]},
         "setting": goal.setting,
         "world": {
             "type": "AicWorld",
