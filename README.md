@@ -103,3 +103,5 @@ in the AIC repository).
 
 Apache License 2.0: see `LICENSE`. The AIC simulation this project runs on
 ([intrinsic-dev/aic](https://github.com/intrinsic-dev/aic)) is under the same license.
+Code adapted from AIC and transforms3d, with its copyright notices and licenses, is listed in
+`THIRD_PARTY_NOTICES.md`.

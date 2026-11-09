@@ -1,3 +1,19 @@
+# Third-party code, modified for cell-runtime (rewritten as pure functions on tuples, without
+# numpy, ROS or transforms3d). Notices and full license texts: THIRD_PARTY_NOTICES.md.
+#
+# gripper_target, XYIntegrator, I_GAIN, MAX_INTEGRATOR_WINDUP: adapted from CheatCode's
+# calc_gripper_pose in AIC (https://github.com/intrinsic-dev/aic),
+# aic_example_policies/aic_example_policies/ros/CheatCode.py.
+#   Copyright (C) 2026 Intrinsic Innovation LLC
+#   Licensed under the Apache License, Version 2.0 (see LICENSE).
+#
+# quat_multiply, quat_slerp, _EPS: adapted from quaternion_multiply, quaternion_slerp and _EPS in
+# transforms3d (https://github.com/matthew-brett/transforms3d), transforms3d/_gohlketransforms.py.
+#   Copyright (c) 2006-2017, Christoph Gohlke
+#   Copyright (c) 2006-2017, The Regents of the University of California
+#   BSD license (conditions and disclaimer in THIRD_PARTY_NOTICES.md). Redistributing this file
+#   alone requires keeping this header and that BSD text with it.
+
 """CheatCode's pose computation as pure functions, without numpy or transforms3d.
 
 Ported from `aic_example_policies/ros/CheatCode.py:72-186` @ `3ab0653` (`calc_gripper_pose`)
