@@ -19,11 +19,14 @@ What problem forces a decision here, and what constraints apply.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option chosen in plan mode. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+The option chosen, stated as what the code does.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+The reason, as it would be explained in an interview, including the weakness to name first.
 
 ## Consequences
 

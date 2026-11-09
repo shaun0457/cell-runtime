@@ -1,7 +1,7 @@
 # 003: Main loop and the py_trees ↔ async skill bridge
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -38,11 +38,27 @@ Behaviours submit coroutines with `run_coroutine_threadsafe` and poll the future
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+Option A. asyncio owns one single-threaded loop that runs in lockstep: tick the tree, drain the
+ready tasks until every live skill is waiting on the clock (bounded; otherwise `DrainError`),
+step the world, advance the clock by the time the step reports, record a signal sample.
+`SkillBehaviour` is the only bridge between py_trees and async skills: it starts the skill on
+its first tick, returns RUNNING while the task runs, maps the result to SUCCESS / FAILURE and
+cancels the task in `terminate()`.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Determinism decides it. One thread and asyncio's FIFO ready queue give the same schedule on
+every run, with no locks. A second thread (option B) looks more like a ROS executor, but then
+the order of events depends on the OS scheduler, which breaks reproducibility, and cancellation
+has to cross a thread boundary. Generators (option C) would be deterministic too, but they break
+the async skill contract that the ROS skills in Phase 1 and the LLM client in Phase 3 need.
+
+The price is one tick of latency when a skill finishes (50 ms of simulated time), and the rule
+that a skill may only block on the clock, which the drain bound enforces. Phase 1 kept the same
+loop in the cell: the only blocking happens inside the world step, after the drain (ADR 011).
 
 ## Consequences
 
