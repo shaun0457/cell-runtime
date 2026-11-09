@@ -91,6 +91,18 @@ uv run cellrt agent-report --db B=runs/b.sqlite --db C-rule=runs/rule.sqlite \
 The first run with a real model, and what it did and did not show, is in
 [`docs/phase3-llm-results.md`](docs/phase3-llm-results.md).
 
+`--tree` (on `eval` and `run`, ADR 023) chooses how a task becomes a tree. `fixed`, the
+default, runs approach, align, insert_scripted, verify for every task and records no plan.
+`table` picks the insert skill by the task's plug type (`sc` gets `insert_act`; the row is
+ours) and records the plan as `task_planned` before anything moves. A plan is checked against
+the registry and a step contract per skill (what each step needs and gives) before the tree is
+built; a plan that fails the check is recorded as `task_plan_rejected` with its codes, and the
+run ends `aborted` with no skill started. Each step still recovers as its setting says:
+
+```sh
+uv run cellrt run --scenario baseline --setting B --tree table
+```
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted

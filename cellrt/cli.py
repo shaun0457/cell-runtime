@@ -41,6 +41,7 @@ from cellrt.planner.nim import (
     ModelCallCap,
 )
 from cellrt.planner.smoke import run_smoke
+from cellrt.planner.task_plan import TablePlanner, TaskPlanner
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
@@ -66,6 +67,12 @@ PlannerOption = Annotated[
 ModelOption = Annotated[
     str, typer.Option(help=f"model id on NVIDIA NIM, for --planner llm (key in {KEY_ENV})")
 ]
+# How a task becomes a tree (ADR 023): `fixed` runs the same steps for every task and records no
+# plan; `table` picks the insert skill by plug type and records its plan before the run moves.
+TREE_KINDS = ("fixed", "table")
+TreeOption = Annotated[
+    str, typer.Option(help=f"how a task becomes a tree: one of {', '.join(TREE_KINDS)}")
+]
 MaxModelCallsOption = Annotated[
     int,
     typer.Option(
@@ -86,10 +93,12 @@ def run(
     planner: PlannerOption = "rule",
     model: ModelOption = DEFAULT_MODEL,
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
+    tree: TreeOption = "fixed",
 ) -> None:
     """Run one (scenario, setting, seed) and print its run id."""
     if setting not in SETTINGS:
         _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
+    task_planner = _tree(tree)
     by_id = {s.id: s for s in _load(scenarios)}
     if scenario not in by_id:
         _fail(f"unknown scenario {scenario!r}; known: {', '.join(by_id)}")
@@ -105,6 +114,7 @@ def run(
             store,
             recovery=recovery,
             planner=chosen,
+            tree=task_planner,
         )
     if planner == "llm" and chosen is not None:
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
@@ -122,9 +132,11 @@ def eval_(
     planner: PlannerOption = "rule",
     model: ModelOption = DEFAULT_MODEL,
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
+    tree: TreeOption = "fixed",
 ) -> None:
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
+    task_planner = _tree(tree)
     loaded = _load(scenarios)
     cap = _cap(max_model_calls)
     recovery = RecoveryConfig()  # one config for the call pre-check and the eval
@@ -139,10 +151,13 @@ def eval_(
             store,
             recovery=recovery,
             planner=chosen_planner,
+            tree=task_planner,
         )
         table = compute_metrics((store.events(r) for r in runs.run_ids), k)
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
+    if task_planner is not None:  # the table does not say how its tasks became trees
+        typer.echo(f"tree: {tree}", err=True)
     if "C" in chosen:  # the table's C row does not say which planner it ran with
         typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)
     if planner == "llm" and chosen_planner is not None:
@@ -259,6 +274,14 @@ def _planner(
         return build_planner(name, model=model, cap=cap)
     except LlmSetupError as exc:
         _fail(str(exc))
+
+
+def _tree(name: str) -> TaskPlanner | None:
+    """The task planner `--tree` names; None for `fixed`, which plans nothing. Exits on an
+    unknown name before any run is recorded."""
+    if name not in TREE_KINDS:
+        _fail(f"unknown tree {name!r}; known: {', '.join(TREE_KINDS)}")
+    return TablePlanner() if name == "table" else None
 
 
 def _planner_name(name: str, model: str) -> str:
