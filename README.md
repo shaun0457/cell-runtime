@@ -67,6 +67,8 @@ The policy runs setting A as CheatCode's two phases split into skills: `approach
 recovery. z_offset is CheatCode's height above the port; where the plug tip actually ends
 depends on CheatCode's tip-offset quirk (`adapters/aic/geometry.py`), to be checked in the sim. Skill starts, ends and progress (at most once per sim second) go out as
 `InsertCable` feedback.
+Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
+fresh wrench, as CheatCode waits for TF (ADR 011).
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS
 against a fake node (`tests/aic_fakes.py`); those two files run only where ROS 2 and AIC are
 installed, and their tests are skipped elsewhere.

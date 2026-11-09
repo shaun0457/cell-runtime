@@ -11,6 +11,14 @@ Force (ADR 013): at each step end the world drains every wrench message since th
 newest finite reading is the sample's force; the scorer's rule over the drained readings,
 continued from the last reading of the step before, is its `force_over_limit_s`.
 
+Readiness (ADR 011): when a goal starts, TF and the F/T stream may not be up yet (the
+subscriptions are made per goal). The world waits up to `READY_TIMEOUT_S` of sim time, as
+CheatCode waits up to 10 s for TF (`CheatCode.py:45-68`), polling every `READY_POLL_S`, until
+the ground-truth frames are found and the newest tared wrench is fresh; never longer than the
+task's time limit. Frames still missing at the bound stop the run as `ground_truth_unavailable`;
+a wrench still missing is left to the Monitor, which calls it SENSOR_DROPOUT. Each poll's sim
+time is passed to `on_wait`, so the run's clock (and `Task.time_limit`) counts the wait.
+
 Stops (ADR 012): the goal's state is checked when the world is built and on every poll while a
 step waits, so a cancel stops the run within one step (`goal_cancel_requested`, `goal_aborted`,
 `node_deactivated`). A node call that raises during a step stops it as `node_error`; its text is
@@ -20,6 +28,7 @@ dropped. All of these raise `WorldStopped`, which the runner turns into its one 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from adapters.aic.convert import Pose, motion_command, plug_to_port_mm
@@ -34,6 +43,8 @@ SIM_STALL_WALL_S = 10.0
 POLL_WALL_S = 0.002
 # The newest wrench must be at most this old (sim time) to count as valid; F/T runs at 50 Hz.
 WRENCH_FRESH_S = 0.1
+READY_TIMEOUT_S = 10.0  # sim time; CheatCode's TF wait (CheatCode.py:46)
+READY_POLL_S = 0.05
 TCP_FRAME = "gripper/tcp"
 
 
@@ -63,8 +74,9 @@ class Geometry:
 
 
 class AicWorld:
-    """Raises `WorldStopped("ground_truth_unavailable")` when built or stepped without the
-    ground-truth frames (launch the sim with `ground_truth:=true`)."""
+    """Building it waits for the cell to be ready (see the module docstring), then raises
+    `WorldStopped("ground_truth_unavailable")` if the ground-truth frames are still missing; a
+    step raises it at once (launch the sim with `ground_truth:=true`)."""
 
     def __init__(
         self,
@@ -73,6 +85,7 @@ class AicWorld:
         *,
         stall_wall_s: float = SIM_STALL_WALL_S,
         poll_wall_s: float = POLL_WALL_S,
+        on_wait: Callable[[float], None] | None = None,
     ) -> None:
         if not (math.isfinite(stall_wall_s) and stall_wall_s > 0):
             raise ValueError("stall_wall_s must be a positive number of seconds")
@@ -80,6 +93,7 @@ class AicWorld:
             raise ValueError("poll_wall_s must be positive and at most stall_wall_s")
         self._node = node
         self._frames = Frames.for_task(task)
+        self._ready_timeout_s = min(READY_TIMEOUT_S, task.time_limit)
         self._stall_wall_s = stall_wall_s
         self._poll_wall_s = poll_wall_s
         self._hold_failed = False
@@ -88,8 +102,7 @@ class AicWorld:
         try:
             self._check_goal()  # fail fast, before reading anything else
             self._sim_s = node.sim_now_s()
-            self._geometry = self._read_geometry()
-            self._signals = self._read_signals()
+            self._wait_until_ready(on_wait)
         except WorldStopped:
             raise
         except Exception:
@@ -164,6 +177,26 @@ class AicWorld:
             self._signals = self._read_signals()
         return now - start
 
+    def _wait_until_ready(self, on_wait: Callable[[float], None] | None) -> None:
+        """Bounded by `READY_TIMEOUT_S` of sim time (or the task's time limit, if shorter), and
+        each poll by `stall_wall_s`. A poll stopped part-way is not passed to `on_wait`, as a
+        step stopped part-way does not advance the run's clock."""
+        started = self._sim_s
+        while True:
+            geometry = self._find_geometry()
+            if geometry is not None:
+                self._geometry = geometry
+                self._signals = self._read_signals()
+                if self._signals.wrench_valid:
+                    return
+            if self._sim_s - started >= self._ready_timeout_s - STEP_TOLERANCE_S:
+                if geometry is None:
+                    raise WorldStopped("ground_truth_unavailable")
+                return  # no fresh wrench yet: the Monitor rules on it (SENSOR_DROPOUT)
+            elapsed = self._wait_for_sim_time(READY_POLL_S, check_goal=True, read=False)
+            if on_wait is not None:
+                on_wait(elapsed)
+
     def _check_goal(self) -> None:
         reason = self._node.goal_stop_reason()
         if reason is not None:
@@ -177,11 +210,17 @@ class AicWorld:
     # reading ------------------------------------------------------------------------------------
 
     def _read_geometry(self) -> Geometry:
+        geometry = self._find_geometry()
+        if geometry is None:
+            raise WorldStopped("ground_truth_unavailable")
+        return geometry
+
+    def _find_geometry(self) -> Geometry | None:
         poses = [self._node.transform(f) for f in (self._frames.port, self._frames.plug)]
         gripper = self._node.transform(self._frames.gripper)
         port, plug = poses
         if port is None or plug is None or gripper is None:
-            raise WorldStopped("ground_truth_unavailable")
+            return None
         return Geometry(port=port, plug=plug, gripper=gripper)
 
     def _read_signals(self) -> Signals:

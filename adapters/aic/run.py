@@ -7,7 +7,8 @@ store: scenario = task id, setting A, seed 0, next attempt number.
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
 sim time; the result is recorded as `hold_checked` just before `run_finished`. A run that stops
-while the world is being built has sent no command, so it neither holds nor checks.
+while the world is being built (which includes the wait for the cell to be ready, counted on
+the run's clock) has sent no command, so it neither holds nor checks.
 `run_finished.duration` is the run's time without the check, as for a mock run.
 """
 
@@ -34,7 +35,7 @@ from adapters.aic.skills import (
 from adapters.aic.world import POLL_WALL_S, SIM_STALL_WALL_S, AicWorld
 from cellrt.eval.runner import adapters_fingerprint, code_fingerprint, hash_parts, lock_fingerprint
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
-from cellrt.executor.runner import drain, run_task
+from cellrt.executor.runner import STEP_TOLERANCE_S, drain, run_task
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import (
@@ -104,11 +105,24 @@ async def _run_goal(
     )
     outcome: Outcome
     try:
-        world = AicWorld(node, task, stall_wall_s=stall_wall_s, poll_wall_s=poll_wall_s)
+        world = AicWorld(
+            node, task, stall_wall_s=stall_wall_s, poll_wall_s=poll_wall_s, on_wait=clock.advance
+        )
     except WorldStopped as stopped:
         outcome, reason = "aborted", stopped.reason
         duration = clock.now()
     else:
+        if clock.now() >= task.time_limit - STEP_TOLERANCE_S:
+            # The wait for readiness used the whole time limit: end without moving.
+            outcome, reason = "aborted", "time limit reached"
+            duration = clock.now()
+            recorder.emit(
+                RunFinished(
+                    outcome=outcome, reason=reason, steps=recorder.state.steps, duration=duration
+                )
+            )
+            store.flush()
+            return False
         env = ExecEnv(
             world=world,
             clock=clock,
