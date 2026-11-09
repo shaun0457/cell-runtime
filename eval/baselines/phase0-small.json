@@ -1,0 +1,71 @@
+{
+  "config": {
+    "k": 2,
+    "scenarios": "eval/scenarios/phase0.yaml",
+    "seeds": 3,
+    "settings": [
+      "A",
+      "B",
+      "C"
+    ]
+  },
+  "table": {
+    "confusion": {
+      "FORCE_LIMIT|FORCE_LIMIT": 9,
+      "INSERT_STUCK|INSERT_STUCK": 15,
+      "POSE_ERROR|POSE_ERROR": 19,
+      "SENSOR_DROPOUT|SENSOR_DROPOUT": 9,
+      "TIMEOUT|TIMEOUT": 13,
+      "UNKNOWN|UNKNOWN": 9
+    },
+    "gains": {
+      "B": {
+        "unexplained": [],
+        "won": 10
+      },
+      "C": {
+        "unexplained": [],
+        "won": 13
+      }
+    },
+    "k": 2,
+    "rows": {
+      "A": {
+        "classification_accuracy": 1.0,
+        "mean_duration_s": 5.8,
+        "mean_over_limit_s": 0.07142857142857142,
+        "mean_steps": 2.6666666666666665,
+        "pass_k": 0.14285714285714285,
+        "planner_calls_per_task": 0.0,
+        "recovery_rate": 0.0,
+        "runs": 21,
+        "success_rate": 0.14285714285714285,
+        "unsafe_runs": 0
+      },
+      "B": {
+        "classification_accuracy": 1.0,
+        "mean_duration_s": 10.95,
+        "mean_over_limit_s": 0.07142857142857142,
+        "mean_steps": 5.428571428571429,
+        "pass_k": 0.4761904761904762,
+        "planner_calls_per_task": 0.0,
+        "recovery_rate": 0.5555555555555556,
+        "runs": 21,
+        "success_rate": 0.6190476190476191,
+        "unsafe_runs": 0
+      },
+      "C": {
+        "classification_accuracy": 1.0,
+        "mean_duration_s": 11.411904761904761,
+        "mean_over_limit_s": 0.07142857142857142,
+        "mean_steps": 5.714285714285714,
+        "pass_k": 0.619047619047619,
+        "planner_calls_per_task": 0.14285714285714285,
+        "recovery_rate": 0.7222222222222222,
+        "runs": 21,
+        "success_rate": 0.7619047619047619,
+        "unsafe_runs": 0
+      }
+    }
+  }
+}
