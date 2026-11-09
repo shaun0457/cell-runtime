@@ -1,0 +1,200 @@
+# Runbook: one Phase 1 run in the AIC sim (#28)
+
+**Status: draft, not yet followed.** Every command below comes from the AIC docs or this repo's
+code, not from a run. #28 follows it once from a fresh VM, fixes what is wrong, and only then is
+it done. Facts are against `shaun0457/aic` @ `3ab0653`.
+
+What one session produces: the 3 sample-config tasks run in setting A with no faults, the AIC
+scorer's report, our event store with one run per goal, and one cancelled goal.
+
+It needs cell-runtime's `main` with the readiness wait and per-goal scenarios merged (commits
+"wait for TF and the F/T stream before a goal starts moving" and "give each goal of an engine
+run its own scenario in the cell"). Without them the scenario ids below do not match.
+
+## 1. The VM
+
+- GCP, Ubuntu 24.04, n1-standard-8 (8 vCPU, 30 GB) with one T4, a 100 GB boot disk, and a
+  separate persistent disk for results (device name `results`), attached at creation.
+- **On-demand for this first run**, not Spot: a preemption in the middle of debugging loses the
+  session, and the eval runner's resume does not help here.
+- AIC asks for 32 GB of RAM or more (`docs/getting_started.md:25-29`); 30 GB is just under. Watch
+  memory during the first run (`free -h`).
+- Without a GPU Gazebo still runs, with a much lower real-time factor
+  (`docs/troubleshooting.md:18-27`). Keep the GPU: Phase 2's ACT policy reads camera images,
+  and turning off global illumination would change them.
+
+## 2. Host setup (once per VM)
+
+As in AIC's `docs/getting_started.md:45-95`, plus what a fresh image lacks:
+
+```bash
+# results disk, mounted under $HOME so the eval container sees it (distrobox shares $HOME)
+sudo blkid /dev/disk/by-id/google-results || \
+  sudo mkfs.ext4 -m 0 /dev/disk/by-id/google-results    # formats only a disk with no filesystem
+mkdir -p ~/results && sudo mount /dev/disk/by-id/google-results ~/results
+sudo chown "$USER": ~/results && mkdir -p ~/results/aic ~/results/aic_cancel ~/results/cellrt
+```
+
+The mount does not survive a stop and start of the VM: after one, run the `mount` line again.
+
+1. NVIDIA driver for the T4; check with `nvidia-smi`.
+2. Docker Engine, then let the user run it: `sudo usermod -aG docker "$USER"`, and log in again.
+3. NVIDIA Container Toolkit:
+   `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
+4. Distrobox (`sudo apt install distrobox`, `getting_started.md:77`), told to use Docker in
+   every shell: `echo 'export DBX_CONTAINER_MANAGER=docker' >> ~/.bashrc`.
+5. Pixi (`curl -fsSL https://pixi.sh/install.sh | bash`), uv
+   (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then restart the shell.
+6. GitHub CLI for the private repo: `sudo apt install gh && gh auth login && gh auth setup-git`.
+
+## 3. Workspaces
+
+```bash
+mkdir -p ~/ws_aic/src && cd ~/ws_aic/src
+git clone https://github.com/shaun0457/aic && cd aic && git checkout 3ab0653
+pixi install
+
+git clone https://github.com/shaun0457/cell-runtime ~/cell-runtime
+git -C ~/cell-runtime log --oneline -1                  # record this commit in #28's report
+grep -q '^def session_label' ~/cell-runtime/adapters/aic/run.py &&
+  grep -q '^READY_TIMEOUT_S' ~/cell-runtime/adapters/aic/world.py && echo 'merged: ok'
+```
+
+No `merged: ok` means the readiness wait or the per-goal scenarios are not on `main` yet: stop
+here.
+
+Every host shell below needs the same paths. Write them once:
+
+```bash
+cat > ~/cellrt.env <<'EOF'
+export AIC_PY=$HOME/ws_aic/src/aic/.pixi/envs/default/bin/python
+export CELLRT_STORE=$HOME/results/cellrt/aic.sqlite
+EOF
+```
+
+Install cell-runtime into aic_model's environment without touching the fork's `pixi.toml`:
+that environment has no pip, and pyyaml and pydantic are already in it, so uv adds `py_trees`,
+`typer` and cell-runtime itself:
+
+```bash
+source ~/cellrt.env
+uv pip install --python "$AIC_PY" -e ~/cell-runtime
+```
+
+pixi does not track this install: run the line again after any `pixi install`. Then check that
+the policy imports without heavy modules (aic_model has a GetState timeout), which also warms
+the environment so the policy starts fast in step 5:
+
+```bash
+cd ~/ws_aic/src/aic
+pixi run python -c "import sys, adapters.aic.RuntimePolicy; assert 'torch' not in sys.modules; print('ok')"
+```
+
+## 4. Start the sim with ground truth
+
+Have the step 5 shell ready first: the engine waits only 30 s for the policy's node
+(`docs/getting_started.md:161`, `model_discovery_timeout_seconds`).
+
+```bash
+docker pull ghcr.io/intrinsic-dev/aic/aic_eval:latest   # if denied, log in to ghcr.io (getting_started.md:158)
+distrobox create -r --nvidia -i ghcr.io/intrinsic-dev/aic/aic_eval:latest aic_eval
+distrobox enter -r aic_eval
+# inside the container:
+export AIC_RESULTS_DIR=$HOME/results/aic        # the scorer writes scoring.yaml here
+/entrypoint.sh gazebo_gui:=false launch_rviz:=false ground_truth:=true start_aic_engine:=true
+```
+
+The VM has no display: `gazebo_gui:=false launch_rviz:=false` are the flags AIC's own compose
+file runs the eval with (`docker/docker-compose.yaml:9`). That file also passes
+`shutdown_on_aic_engine_exit:=true`; it is left out here so the sim and the engine terminal stay
+up after the last trial, to read the scores. Ctrl-C stops the launch. `ground_truth:=true`
+publishes the TF frames the skills read; the submission environment blocks them
+(`docs/access_control.md`).
+
+## 5. Start the policy
+
+In a second shell on the host (not in the container):
+
+```bash
+cd ~/ws_aic/src/aic
+source ~/cellrt.env                       # without CELLRT_STORE the store is runs/aic.sqlite here
+export CELLRT_SESSION=sample_config       # names the engine config: change it per config
+pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
+  -p policy:=adapters.aic.RuntimePolicy
+```
+
+The aic_model log should show `Loaded policy module adapters.aic.RuntimePolicy` and `Using
+policy: RuntimePolicy` (`aic_model.py:66`, `:73`). Each goal becomes one run:
+`sample_config/goal<N>/task_1/A/0/a<attempt>`. Running the same config again adds attempts to
+the same scenarios (ADR 010). After the third trial the engine cleans up and shuts aic_model
+down (`aic_engine.cpp:618-620`).
+
+## 6. Where the results are
+
+- **Engine terminal:** trial progression and each trial's score.
+- **Scorer report:** `~/results/aic/scoring.yaml` on the host (`$AIC_RESULTS_DIR` in the
+  container, `aic_engine.cpp:2011`), per trial and tier. Each engine run overwrites it, so every
+  run gets its own directory.
+- **Our store:** `$CELLRT_STORE`. The step 5 shell is busy with aic_model, so open a new one;
+  list the runs, then replay one with its force curve:
+
+  ```bash
+  source ~/cellrt.env
+  "$AIC_PY" -c "from pathlib import Path; from cellrt.runtime.store import EventStore; s = EventStore(Path('$CELLRT_STORE')); print(*[(r.run_id, r.finished) for r in s.runs()], sep='\n')"
+  "$(dirname "$AIC_PY")/cellrt" replay 'sample_config/goal1/task_1/A/0/a1' --db "$CELLRT_STORE" --signals
+  ```
+
+## 7. The cancel check
+
+A second engine run, with a fresh aic_model process (the engine configures only a new,
+unconfigured node). Stop aic_model (Ctrl-C) and the launch (Ctrl-C), then, in the container:
+
+```bash
+export AIC_RESULTS_DIR=$HOME/results/aic_cancel
+/entrypoint.sh gazebo_gui:=false launch_rviz:=false ground_truth:=true start_aic_engine:=true
+```
+
+and in the policy shell:
+
+```bash
+cd ~/ws_aic/src/aic && source ~/cellrt.env
+export CELLRT_SESSION=sample_config_cancel
+pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
+  -p policy:=adapters.aic.RuntimePolicy
+```
+
+During the first goal's descent, abort it from a third shell:
+
+```bash
+cd ~/ws_aic/src/aic
+pixi run ros2 service list | grep cancel_task          # aic_model's service (aic_model.py:86-87)
+pixi run ros2 service call /cancel_task std_srvs/srv/Empty
+```
+
+Expected in the store: that run (`sample_config_cancel/goal1/task_1/A/0/a1`) ends `aborted`
+with reason `goal_aborted`, and its `hold_checked` reads `hold_confirmed` (ADR 012). After an
+abort aic_model can accept the next goal while the old run is still holding: record in #28's
+report whether goal 2 started before goal 1's `run_finished`.
+
+## 8. What #28's report records
+
+For each of the 3 tasks of the first run, kept apart:
+
+- the runtime's own result (`run_finished`), the policy's return value, and the scorer's
+  insertion result;
+- our time over 20 N (sum of `force_over_limit_s` in the run) against the scorer's force
+  penalty for the same trial, with the difference and its cause (ADR 013 lists the known ones);
+- every `monitor_verdict`, as a finding;
+- the real-time factor (sim time over wall time for one run);
+- the seated depth that `verify` reported, to set `VERIFY_MIN_DEPTH_MM` (a placeholder of 10).
+
+Also to check against the sim, from the PRs' Might miss lists: the CheatCode tip-offset quirk,
+the Monitor's insertion rules near the end of the descent, the 10 s readiness wait, and the
+hold check's 5 mm/s and 1.0 s.
+
+## 9. Shut down
+
+Stop the policy (Ctrl-C), leave the container and stop it (`distrobox stop -r aic_eval`), then
+`sudo umount ~/results` and stop the VM. The results disk keeps its data while the VM is
+stopped, and when the VM is deleted only if the disk is not set to be deleted with it. An
+on-demand VM bills while it is running.

@@ -25,7 +25,8 @@ event store and replayable with `cellrt replay`.
 - Scripted skills built from CheatCode's logic: `approach`, `align`, `insert_scripted`,
   `verify`, `retract`, with Phase 0's skill contract and `monitor_profile`s.
 - One stop path for every way a skill or task can end (see decision 2).
-- One end-to-end run on the Spot VM with `ground_truth:=true`, and a runbook for it.
+- One end-to-end run on the GCP VM with `ground_truth:=true`, and a runbook for it
+  (`docs/runbooks/phase1-sim-run.md`; on-demand, not Spot, for this first run).
 
 ## Out of scope
 

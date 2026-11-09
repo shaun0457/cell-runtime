@@ -10,7 +10,7 @@ and what is out of scope on purpose. Phase specs and tickets are cut from the br
 | Phase | Goal | Exit criterion | Runs on | Status |
 |---|---|---|---|---|
 | 0 | ROS-free runtime core, mock world, eval CLI | eval prints the A/B/C table; kill and rerun gives the same table | laptop + CI | done (#1, #15) |
-| 1 | The same runtime drives the real AIC interface | the 3 sample-config tasks succeed end to end with no faults, recorded and replayable | laptop (adapter, fakes) + Spot VM (one sim run) | brief: `briefs/phase-1-aic-adapter.md` |
+| 1 | The same runtime drives the real AIC interface | the 3 sample-config tasks succeed end to end with no faults, recorded and replayable | laptop (adapter, fakes) + GCP VM (one sim run, on-demand) | brief: `briefs/phase-1-aic-adapter.md` |
 | 2 | What recovery is worth, measured in the sim | A/B/C eval in Gazebo with injected faults, reconciled with the AIC score; B and C may show no gain | Spot VM | open decisions: #13 |
 | 3 | The LLM planner | LLM triage and task-to-tree generation pass the same validation gate; UNKNOWN promotion validated by replay | laptop + Spot VM | brief: `briefs/phase-3-unknown-promotion.md`; open decisions: #14 |
 | 4 | Report and demo | eval report, README, demo video | laptop | not started |
