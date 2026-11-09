@@ -21,8 +21,9 @@ the numbers.
 
 - Phase 2 results exist (Phase 3 results too, if Phase 3 is done; otherwise the README says
   where it stopped).
-- **Every ADR is accepted, with Decision and Why written or rewritten by Shaun.** This is a
-  hard gate: the report quotes the ADRs, and an interviewer may open any of them.
+- **Every ADR is accepted, and Shaun has read each one.** Decision and Why are drafted by
+  Claude under his delegation; the report quotes the ADRs and an interviewer may open any of
+  them, so he must be able to explain each in his own words (the interview cards help).
 
 ## Deliverables
 
@@ -66,7 +67,7 @@ the numbers.
 1. A reader with only the README can run the mock eval and get the published Phase 0 table.
 2. Every number in the README and the eval report links to the command or the store that
    produced it.
-3. The ADR index lists every ADR as accepted or superseded; no Decision section is a draft.
+3. The ADR index lists every ADR as accepted or superseded, each with its decision in one line.
 4. The video shows a fault, a verdict, a recovery and a replay, and names the unit it shows.
 5. Shaun has given the 30-second version and answered five follow-up questions from the
    one-pager without notes.

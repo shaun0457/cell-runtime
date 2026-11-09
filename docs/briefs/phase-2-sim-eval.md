@@ -23,11 +23,11 @@ trial by trial with the AIC scorer, and that states plainly where B or C gains n
 
 1. Phase 1 done (#28): the 3 sample tasks pass, the runbook works from a fresh VM, and the run
    report gives the real-time factor and the first F/T noise numbers.
-2. **Shaun confirms the Decision and Why of the ADRs Phase 2 builds on**: 005 (fault model),
-   006 (Monitor), 007 (recovery budgets), 009 (metrics), 010 (resume and units), 011–014 (time,
-   stop path, force sampling, command mode). The Phase 1 spec (#19) records its choices as
-   "Claude defaults"; Phase 2 decides what the results mean, so it cannot rest on unconfirmed
-   decisions. #17 holds drafts for 001–005 and 008–010.
+2. The ADRs Phase 2 builds on are accepted: 005 (fault model), 006 (Monitor), 007 (recovery
+   budgets), 009 (metrics), 010 (resume and units), 011–014 (time, stop path, force sampling,
+   command mode). #43 accepts 001–014; Decision and Why are drafted by Claude under Shaun's
+   delegation. Phase 2's own decisions that change what the results mean (fault channels, the
+   held-out split, metric changes) are flagged in their PRs for Shaun before merge.
 
 ## In scope
 
