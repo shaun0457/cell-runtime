@@ -23,7 +23,7 @@ from py_trees.common import Status
 from cellrt.executor.behaviours import ExecEnv, PlannerBehaviour, SkillBehaviour
 from cellrt.monitor.classifier import FailureClass
 from cellrt.planner.base import FailureContext, Planner
-from cellrt.planner.schemas import Abort, Retry, SwitchSkill
+from cellrt.planner.schemas import Abort, Escalate, Retry, SwitchSkill
 from cellrt.runtime.events import RecoveryStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
@@ -182,7 +182,9 @@ class Recovering(py_trees.composites.Composite):
         self._queue: list[py_trees.behaviour.Behaviour] = []
         self._consulted: SkillBehaviour | None = None  # the failure the planner is asked about
         self.failure_reason: str | None = None
-        self.aborted = False  # the planner aborted, or its output was rejected
+        # The planner stopped the run (abort or escalate), timed out, or its output was
+        # rejected.
+        self.aborted = False
 
     def tick(self) -> Iterator[py_trees.behaviour.Behaviour]:
         if self.status != Status.RUNNING:
@@ -274,6 +276,12 @@ class Recovering(py_trees.composites.Composite):
             case Abort(reason=reason):
                 self.aborted = True
                 self.failure_reason = f"{skill} failed: UNKNOWN (planner aborted: {reason})"
+                return False
+            case Escalate(reason=reason):
+                # Handed to a person: the run ends aborted, so outcomes and metrics keep their
+                # three values (ADR 018).
+                self.aborted = True
+                self.failure_reason = f"{skill} failed: UNKNOWN (planner escalated: {reason})"
                 return False
             case Retry():
                 again, action = failed, "retry"

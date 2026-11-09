@@ -46,9 +46,11 @@ Choose exactly one decision:
   failed skill itself.
 - retry: run the failed skill again.
 - abort: give up on the task, with a short reason.
+- escalate: hand the task to a human operator, with a short reason, when a person should look
+  before anything else runs.
 
 Read the evidence and the skill descriptions. Prefer the action most likely to succeed. If no
-option is likely to succeed, abort early rather than spend the remaining budget.
+option is likely to succeed, abort or escalate early rather than spend the remaining budget.
 """
 _TOOL_INSTRUCTION = f"Answer by calling the `{TOOL_NAME}` tool exactly once."
 _JSON_INSTRUCTION = (

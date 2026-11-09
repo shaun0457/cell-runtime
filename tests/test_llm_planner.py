@@ -26,6 +26,7 @@ from cellrt.planner.llm import (
     MAX_MODEL_CHARS,
     MAX_TEMPERATURE,
     MAX_TOKENS_LIMIT,
+    SYSTEM_PROMPTS,
     ChatReply,
     ChatRequest,
     LlmPlanner,
@@ -157,7 +158,8 @@ def test_the_model_is_asked_through_the_decide_tool_with_the_failure_context(
     kinds = {
         v["properties"]["kind"]["const"] for v in request.tool["function"]["parameters"]["oneOf"]
     }
-    assert kinds == {"switch_skill", "retry", "abort"}
+    assert kinds == {"switch_skill", "retry", "abort", "escalate"}
+    assert '"escalate"' in SYSTEM_PROMPTS["json"]  # the JSON answer's schema has it too
     context = json.loads(request.messages[1]["content"])
     assert (context["skill"], context["failure_class"]) == ("insert_scripted", "UNKNOWN")
     assert context["options"] == ["insert_act"]  # never the failed skill

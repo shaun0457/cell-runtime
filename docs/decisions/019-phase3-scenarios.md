@@ -49,7 +49,8 @@ there, on every attempt. The stall rule classifies it UNKNOWN.
 - Cons:
   - Each scenario still has one right answer that a rule can hard-code.
   - It tests fixing, not knowing when to give up.
-  - The mock has three actions (switch, retry, abort); a new fix needs a new skill.
+  - The mock has three actions that act on it (switch, retry, abort; escalate fixes nothing);
+    a new fix needs a new skill.
 
 #### Option C: one signature, fixable or not depending on a drawn parameter
 - Pros: closest to real triage: the evidence decides.

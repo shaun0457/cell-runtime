@@ -22,17 +22,20 @@ Current shape:
   dict or a JSON string), so a fake, a rule planner and an LLM share one path. A model planner
   wraps it with the call's trace (`Traced`).
 - `validate_decision` turns raw output into a `Decision` (`switch_skill(skill)`, `retry`,
-  `abort(reason)`; pydantic, `extra="forbid"`, discriminator `kind`) or a `Rejection` holding the
+  `abort(reason)`, and since #48 `escalate(reason)`, ADR 018; pydantic, `extra="forbid"`,
+  discriminator `kind`) or a `Rejection` holding the
   raw text (scrubbed by `runtime.scrub`, then cut to 500 characters: what looks like a key, a
   token or an e-mail address is redacted, control and direction characters are replaced, since
   the store keeps it for good) and error codes (`field: type`; a key the planner made up
   shows as `<extra>`, so nothing the planner wrote is echoed in a code). Text over 16,000
   characters, or nested more than 8 brackets deep, is rejected unparsed (`too_long`,
   `too_deep`): parsing deep input would hit a recursion limit that differs by platform.
-  Validation never raises (a hostile `repr` included). An `abort` reason may not contain C0 or
-  C1 control characters or direction overrides, and is scrubbed before it is stored.
+  Validation never raises (a hostile `repr` included). An `abort` or `escalate` reason may not
+  contain C0 or C1 control characters or direction overrides, and is scrubbed before it is
+  stored.
   A switch must name a registered skill, not the failed one, and one of the step's options.
-  An abort reason is at most 200 printable characters: it becomes the run's outcome reason.
+  An abort or escalate reason is at most 200 printable characters: it becomes the run's
+  outcome reason.
 - Only insert steps get a planner in Phase 0; their options are the other registered insert
   skills. Only a Monitor-sourced UNKNOWN reaches it; a class a skill reported itself, or a skill
   that raised, does not.
@@ -43,8 +46,8 @@ Current shape:
 - Running a retry or a switch records `recovery_started` (class UNKNOWN, action `retry` or
   `switch_skill:<name>`) and counts against the task recovery budget (4). Planner calls have
   their own budget, 2 per task, checked against `RunState.planner_calls` folded from the log.
-- `abort` and a rejection end the run as `aborted` with a reason; an exhausted planner budget
-  ends it as `failed`.
+- `abort`, `escalate` (ADR 018) and a rejection end the run as `aborted` with a reason; an
+  exhausted planner budget ends it as `failed`.
 - A skill the planner switched to is a full member of the step: if it then fails with a known
   class, B's plan applies to it (a FORCE_LIMIT reruns it at half speed).
 - In setting C, `config_hash` also covers the planner's type and budget, and the configuration

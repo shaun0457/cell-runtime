@@ -122,6 +122,8 @@ MALFORMED: dict[str, object] = {
     "not an insert skill": {"kind": "switch_skill", "skill": "verify"},
     "the failed skill itself": {"kind": "switch_skill", "skill": "insert_scripted"},
     "abort without a reason": {"kind": "abort"},
+    "escalate without a reason": {"kind": "escalate"},
+    "an escalation reason over 200 characters": {"kind": "escalate", "reason": "r" * 201},
     "extra field": {"kind": "retry", "speed": 99},
     "a skill name over 64 characters": {"kind": "switch_skill", "skill": "s" * 65},
     "a reason over 200 characters": {"kind": "abort", "reason": "r" * 201},
@@ -157,6 +159,34 @@ def test_a_planner_abort_ends_the_run_with_its_reason(store: EventStore) -> None
         "aborted",
         "insert_scripted failed: UNKNOWN (planner aborted: torque pattern looks unsafe)",
     )
+
+
+def test_a_planner_escalation_hands_the_task_to_an_operator(store: EventStore) -> None:
+    planner = FakePlanner([{"kind": "escalate", "reason": "port looks damaged"}])
+
+    events = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=planner)
+
+    [decided] = [e.payload for e in events if e.type == "planner_decided"]
+    assert decided.decision["kind"] == "escalate"
+    assert "recovery_started" not in _types(events)
+    assert (events[-1].payload.outcome, events[-1].payload.reason) == (
+        "aborted",
+        "insert_scripted failed: UNKNOWN (planner escalated: port looks damaged)",
+    )
+
+
+def test_an_escalation_reason_is_scrubbed_and_must_not_steer_the_terminal(
+    store: EventStore,
+) -> None:
+    leaky = FakePlanner([{"kind": "escalate", "reason": "key sk-SECRETKEY-1234567890 refused"}])
+    bidi = FakePlanner([{"kind": "escalate", "reason": "looks fine\u202edesrever"}])
+
+    leaked = _run(store, SCENARIOS["yaw_mismatch"], "C", planner=leaky)
+
+    assert "SECRETKEY" not in str([e.payload for e in leaked])
+    assert leaked[-1].payload.reason.endswith("(planner escalated: key <redacted> refused)")
+    [r] = _rejected(_run(store, SCENARIOS["yaw_mismatch"], "C", planner=bidi))
+    assert r.errors == ["escalate.reason: string_pattern_mismatch"]
 
 
 def _rejected(events: list[Event]) -> list[PlannerOutputRejected]:

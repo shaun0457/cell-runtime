@@ -187,7 +187,8 @@ def _raised(root: py_trees.behaviour.Behaviour) -> str | None:
 
 
 def _planner_aborted(root: py_trees.behaviour.Behaviour) -> str | None:
-    """Why the run is aborted if the planner gave up or its output was rejected, else None."""
+    """Why the run is aborted if the planner stopped it (abort or escalate), timed out, or its
+    output was rejected; else None."""
     for node in root.iterate():
         if isinstance(node, Recovering) and node.aborted and node.failure_reason:
             return node.failure_reason

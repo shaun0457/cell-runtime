@@ -28,7 +28,7 @@ MAX_INPUT_CHARS = 16_000
 MAX_JSON_DEPTH = 8
 # Names an error location may show; anything else (a key the planner made up) is "<extra>".
 # With duplicates dropped, this keeps the set of possible error codes small and fixed.
-_KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "abort"})
+_KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "abort", "escalate"})
 # A printable reason: it ends up in the run's outcome and in replay lines. No C0 or C1 control
 # characters (a C1 byte can be a terminal escape) and no direction overrides.
 _NO_CONTROL_CHARS = f"^[^{UNSAFE_CHARS}]+$"
@@ -59,9 +59,17 @@ class Abort(_Decision):
     reason: str = Field(min_length=1, max_length=MAX_REASON_CHARS, pattern=_NO_CONTROL_CHARS)
 
 
-Decision = Annotated[SwitchSkill | Retry | Abort, Field(discriminator="kind")]
+# ADR 018. The docstring below is what the model reads in the tool's schema.
+class Escalate(_Decision):
+    """Hand the task to a person: nothing else runs, and the run ends aborted."""
+
+    kind: Literal["escalate"] = "escalate"
+    reason: str = Field(min_length=1, max_length=MAX_REASON_CHARS, pattern=_NO_CONTROL_CHARS)
+
+
+Decision = Annotated[SwitchSkill | Retry | Abort | Escalate, Field(discriminator="kind")]
 DECISION_ADAPTER: TypeAdapter[Decision] = TypeAdapter(Decision)
-_DECISION_TYPES: tuple[type[_Decision], ...] = (SwitchSkill, Retry, Abort)
+_DECISION_TYPES: tuple[type[_Decision], ...] = (SwitchSkill, Retry, Abort, Escalate)
 
 
 def decision_json_schema() -> dict[str, object]:
@@ -124,7 +132,7 @@ def validate_decision(
             return Rejection(shown, ("skill: same_as_failed_skill",))
         if decision.skill not in options:
             return Rejection(shown, ("skill: not_an_option_for_this_step",))
-    if isinstance(decision, Abort):
+    if isinstance(decision, Abort | Escalate):
         # The reason is stored and shown: scrub it like any text from outside.
         reason = scrub(decision.reason)[:MAX_REASON_CHARS]
         return decision.model_copy(update={"reason": reason})
