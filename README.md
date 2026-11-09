@@ -109,6 +109,17 @@ stall, and the metrics do not yet tell a fault a skill cleared from one the Moni
 uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
 ```
 
+`--tree llm` asks the model on NIM for the plan instead: one call per run, through a `plan` tool
+limited to the plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the
+eval does not start if its plan calls plus its UNKNOWN calls could exceed it). The model's
+answer is parsed and checked like any plan; the call's prompt, answer (scrubbed and cut), tokens
+and latency are recorded as `task_plan_responded`, and `cellrt replay` prints a summary line for
+it without calling the model. The model is told the task's fields and the skills' descriptions
+and contracts. It is not told which faults the mock injects, but the `insert_act` description
+says it frees a plug rotated against the port, which is the SC task's fault; the table's row
+(ours) encodes that knowledge directly. `eval` prints how many plans were rejected on stderr;
+the table's means still include those runs.
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted

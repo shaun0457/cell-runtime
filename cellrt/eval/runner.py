@@ -31,6 +31,7 @@ from cellrt.runtime.events import (
     RunStarted,
     TaskPlanned,
     TaskPlanRejected,
+    TaskPlanResponded,
 )
 from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
@@ -262,6 +263,20 @@ async def _run(
     if config.tree is not None:
         # Before the tree is built and before anything moves: a rejected plan ends the run here.
         planned = await plan_task(config.tree, scenario.task, registry)
+        if (trace := planned.trace) is not None:  # a model call: its trace, whatever the verdict
+            recorder.emit(
+                TaskPlanResponded(
+                    planner=config.tree.name,
+                    provider=trace.provider,
+                    model=trace.model,
+                    prompt=trace.prompt,
+                    response=trace.response,
+                    prompt_tokens=trace.prompt_tokens,
+                    completion_tokens=trace.completion_tokens,
+                    finish_reason=trace.finish_reason,
+                    latency_s=trace.latency_s,
+                )
+            )
         if planned.errors:
             recorder.emit(
                 TaskPlanRejected(

@@ -1,4 +1,5 @@
-"""CLI seam for the model planner: `cellrt eval | run --planner llm` and `cellrt smoke-llm`, in
+"""CLI seam for the model planners: `cellrt eval | run --planner llm | --tree llm` and
+`cellrt smoke-llm`, in
 a subprocess the way a person runs them. A stand-in `openai` package on PYTHONPATH answers every
 call and logs it, so no test needs the SDK, a key or the network."""
 
@@ -17,15 +18,21 @@ from cellrt.planner.nim import KEY_ENV, MISSING_KEY, SDK_ENV_VARS
 
 REPO = Path(__file__).resolve().parent.parent
 PHASE3 = REPO / "eval" / "scenarios" / "phase3.yaml"
+TASKS = REPO / "eval" / "scenarios" / "phase3-tasks.yaml"
 LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
-# Answers every call with a switch to insert_act, and logs the model asked to FAKE_OPENAI_LOG.
+# Answers through the tool it is offered: a switch to insert_act for `decide` (an UNKNOWN), a
+# plan that inserts with insert_act for `plan` (a task), or an empty plan when the model is
+# `fake/rejects`. Logs the model asked to FAKE_OPENAI_LOG.
 FAKE_OPENAI = '''
 """A stand-in for the openai SDK, for the CLI tests."""
 import os
 from types import SimpleNamespace
 
-ANSWER = '{"kind": "switch_skill", "skill": "insert_act"}'
+ANSWERS = {
+    "decide": '{"kind": "switch_skill", "skill": "insert_act"}',
+    "plan": '{"steps": ["approach", "align", "insert_act", "verify"]}',
+}
 
 
 class AsyncOpenAI:
@@ -41,9 +48,13 @@ class AsyncOpenAI:
     async def _create(self, **arguments):
         with open(os.environ["FAKE_OPENAI_LOG"], "a", encoding="utf-8") as log:
             log.write(arguments["model"] + "\\n")
-        call = SimpleNamespace(
-            id="call_0", type="function", function=SimpleNamespace(name="decide", arguments=ANSWER)
-        )
+        tools = arguments.get("tools") or [{"function": {"name": "decide"}}]
+        name = tools[0]["function"]["name"]
+        answer = ANSWERS[name]
+        if name == "plan" and arguments["model"] == "fake/rejects":
+            answer = '{"steps": []}'
+        function = SimpleNamespace(name=name, arguments=answer)
+        call = SimpleNamespace(id="call_0", type="function", function=function)
         message = SimpleNamespace(role="assistant", content=None, tool_calls=[call])
         choice = SimpleNamespace(index=0, message=message, finish_reason="tool_calls")
         usage = SimpleNamespace(prompt_tokens=812, completion_tokens=37)
@@ -145,6 +156,65 @@ def test_a_run_in_setting_c_asks_the_model(cli: Cli) -> None:
     assert done.stdout.splitlines()[0] == "outcome: success"
     assert cli.calls() == [LIGHTNING]
     assert "model calls: 1 of 100" in done.stderr
+
+
+def _run_tasks(cli: Cli, *extra: str) -> subprocess.CompletedProcess[str]:
+    return cli("run", "--scenarios", str(TASKS), "--scenario", "sc", "--db", str(cli.db),
+               "--tree", "llm", *extra)  # fmt: skip
+
+
+def test_a_run_with_the_model_task_planner_asks_the_model_once_before_it_moves(
+    cli: Cli,
+) -> None:
+    done = _run_tasks(cli.with_key(), "--setting", "B")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[0] == "outcome: success"  # it planned insert_act
+    assert cli.calls() == [LIGHTNING]
+    assert "model calls: 1 of 100" in done.stderr
+    assert FAKE_KEY.encode() not in cli.db.read_bytes()
+
+
+def test_the_model_task_planner_without_a_key_fails_before_any_run(cli: Cli) -> None:
+    done = _run_tasks(cli, "--setting", "A")
+
+    assert done.returncode == 1
+    assert done.stderr == MISSING_KEY + "\n"
+    assert not cli.db.exists() and cli.calls() == []
+
+
+def test_the_call_pre_check_counts_a_plan_call_for_every_unit(cli: Cli) -> None:
+    # 2 tasks x 1 seed x 3 settings to plan, plus 2 units of C x 2 planner calls: up to 10 calls.
+    done = cli.with_key()("eval", "--scenarios", str(TASKS), "--seeds", "1", "--k", "1",
+                          "--db", str(cli.db), "--tree", "llm", "--planner", "llm",
+                          "--max-model-calls", "9")  # fmt: skip
+
+    assert done.returncode == 1
+    assert "up to 10 model calls" in done.stderr and "plus 6 task plan calls" in done.stderr
+    assert not cli.db.exists() and cli.calls() == []
+
+
+def test_an_eval_with_the_model_task_planner_counts_every_call_under_one_cap(cli: Cli) -> None:
+    done = cli.with_key()("eval", "--scenarios", str(TASKS), "--seeds", "1", "--k", "1",
+                          "--db", str(cli.db), "--tree", "llm", "--planner", "llm",
+                          "--max-model-calls", "10")  # fmt: skip
+
+    assert done.returncode == 0, done.stderr
+    calls = cli.calls()
+    assert len(calls) == 6  # one plan per unit; the plans need no UNKNOWN triage
+    assert f"tree: llm ({LIGHTNING})" in done.stderr
+    assert "model calls: 6 of 10" in done.stderr
+    assert "task plans rejected: 0 of 6 runs" in done.stderr
+
+
+def test_an_eval_says_how_many_task_plans_were_rejected(cli: Cli) -> None:
+    done = cli.with_key()("eval", "--scenarios", str(TASKS), "--settings", "A", "--seeds", "1",
+                          "--k", "1", "--db", str(cli.db), "--tree", "llm",
+                          "--model", "fake/rejects")  # fmt: skip
+
+    assert done.returncode == 0, done.stderr
+    # The table counts them as aborted tasks with no steps; stderr says why.
+    assert "task plans rejected: 2 of 2 runs" in done.stderr
 
 
 def test_smoke_llm_prints_one_answer_as_json(cli: Cli) -> None:

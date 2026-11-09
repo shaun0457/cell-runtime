@@ -18,7 +18,10 @@ from itertools import islice
 from types import MappingProxyType
 from typing import Protocol
 
-from cellrt.planner.base import planner_deadline
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from cellrt.planner.base import PlannerTrace, planner_deadline
+from cellrt.planner.nim import ModelCallCapReached
 from cellrt.runtime.scrub import scrub
 from cellrt.runtime.task import Task
 from cellrt.skills.registry import SkillRegistry
@@ -27,6 +30,10 @@ MAX_PLAN_STEPS = 8
 # A rejected plan keeps at most MAX_PLAN_STEPS + 1 names (one more shows it was too long), each
 # scrubbed and cut to this many characters.
 MAX_STEP_CHARS = 64
+# A model's answer longer than this is refused unparsed (eight names fit in far less).
+MAX_ANSWER_CHARS = 4_000
+# At most this many parse codes are kept for one answer.
+MAX_PARSE_CODES = 10
 GOAL = "verified"
 # The steps every task runs when no task planner is given (`--tree fixed`).
 FIXED_STEPS = ("approach", "align", "insert_scripted", "verify")
@@ -64,15 +71,34 @@ class TaskPlanner(Protocol):
     @property
     def name(self) -> str: ...  # recorded with the plan
 
-    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str]: ...
+    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str] | TracedPlan: ...
 
     def describe(self) -> Mapping[str, object]: ...
+
+
+class TaskPlan(BaseModel):
+    """A model's answer, parsed strictly: 1 to MAX_PLAN_STEPS names and nothing else."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    steps: list[str] = Field(min_length=1, max_length=MAX_PLAN_STEPS)
+
+
+@dataclass(frozen=True)
+class TracedPlan:
+    """A model task planner's raw answer (JSON text, or a structure a client already parsed)
+    with the trace of the call that produced it. Parsed into `TaskPlan`, then checked."""
+
+    raw: object
+    trace: PlannerTrace
 
 
 @dataclass(frozen=True)
 class PlanResult:
     steps: tuple[str, ...]  # the plan if valid; else what was proposed, scrubbed and cut
     errors: tuple[str, ...]  # empty if the plan is valid
+    # The model call behind the answer, if there was one, as the log keeps it (scrubbed, cut).
+    trace: PlannerTrace | None = None
 
 
 def verify_plan(steps: tuple[str, ...], registry: SkillRegistry) -> tuple[str, ...]:
@@ -106,25 +132,69 @@ def verify_plan(steps: tuple[str, ...], registry: SkillRegistry) -> tuple[str, .
 async def plan_task(tree: TaskPlanner, task: Task, registry: SkillRegistry) -> PlanResult:
     """Ask the task planner, within its deadline, and check its answer. A planner that raises
     gives a rejection with the exception's type only: its message may carry upstream text. A
-    cancellation of the run itself is not caught."""
+    model planner's answer (`TracedPlan`) is parsed into `TaskPlan` first, and its trace is
+    kept whatever the verdict. A cancellation of the run itself is not caught."""
     # Wall time by design: nothing has moved yet, and the sim clock does not run (ADR 016).
     deadline = asyncio.timeout(planner_deadline(tree))  # noqa: TID251
+    trace: PlannerTrace | None = None
+    proposed: tuple[object, ...] | ParseRefused
     try:
         async with deadline:
             answer = await tree.plan(task, registry)
-            proposed = tuple(islice(answer, MAX_PLAN_STEPS + 1))
+            if isinstance(answer, TracedPlan):
+                if not isinstance(answer.trace, PlannerTrace):  # planner code: never echo it
+                    return PlanResult((), ("trace_invalid",))
+                trace, proposed = answer.trace.stored(), parse_plan(answer.raw)
+            else:
+                proposed = tuple(islice(answer, MAX_PLAN_STEPS + 1))
     except TimeoutError:
         if deadline.expired():
             return PlanResult((), ("planner_timed_out",))
         return PlanResult((), ("planner_error: TimeoutError",))
+    except ModelCallCapReached:
+        return PlanResult((), ("cap_reached",))
     except Exception as exc:  # an invalid answer is an event of the run, not a crash
         return PlanResult((), (f"planner_error: {type(exc).__name__}",))
+    if isinstance(proposed, ParseRefused):
+        return PlanResult((), proposed.codes, trace)
     if not_names := [i for i, s in enumerate(proposed, start=1) if not isinstance(s, str)]:
-        return PlanResult(_shown(proposed), tuple(f"step {i}: not_a_name" for i in not_names))
-    steps: tuple[str, ...] = proposed
+        codes = tuple(f"step {i}: not_a_name" for i in not_names)
+        return PlanResult(_shown(proposed), codes, trace)
+    steps = tuple(s for s in proposed if isinstance(s, str))
     if errors := verify_plan(steps, registry):
-        return PlanResult(_shown(steps), errors)
-    return PlanResult(steps, ())
+        return PlanResult(_shown(steps), errors, trace)
+    return PlanResult(steps, (), trace)
+
+
+@dataclass(frozen=True)
+class ParseRefused:
+    codes: tuple[str, ...]
+
+
+def parse_plan(raw: object) -> tuple[str, ...] | ParseRefused:
+    """A model's answer as steps, or the codes that refuse it: where (a field of `TaskPlan`, a
+    list index, or `<key>` for a key the model made up, so its text never reaches a code) and
+    the error type. JSON text over MAX_ANSWER_CHARS is refused unread."""
+    try:
+        if isinstance(raw, str):
+            if len(raw) > MAX_ANSWER_CHARS:
+                return ParseRefused(("answer: too_large",))
+            plan = TaskPlan.model_validate_json(raw)
+        else:
+            plan = TaskPlan.model_validate(raw)
+    except ValidationError as exc:
+        found = exc.errors(include_url=False, include_input=False, include_context=False)
+        return ParseRefused(
+            tuple(f"{_where(e['loc'])}: {e['type']}" for e in found[:MAX_PARSE_CODES])
+        )
+    return tuple(plan.steps)
+
+
+def _where(loc: tuple[int | str, ...]) -> str:
+    if not loc:
+        return "answer"
+    parts = [str(p) if isinstance(p, int) or p in TaskPlan.model_fields else "<key>" for p in loc]
+    return ".".join(parts)
 
 
 def _shown(proposed: tuple[object, ...]) -> tuple[str, ...]:

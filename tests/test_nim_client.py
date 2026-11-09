@@ -550,6 +550,20 @@ def test_the_call_budget_precheck_refuses_an_eval_too_big_for_the_cap() -> None:
             check_call_budget(*bad)  # type: ignore[arg-type]
 
 
+def test_the_call_budget_precheck_counts_one_task_plan_call_per_unit_planned() -> None:
+    assert check_call_budget(2, 2, 10, plan_calls=6) == 10  # exactly at the cap
+    assert check_call_budget(0, 2, 6, plan_calls=6) == 6  # plans only, no model triage
+    with pytest.raises(CallBudgetExceeded) as refused:
+        check_call_budget(2, 2, 9, plan_calls=6)
+    assert "up to 10" in str(refused.value) and "plus 6 task plan calls" in str(refused.value)
+    with pytest.raises(CallBudgetExceeded) as plans_only:
+        check_call_budget(0, 2, 5, plan_calls=6)
+    assert "(6 task plan calls)" in str(plans_only.value)  # no "0 units with a planner"
+    for bad in (-1, True, 1.5):
+        with pytest.raises(PlannerSettingRefused):
+            check_call_budget(0, 2, 10, plan_calls=bad)  # type: ignore[arg-type]
+
+
 # --- the default factory, with a stand-in `openai` module ----------------------------------
 
 

@@ -147,9 +147,9 @@ given by an earlier step, no fact is given twice, and `verified` is given.
 ### 6. Hash and events
 
 #### Option A — events and a `tree` config part only when the tree is not `fixed`
-`task_planned` (the planner and its steps; a model planner's trace is a later ticket) or
-`task_plan_rejected` (codes, and a bounded, scrubbed excerpt of the proposed steps), right after
-`run_started`.
+`task_planned` (the planner and its steps) or `task_plan_rejected` (codes, and a bounded,
+scrubbed excerpt of the proposed steps), after `run_started`; a model planner's call adds its
+trace just before them (see Consequences).
 - Pros: a run with the fixed tree gets no new part and no new event; its log reads as before.
 - Cons: a conditional part (the promotion work on `phase3/promotion` makes the same choice for
   promoted rules).
@@ -191,9 +191,32 @@ for a plan look different.
   planner (ADR 016); reads at most 9 names; refuses anything that is not a string; turns a
   timeout into `planner_timed_out` and an exception into `planner_error`), the
   `TaskPlanner` protocol and the `table` planner (plug type to insert skill, the non-model
-  baseline). `--tree fixed`, the default, is no task planner at all. A model planner (a later
-  ticket) parses its answer into a strict schema of 1 to 8 names, through the `ChatClient` seam
-  with its deadline and the eval's cap.
+  baseline). `--tree fixed`, the default, is no task planner at all.
+- `cellrt/planner/llm_task.py`: the model task planner (`--tree llm`), one call per run through
+  the `ChatClient` seam, answered through a `plan` tool whose steps are limited to the
+  plannable skills (registered, with a contract). It is told the task's fields, the goal, the
+  step limit, and each plannable skill's description (cut to 300 characters, otherwise as
+  written) and contract; no scenario or injected fault is named. `plan_task` parses its answer
+  into a strict schema
+  (`TaskPlan`: 1 to 8 strings, no other key); an answer over 4,000 characters is refused unread,
+  and a parse failure is a code naming where (a field, an index, or `<key>` for a key the model
+  made up) and the error type, never the model's text. Then the answer is checked like any plan.
+  A call past the cap is `cap_reached`; a trace that is not one is `trace_invalid`.
+- A model planner's trace (prompt, raw answer, model, tokens, latency, scrubbed and cut like the
+  UNKNOWN planner's) is its own event, `task_plan_responded` (schema version 12), recorded just
+  before `task_planned` or `task_plan_rejected`, so a rejected answer keeps its trace too. A call
+  that timed out or raised leaves no trace, though it may have been sent and still counts
+  against the cap. The trace is not a field of `task_planned`, and it is not
+  `planner_responded`, which the agent report counts as UNKNOWN triage calls. The agent report
+  does not count plan calls yet.
+- The task planner and the UNKNOWN planner share one cap per command. `cellrt eval` refuses to
+  start when the plan calls (one per unit, of every setting) plus the UNKNOWN calls the units
+  of setting C can make exceed it, and prints the calls made.
+- The model knows only what the prompt says. On the SC task the prompt does not say this plug
+  wedges, but the `insert_act` description says it frees a plug rotated against the port, so a
+  model that picks `insert_act` may be reading that hint, not reasoning about SC plugs. The
+  table's row (ours) encodes the same knowledge by hand. A comparison between the two has to
+  say so.
 - `build_tree` takes the steps as a parameter; by default they are `SKILL_SEQUENCE`.
 - `task_planned` and `task_plan_rejected` are new event types (schema version 11). They are
   emitted only when there is a task planner; `cellrt replay` prints them. A rejected plan keeps
@@ -211,9 +234,10 @@ for a plan look different.
   as missed: classification accuracy is not comparable between trees until the metrics tell a
   fault a skill cleared from one the Monitor missed.
 - A rejected run counts as an aborted task with no steps and no time in the eval table, so it
-  pulls the mean duration and steps down, and the table has no column for rejections. Before a
-  model plans tasks, the eval has to report the plan rejection rate and keep rejected runs out
-  of the means.
+  pulls the mean duration and steps down, and the table has no column for rejections.
+  `cellrt eval` with a task planner prints how many plans were rejected on stderr; the means
+  still include the rejected runs. Before a model planner's results are compared with the
+  table's, the means have to leave rejected runs out, or be read with that count.
 - The AIC adapter keeps the fixed tree; nothing in `adapters/` changes.
 - When skills get real preconditions (today every mock skill's `preconditions` returns True),
   the contract table and the runtime precondition check should be reconciled into one

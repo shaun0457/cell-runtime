@@ -17,10 +17,10 @@ Outcome = Literal["success", "failed", "aborted"]
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
 # `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
 # 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
-# and `task_plan_rejected`.
+# and `task_plan_rejected`; 12 added `task_plan_responded`.
 # Bump it when a payload changes shape (a test hashes every payload's schema per version), and
 # keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class _Payload(BaseModel):
@@ -45,6 +45,25 @@ class RunStarted(_Payload):
     # Where skills got the plug and port poses: "ground_truth" is TF from the AIC sim (blocked in
     # the submission environment); None is the mock world, which has no poses.
     geometry_source: Literal["ground_truth"] | None = None
+
+
+class TaskPlanResponded(_Payload):
+    """A model task planner's answer as it came back, before it was parsed and checked: the
+    audit trail of the run's one plan call (ADR 023). Recorded just before `task_planned` or
+    `task_plan_rejected`, only for a task planner that reports a trace. Kept apart from
+    `planner_responded`, which is an UNKNOWN triage call. Scrubbed and cut like it
+    (`PlannerTrace.stored`)."""
+
+    type: Literal["task_plan_responded"] = "task_plan_responded"
+    planner: str
+    provider: str
+    model: str
+    prompt: str  # the messages sent, as JSON
+    response: str  # the tool call's arguments, or the text
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
 
 
 class TaskPlanned(_Payload):
@@ -280,6 +299,7 @@ class HoldChecked(_Payload):
 
 Payload = Annotated[
     RunStarted
+    | TaskPlanResponded
     | TaskPlanned
     | TaskPlanRejected
     | FaultInjected

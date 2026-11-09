@@ -29,6 +29,7 @@ from cellrt.runtime.events import (
     SkillStarted,
     TaskPlanned,
     TaskPlanRejected,
+    TaskPlanResponded,
 )
 
 
@@ -43,6 +44,12 @@ def describe(event: Event) -> str:
     match event.payload:
         case RunStarted() as p:
             return f"{p.scenario_id} setting={p.setting} seed={p.seed} attempt={p.attempt}"
+        case TaskPlanResponded() as p:
+            tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
+            return (
+                f"{p.planner} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
+                f"finish={p.finish_reason or '?'}"
+            )
         case TaskPlanned() as p:
             return f"{p.planner}: {' -> '.join(p.steps)}"
         case TaskPlanRejected() as p:

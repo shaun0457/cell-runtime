@@ -12,12 +12,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from cellrt.runtime.scrub import scrub
+
 # Wall time a planner call may take before it is cancelled: a planner may set `deadline_s`.
 DEFAULT_PLANNER_DEADLINE_S = 30.0
 MAX_PLANNER_DEADLINE_S = 120.0
-# How much of a model call's prompt and response the event log keeps (`planner_responded`).
+# How much of a model call's prompt and response the event log keeps (`planner_responded`,
+# `task_plan_responded`).
 MAX_STORED_PROMPT_CHARS = 16_000
 MAX_STORED_RESPONSE_CHARS = 4_000
+# A trace's short fields (provider, model, finish reason) are cut to this length.
+MAX_TRACE_NAME_CHARS = 128
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,24 @@ class PlannerTrace:
             raise TypeError("latency_s must be a number")
         if not (math.isfinite(self.latency_s) and self.latency_s >= 0):
             raise ValueError("latency_s must be a finite, non-negative number")
+
+    def stored(self) -> PlannerTrace:
+        """The trace as the log keeps it: every text scrubbed and cut. The prompt is our own
+        text but may be long; the response came from outside."""
+
+        def name(value: str | None) -> str | None:
+            return None if value is None else scrub(value)[:MAX_TRACE_NAME_CHARS]
+
+        return PlannerTrace(
+            provider=name(self.provider) or "unknown",
+            model=name(self.model) or "unknown",
+            prompt=scrub(self.prompt, max_chars=MAX_STORED_PROMPT_CHARS)[:MAX_STORED_PROMPT_CHARS],
+            response=scrub(self.response)[:MAX_STORED_RESPONSE_CHARS],
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            finish_reason=name(self.finish_reason),
+            latency_s=self.latency_s,
+        )
 
 
 @dataclass(frozen=True)
