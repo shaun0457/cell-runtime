@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cell-runtime</title>
+<meta name="description" content="An agent runtime for a robotic work cell: it makes a cable-insertion robot know when it has failed, recover, and measure what recovery is worth.">
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --surface: #ffffff;
+    --text: #1d2125;
+    --muted: #5c6670;
+    --line: #e2e5e8;
+    --accent: #0f766e;
+    --accent-soft: #e6f4f2;
+    --warn: #9a5b00;
+    --warn-soft: #fdf3e2;
+    --code-bg: #f2f4f5;
+    --node: #f4f6f7;
+    --shadow: 0 1px 2px rgba(16, 24, 32, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111416;
+      --surface: #181c1f;
+      --text: #e6e9ec;
+      --muted: #9aa4ad;
+      --line: #2a3035;
+      --accent: #4fd1c0;
+      --accent-soft: #15302d;
+      --warn: #f0b45c;
+      --warn-soft: #2e2414;
+      --code-bg: #1f2428;
+      --node: #1f2428;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111416;
+    --surface: #181c1f;
+    --text: #e6e9ec;
+    --muted: #9aa4ad;
+    --line: #2a3035;
+    --accent: #4fd1c0;
+    --accent-soft: #15302d;
+    --warn: #f0b45c;
+    --warn-soft: #2e2414;
+    --code-bg: #1f2428;
+    --node: #1f2428;
+    --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 0 16px 64px; }
+  header.hero { padding: 56px 0 24px; border-bottom: 1px solid var(--line); }
+  .eyebrow { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; font-size: 0.85rem; text-transform: uppercase; }
+  h1 { font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.15; margin: 8px 0 12px; letter-spacing: -0.02em; }
+  .lede { font-size: 1.15rem; color: var(--muted); margin: 0 0 20px; max-width: 46em; }
+  .links { display: flex; flex-wrap: wrap; gap: 8px; }
+  .links a {
+    display: inline-block; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--text); text-decoration: none; font-weight: 500; box-shadow: var(--shadow);
+  }
+  .links a.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  section { padding: 36px 0 8px; }
+  h2 { font-size: 1.45rem; margin: 0 0 12px; letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; margin: 20px 0 6px; }
+  p { margin: 0 0 12px; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 12px 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 0; }
+  .card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .flow { list-style: none; padding: 0; margin: 16px 0; counter-reset: step; }
+  .flow li { position: relative; padding: 10px 14px 10px 48px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  .flow li::before {
+    counter-increment: step; content: counter(step); position: absolute; left: 14px; top: 10px;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: 0.8rem; display: grid; place-items: center;
+  }
+  .flow li strong { display: block; }
+  .flow li span { color: var(--muted); font-size: 0.95rem; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td.wrap, th.wrap { white-space: normal; min-width: 220px; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.85rem; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  figure { margin: 16px 0; }
+  figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; display: block; background: #fff; }
+  figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
+  .note { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: 10px 14px; border-radius: 6px; margin: 12px 0; font-size: 0.95rem; }
+  .note strong { color: var(--warn); }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .diagram svg { width: 100%; height: auto; display: block; }
+  .diagram .box { fill: var(--node); stroke: var(--line); }
+  .diagram .box.hl { fill: var(--accent-soft); stroke: var(--accent); }
+  .diagram text { fill: var(--text); font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .diagram text.sub { fill: var(--muted); font-size: 11px; }
+  .diagram .edge { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+  .diagram .dash { stroke-dasharray: 4 3; }
+  ul.plain { padding-left: 20px; margin: 8px 0 12px; }
+  ul.plain li { margin-bottom: 6px; }
+  footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 16px; color: var(--muted); font-size: 0.9rem; }
+  .theme-toggle { position: fixed; top: 12px; right: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.85rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" type="button" aria-label="Switch light or dark theme">Theme</button>
+<main>
+  <header class="hero">
+    <div class="eyebrow">Agentic infrastructure for a robotic work cell</div>
+    <h1>cell-runtime</h1>
+    <p class="lede">An agent runtime that makes a cable-insertion robot know when it has failed, recover, and measure what that recovery is worth. Known failures are handled by a behaviour tree; only the ones nobody classified go to a language model, and its answer is checked before anything moves.</p>
+    <div class="links">
+      <a class="primary" href="https://github.com/shaun0457/cell-runtime">Source on GitHub</a>
+      <a href="https://github.com/shaun0457/cell-runtime/tree/main/docs/decisions">Decision records</a>
+      <a href="https://github.com/shaun0457/cell-runtime/blob/main/docs/phase0-results.md">Phase 0 results</a>
+    </div>
+  </header>
+
+  <section id="what">
+    <h2>What it is</h2>
+    <p>The robot and its policies come from the <a href="https://github.com/intrinsic-dev/aic">AI for Industry Challenge</a> simulation (Gazebo, a UR5e arm, ROS 2 Kilted). Nothing is retrained. The project is the layer around them: runtime, state, failure handling and evaluation.</p>
+    <div class="diagram" role="img" aria-label="Architecture: the LLM planner sits above the behaviour-tree executor, which runs skills on a world (mock or the AIC simulation). The Monitor reads the world's signals and classifies failures. Every layer writes to an append-only event log, which the eval harness reads.">
+      <svg viewBox="0 0 640 330" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill: var(--muted)"></path>
+          </marker>
+        </defs>
+        <rect class="box hl" x="20" y="14" width="300" height="50" rx="8"></rect>
+        <text x="36" y="36">LLM planner</text>
+        <text class="sub" x="36" y="53">only for failures the Monitor cannot classify</text>
+        <rect class="box" x="20" y="88" width="300" height="50" rx="8"></rect>
+        <text x="36" y="110">Behaviour-tree executor</text>
+        <text class="sub" x="36" y="127">retry, re-align, switch skill, within budgets</text>
+        <rect class="box" x="20" y="162" width="300" height="50" rx="8"></rect>
+        <text x="36" y="184">Skills</text>
+        <text class="sub" x="36" y="201">approach, align, insert_scripted, insert_act, verify</text>
+        <rect class="box" x="20" y="236" width="300" height="50" rx="8"></rect>
+        <text x="36" y="258">World</text>
+        <text class="sub" x="36" y="275">mock world  |  AIC Gazebo through an adapter</text>
+        <path class="edge" d="M170 64 V86" marker-end="url(#arrow)"></path>
+        <path class="edge" d="M170 138 V160" marker-end="url(#arrow)"></path>
+        <path class="edge" d="M170 212 V234" marker-end="url(#arrow)"></path>
+        <rect class="box" x="370" y="162" width="250" height="50" rx="8"></rect>
+        <text x="386" y="184">Monitor</text>
+        <text class="sub" x="386" y="201">force, progress, timeout → failure class</text>
+        <path class="edge" d="M320 261 H400 V214" marker-end="url(#arrow)"></path>
+        <path class="edge" d="M495 162 V113 H322" marker-end="url(#arrow)"></path>
+        <text class="sub" x="420" y="106">known class → tree</text>
+        <path class="edge dash" d="M545 162 V39 H322" marker-end="url(#arrow)"></path>
+        <text class="sub" x="420" y="32">UNKNOWN → planner</text>
+        <rect class="box hl" x="20" y="298" width="600" height="26" rx="6"></rect>
+        <text x="36" y="316">Event log (SQLite, append-only): every layer writes; state is a fold; the eval reads it</text>
+      </svg>
+    </div>
+  </section>
+
+  <section id="rules">
+    <h2>Five rules the design keeps</h2>
+    <div class="grid">
+      <div class="card"><h3>Known failures are deterministic</h3><p>The Monitor classifies a failure; a known class goes to the tree's recovery, with budgets. Only an unclassified failure reaches the model.</p></div>
+      <div class="card"><h3>Everything is an event</h3><p>Each step appends an event; runtime state is a fold over them. Any run can be replayed step by step, and the state at any step rebuilt.</p></div>
+      <div class="card"><h3>The core is ROS-free</h3><p>Runtime, executor, Monitor, planner and eval import nothing from ROS. The simulator lives behind an adapter, so the core tests run on any laptop and in CI.</p></div>
+      <div class="card"><h3>Model output is untrusted</h3><p>A decision is validated against a schema and the skill registry before it runs. Invalid output, a timeout or a spent call budget is an event, not a crash.</p></div>
+      <div class="card"><h3>The eval is deterministic</h3><p>Same scenario and seed give the same result on the mock. Settings face identical faults and differ only where recovery starts; every extra success must show a recovery in its log.</p></div>
+    </div>
+  </section>
+
+  <section id="model">
+    <h2>The model path</h2>
+    <p>When the Monitor sees a failure it cannot name, the runtime does not guess and does not let the model drive the arm. The path is:</p>
+    <ol class="flow">
+      <li><strong>UNKNOWN verdict</strong><span>The Monitor's rule fired, but no known failure class matches its evidence.</span></li>
+      <li><strong>Hold</strong><span>The arm holds; on the mock the simulated clock stands still while the model thinks.</span></li>
+      <li><strong>One model call, bounded</strong><span>A wall-time deadline (30 s by default; the call is cancelled at it), a cap on calls per command, checked before an eval starts, and no hidden retries.</span></li>
+      <li><strong>Validation</strong><span>The answer must be one of <code>switch_skill</code>, <code>retry</code>, <code>abort</code> or <code>escalate</code>, name a skill the registry has and whose preconditions hold, and fit the remaining budgets.</span></li>
+      <li><strong>A bounded action, or a hand-off</strong><span>The tree runs the decision; escalate ends the run for a person to look at. Prompt, raw answer, model id, tokens and latency are all in the event log.</span></li>
+    </ol>
+    <p>The provider is NVIDIA NIM through the <code>openai</code> SDK, installed as an optional extra; the core, the tests and CI run without it, without a key and without network. The key is read from the environment only and never reaches the log, a message or a report.</p>
+    <h3>Smoke call, 9 November 2026</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Model</th><th class="wrap">Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>nvidia/nemotron-3.5-lightning-30b-a3b</code></td><td class="wrap">Answered through the <code>decide</code> tool: switch to <code>insert_act</code>, the answer that works for this failure. Valid. 8.1 s, 1,182 prompt and 585 completion tokens.</td></tr>
+          <tr><td><code>nvidia/nemotron-3-super-120b-a12b</code></td><td class="wrap">HTTP 404 for this account, though the model is listed.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>One call shows the path works end to end. How often the model is right, and whether it beats a simple policy, is what the Phase 3 eval measures.</p>
+  </section>
+
+  <section id="trace">
+    <h2>One run, as a trace</h2>
+    <p><code>cellrt trace &lt;run&gt;</code> turns a run's event log into a Chrome trace for <a href="https://ui.perfetto.dev">Perfetto</a>: spans for the run, each skill and each planner call, the Monitor's verdicts as instants, and tared force and depth as counters.</p>
+    <figure>
+      <img src="assets/trace-yaw-mismatch.png" alt="Perfetto timeline of run yaw_mismatch/C/1/a1. Skills run in order: approach, align, insert_scripted, then a planner call, then insert_act and verify. A Monitor instant sits inside insert_scripted, where the tared force steps up and depth stops growing. After the planner call, depth rises again under insert_act." loading="lazy">
+      <figcaption>The yaw-mismatch fault in setting C. <code>insert_scripted</code> stalls at the port: force steps up, depth stops. The Monitor calls it UNKNOWN, the planner switches to <code>insert_act</code>, and the plug goes in. This trace used a scripted model client, so the planner span is a few milliseconds; a trace from the real model will replace it.</figcaption>
+    </figure>
+  </section>
+
+  <section id="mock">
+    <h2>Phase 0: the mock eval</h2>
+    <p>Seven scenarios, three settings, 20 seeds each: 420 runs in about 45 s on a laptop. <strong>A</strong> has no recovery, <strong>B</strong> recovers known failure classes through the tree, <strong>C</strong> adds a planner for UNKNOWN (rule-based here).</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Setting</th><th class="num">Runs</th><th class="num">Success</th><th class="num">pass^5</th><th class="num">Recovery</th><th class="num">Unsafe</th><th class="num">Planner calls / task</th><th class="num">Classification</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td class="num">140</td><td class="num">14.3%</td><td class="num">14.3%</td><td class="num">0.0%</td><td class="num">0</td><td class="num">0.00</td><td class="num">100%</td></tr>
+          <tr><td>B</td><td class="num">140</td><td class="num">65.7%</td><td class="num">45.4%</td><td class="num">60.0%</td><td class="num">0</td><td class="num">0.00</td><td class="num">100%</td></tr>
+          <tr><td>C</td><td class="num">140</td><td class="num">80.0%</td><td class="num">59.7%</td><td class="num">76.7%</td><td class="num">0</td><td class="num">0.14</td><td class="num">100%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><strong>Read this as orchestration, not value.</strong> The mock's faults were designed so that a Monitor rule detects each one and a recovery can fix it. The table shows detection, preemption, bounded recovery and stopping when budgets run out. Classification is 100% by construction. What recovery is worth is measured in the simulator.</div>
+  </section>
+
+  <section id="sim">
+    <h2>First run in the simulator</h2>
+    <p>The three sample tasks of the AIC configuration, no injected faults, on a GCP VM with an L4 GPU. The runtime reported 0 of 3. The scorer's own insertion events told a different story:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Task</th><th>Port</th><th>Runtime said</th><th>Scorer saw</th><th class="wrap">What happened</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>SFP</td><td>INSERT_STUCK</td><td>inserted</td><td class="wrap">False positive: the plug was already seated and pressing on its seat.</td></tr>
+          <tr><td>2</td><td>SFP</td><td>INSERT_STUCK</td><td>inserted</td><td class="wrap">The same.</td></tr>
+          <tr><td>3</td><td>SC</td><td>INSERT_STUCK</td><td>not inserted</td><td class="wrap">True positive: the plug jammed at the port entrance.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A seated plug and a jammed plug give the same force and progress signals, so neither insertion rule can tell them apart. The fix is to judge by height, and the check that should have said "seated" demanded 10 mm of depth where a seated plug sits at the port frame. Cancellation worked: a cancelled goal stopped the arm and the next goal waited for it. Time over 20 N agreed with the scorer's force penalty, though no run came near the limit. The expert policy scored about 92 on the same tasks.</p>
+  </section>
+
+  <section id="honest">
+    <h2>What is real, and what is not yet</h2>
+    <ul class="plain">
+      <li>The mock scenarios, including the Phase 3 ones, and their right answers are designed by us. Results on them say so.</li>
+      <li>In the simulator, the skills and the Monitor read ground-truth geometry. The competition's submission environment blocks it; this project uses it for development and states it.</li>
+      <li>Phase 1 has not reached 3 of 3 tasks on its own judgement yet.</li>
+      <li>The model's eval on the Phase 3 scenarios (no recovery, the rule planner, a fixed retry-then-abort policy and the model) is next. If the model does not beat the simple policies, the results will say that.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Built by Shaun Chen (<a href="https://github.com/shaun0457">shaun0457</a>) with Claude Code. The design decisions, their options and trade-offs are in the <a href="https://github.com/shaun0457/cell-runtime/tree/main/docs/decisions">decision records</a>.
+  </footer>
+</main>
+<script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector(".theme-toggle");
+    try {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
+    } catch (e) {}
+    button.addEventListener("click", function () {
+      var dark = root.getAttribute("data-theme") === "dark" ||
+        (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      var next = dark ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
