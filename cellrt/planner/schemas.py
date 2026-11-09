@@ -33,6 +33,9 @@ _KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "ab
 # characters (a C1 byte can be a terminal escape) and no direction overrides.
 _NO_CONTROL_CHARS = f"^[^{UNSAFE_CHARS}]+$"
 MAX_REASON_CHARS = 200
+# A valid answer the runtime refused because the state changed during the call so that the
+# skill it chose can no longer start (ADR 020): stale, not invalid.
+PRECONDITIONS_NOT_MET = "skill: preconditions_not_met"
 
 
 class _Decision(BaseModel):

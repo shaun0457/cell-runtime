@@ -31,6 +31,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from statistics import fmean
 
+from cellrt.planner.schemas import PRECONDITIONS_NOT_MET
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
@@ -79,6 +80,7 @@ class AgentRunSummary:
     planner_calls: int
     decisions: tuple[str, ...]  # the kind of every valid decision, in order
     invalid: int  # answers that failed validation
+    stale: int  # valid answers refused: the state changed during the call (ADR 020)
     errors: int  # calls that raised
     timeouts: int  # calls cut at their deadline
     preempted: int  # calls cut short by a Monitor verdict during a live wait (ADR 020)
@@ -100,6 +102,7 @@ class VariantRow:
     planner_calls_per_run: float
     decisions: dict[str, int]
     invalid_rate: float | None  # invalid answers per planner call; None: no calls
+    stale: int
     errors: int
     timeouts: int
     preempted: int
@@ -119,7 +122,7 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
     started = events[0].payload
     skills = 0  # skills started so far: the unit of run_finished.steps
     unknown_at: tuple[float, int] | None = None  # (ts, skills) at the first UNKNOWN verdict
-    calls = invalid = errors = timeouts = preempted = 0
+    calls = invalid = stale = errors = timeouts = preempted = 0
     decisions: list[str] = []
     latencies: list[float] = []
     prompt_tokens: list[int] = []
@@ -138,6 +141,8 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
             case PlannerOutputRejected(errors=found):
                 if any(e.startswith(RAISED_PREFIX) for e in found):
                     errors += 1
+                elif found == [PRECONDITIONS_NOT_MET]:
+                    stale += 1
                 else:
                     invalid += 1
             case PlannerTimedOut():
@@ -168,6 +173,7 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
         planner_calls=calls,
         decisions=tuple(decisions),
         invalid=invalid,
+        stale=stale,
         errors=errors,
         timeouts=timeouts,
         preempted=preempted,
@@ -270,6 +276,7 @@ def _row(name: str, repeats: list[list[AgentRunSummary]]) -> VariantRow:
         planner_calls_per_run=calls / len(runs),
         decisions=dict(sorted(Counter(k for s in runs for k in s.decisions).items())),
         invalid_rate=sum(s.invalid for s in runs) / calls if calls else None,
+        stale=sum(s.stale for s in runs),
         errors=sum(s.errors for s in runs),
         timeouts=sum(s.timeouts for s in runs),
         preempted=sum(s.preempted for s in runs),
@@ -286,8 +293,8 @@ def _success_rate(runs: Sequence[AgentRunSummary]) -> float:
 
 HEADER = (
     "variant", "setting", "runs", "success", "wasted_s", "wasted_steps", "calls/run",
-    "invalid", "errors", "timeouts", "preempted", "p50_s", "p95_s", "prompt/call",
-    "compl/call",
+    "invalid", "errors", "timeouts", "preempted", "stale", "p50_s", "p95_s",
+    "prompt/call", "compl/call",
 )  # fmt: skip
 NOTES = (
     "success: pooled over the repeats (name#N), with the min-max over repeats in brackets",
@@ -296,6 +303,7 @@ NOTES = (
     "p50/p95: wall time of traced model calls (nearest rank); tokens: mean per traced call",
     "timed-out and raised calls leave no trace, so p50/p95 leave them out: see those columns",
     "preempted: calls a Monitor verdict cut short while the world stepped on (live mode)",
+    "stale: valid answers refused because the state changed during the call (live mode)",
 )
 
 
@@ -335,6 +343,7 @@ def _cells(r: VariantRow) -> list[str]:
         str(r.errors),
         str(r.timeouts),
         str(r.preempted),
+        str(r.stale),
         _num(r.latency_p50_s, "{:.2f}"),
         _num(r.latency_p95_s, "{:.2f}"),
         _num(r.prompt_tokens_per_call, "{:.0f}"),

@@ -96,7 +96,9 @@ def describe(event: Event) -> str:
                 f"(wall {p.waited_s:.2f}s); call cancelled"
             )
         case PlannerDecided() as p:
-            return f"{p.skill} -> {p.decision}"
+            # 0: a frozen call the loop waited on, or a row from before schema 10
+            after = f" after {p.waited_sim_s:.2f}s" if p.waited_sim_s else ""
+            return f"{p.skill} -> {p.decision}{after}"
         case PlannerOutputRejected() as p:
             return f"{p.skill} rejected: {', '.join(p.errors)}"
         case BtNodeChanged() as p:

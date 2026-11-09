@@ -23,7 +23,7 @@ from py_trees.common import Status
 from cellrt.executor.behaviours import ExecEnv, PlannerBehaviour, SkillBehaviour
 from cellrt.monitor.classifier import FailureClass
 from cellrt.planner.base import FailureContext, Planner
-from cellrt.planner.schemas import Abort, Escalate, Retry, SwitchSkill
+from cellrt.planner.schemas import PRECONDITIONS_NOT_MET, Abort, Escalate, Retry, SwitchSkill
 from cellrt.runtime.events import RecoveryStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
@@ -285,7 +285,12 @@ class Recovering(py_trees.composites.Composite):
             return True
         if planner.status != Status.SUCCESS or decision is None:
             self.aborted = True
-            why = "planner timed out" if planner.timed_out else "planner output rejected"
+            if planner.timed_out:
+                why = "planner timed out"
+            elif planner.rejection and planner.rejection.errors == (PRECONDITIONS_NOT_MET,):
+                why = "planner answer no longer applies"  # valid, but about an old state
+            else:
+                why = "planner output rejected"
             self.failure_reason = f"{skill} failed: UNKNOWN ({why})"
             return False
         match decision:

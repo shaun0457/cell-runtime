@@ -34,7 +34,15 @@ from cellrt.planner.base import (
     Traced,
     planner_deadline,
 )
-from cellrt.planner.schemas import Decision, Rejection, validate_decision
+from cellrt.planner.schemas import (
+    PRECONDITIONS_NOT_MET,
+    Decision,
+    Rejection,
+    Retry,
+    SwitchSkill,
+    audit_text,
+    validate_decision,
+)
 from cellrt.runtime.clock import SimClock, to_ns
 from cellrt.runtime.events import (
     CommandDropped,
@@ -463,7 +471,10 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
             )
             return Status.FAILURE
         self.decision = result
-        self._env.recorder.emit(PlannerDecided(skill=ctx.skill, decision=result.model_dump()))
+        waited_sim_s = round((self._env.clock.now_ns() - self._called_ns) / 1e9, 6)
+        self._env.recorder.emit(
+            PlannerDecided(skill=ctx.skill, decision=result.model_dump(), waited_sim_s=waited_sim_s)
+        )
         return Status.SUCCESS
 
     def _watch_hold(self) -> Verdict | None:
@@ -536,9 +547,20 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
             self._env.recorder.emit(responded)
             raw = raw.raw
         try:
-            return validate_decision(raw, self._registry, ctx.skill, self.options)
+            result = validate_decision(raw, self._registry, ctx.skill, self.options)
         except Exception as exc:  # validation must not crash the run; only the type
             return Rejection("", (f"<root>: validator_raised {type(exc).__name__}",))
+        # The answer is about the state the call began in; in `live` the world went on
+        # (ADR 020). The skill it would run must still be able to start in this one.
+        if isinstance(result, SwitchSkill):
+            skill = result.skill
+        elif isinstance(result, Retry):
+            skill = ctx.skill
+        else:
+            return result
+        if not self._registry.get(skill).preconditions(self._env.recorder.state):
+            return Rejection(audit_text(raw), (PRECONDITIONS_NOT_MET,))
+        return result
 
     def terminate(self, new_status: Status) -> None:
         task, self._task = self._task, None

@@ -108,7 +108,9 @@ reachable in the sim.
 ### 4. A stale answer
 
 #### Option A — record the staleness and recheck preconditions on arrival
-`planner_decided` records `waited_sim_s`, the sim time between call and answer (0 in the mock). A
+`planner_decided` records `waited_sim_s`, the sim time between call and answer: 0 for a call
+the mock's loop waited on, one period for an answer in the call's first step (the rule
+planner's), which is read on the next tick. A
 switch or retry is checked against the chosen skill's preconditions on the state at answer time.
 One that fails them is rejected like any invalid output (ADR 008): it is recorded, nothing runs,
 and the run ends aborted.
@@ -143,9 +145,10 @@ Option 1B, Option 2B, Option 3A, Option 4A.
   force limit on the running sum the scorer uses. A verdict cancels the call, is recorded as
   `monitor_verdict` and `planner_preempted` (event schema version 9, with wall and sim time
   waited), and the step recovers as if the failed skill had failed with that class.
-- `planner_decided` records `waited_sim_s`. A switch or retry is checked against the chosen
-  skill's preconditions on the state at answer time; a decision that fails them is rejected with a
-  fixed code, as invalid output is (ADR 008).
+- `planner_decided` records `waited_sim_s` (event schema version 10). A switch or retry is
+  checked against the chosen skill's preconditions on the state at answer time; a decision that
+  fails them is rejected with a fixed code (`skill: preconditions_not_met`), as invalid output is
+  (ADR 008).
 
 ## Why
 
@@ -180,6 +183,10 @@ shortest.
   itself (`AicWorld` stops a run whose sim clock stalls), not by this check.
 - Schema version 9: replay, trace export and the agent report read the new event and field. Rows
   of earlier versions still read.
+- Schema version 10 (`planner_decided.waited_sim_s`): replay and trace export show it. A
+  refused stale answer is a `planner_output_rejected` with the code
+  `skill: preconditions_not_met`; the agent report counts it as stale, not invalid, and the
+  run ends "planner answer no longer applies". Like a rejection, it spends no recovery.
 - ADR 016's "Open: AIC" is closed by this ADR, and ADR 016 still holds for the mock. Of its
   three to-dos: a cancel is now seen within a step; the time limit ends a run during a call, but
   the call's deadline is not yet set below the time left; hold behaviour during a long call is

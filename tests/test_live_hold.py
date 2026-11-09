@@ -1,7 +1,8 @@
-"""Live hold (#55, #56, ADR 020): in `live` mode the world keeps stepping while a planner call
-runs. The arm holds, every step is sampled and recorded, the clock advances, and both the call's
-wall deadline and the task's time limit apply. The Monitor watches the hold with the safety rules
-only, and a verdict cuts the call short. `frozen`, the default, is ADR 016 unchanged.
+"""Live hold (#55, #56, #57, ADR 020): in `live` mode the world keeps stepping while a planner
+call runs. The arm holds, every step is sampled and recorded, the clock advances, and both the
+call's wall deadline and the task's time limit apply. The Monitor watches the hold with the
+safety rules only, and a verdict cuts the call short. An answer records the sim time it took and
+is checked against the state it arrives in. `frozen`, the default, is ADR 016 unchanged.
 
 The planner here answers when the world has taken a given number of steps, so the tests are
 deterministic without any wall wait; wall time comes from a fake that each world step advances,
@@ -35,8 +36,11 @@ from cellrt.replay import replay_lines
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import SCHEMA_VERSION, Event, RunFinished, RunStarted
 from cellrt.runtime.recorder import Recorder
+from cellrt.runtime.state import RunState
 from cellrt.runtime.store import EventStore
+from cellrt.skills.base import Skill
 from cellrt.skills.mock import mock_registry
+from cellrt.skills.registry import SkillRegistry
 from cellrt.trace_export import export_trace
 from cellrt.world.base import Command, Signals, WorldStopped
 from cellrt.world.mock_world import MockParams, MockWorld
@@ -180,6 +184,80 @@ class _AnswersAtOnce:
         return dict(SWITCH_TO_ACT)
 
 
+@dataclass
+class _DropsThenAnswers:
+    """Answers after `steps` steps; the wrench is invalid for `dropout` steps that end `gap`
+    steps before the answer. Too short a dropout for the Monitor's rule (0.2 s)."""
+
+    world: _CountingWorld
+    answer: dict[str, str]
+    steps: int = 6
+    dropout: int = 2
+    gap: int = 0
+    deadline_s: float = 30.0
+
+    async def triage(self, ctx: FailureContext) -> object:
+        last = self.world.steps + self.steps - self.gap
+        self.world.dropout = (last - self.dropout + 1, last)
+        await self.world.after_steps(self.steps).wait()
+        return dict(self.answer)
+
+
+class _SleepsThenSwitches:
+    """Answers after a short wall-time wait, so the loop waits on it."""
+
+    deadline_s = 30.0
+
+    async def triage(self, ctx: FailureContext) -> object:
+        done = asyncio.Event()  # real time, through the loop's timer
+        asyncio.get_running_loop().call_later(0.01, done.set)
+        await done.wait()
+        return dict(SWITCH_TO_ACT)
+
+
+class _NeedsWrench:
+    """A skill that runs only on a valid wrench reading (its preconditions), else as `inner`."""
+
+    def __init__(self, inner: Skill) -> None:
+        self._inner = inner
+
+    def preconditions(self, state: RunState) -> bool:
+        return state.last_signal is not None and state.last_signal.wrench_valid
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
+class _NeverReady:
+    """A skill whose preconditions never hold, else as `inner`."""
+
+    def __init__(self, inner: Skill) -> None:
+        self._inner = inner
+
+    def preconditions(self, state: RunState) -> bool:
+        return False
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
+def _never_ready(*names: str) -> SkillRegistry:
+    mock = mock_registry()
+    return SkillRegistry(
+        _NeverReady(mock.get(n)) if n in names else mock.get(n)  # type: ignore[misc]
+        for n in mock.names()
+    )
+
+
+def _needing_wrench(*names: str) -> SkillRegistry:
+    """The mock skills, with `names` needing a valid wrench reading to start."""
+    mock = mock_registry()
+    return SkillRegistry(
+        _NeedsWrench(mock.get(n)) if n in names else mock.get(n)  # type: ignore[misc]
+        for n in mock.names()
+    )
+
+
 Planner = Any  # the scripted planners above
 
 
@@ -193,6 +271,7 @@ def _run(
     recovery: RecoveryConfig | None = None,
     monitor_config: MonitorConfig | None = None,
     judged: list[float] | None = None,
+    registry: SkillRegistry | None = None,
 ) -> tuple[list[Event], Planner]:
     """Runs `scenario` in setting C. `judged`, if given, receives the time of the sample behind
     each Monitor observation."""
@@ -235,7 +314,8 @@ def _run(
             return observe(signals)
 
         env.monitor.observe = judge  # type: ignore[method-assign]
-    root = build_tree("C", mock_registry(), env, recovery or RecoveryConfig(), planner)
+    skills = registry or mock_registry()
+    root = build_tree("C", skills, env, recovery or RecoveryConfig(), planner)
 
     async def go() -> None:
         outcome, reason = await run_task(root, env, scenario.task)
@@ -474,6 +554,108 @@ def test_a_verdict_wins_over_an_answer_that_arrived_with_the_same_sample(
     assert not any(e.type == "planner_decided" for e in first_call)
     preempted = _first(events, "planner_preempted").payload
     assert (preempted.waited_s, preempted.waited_sim_s) == (0.0, pytest.approx(DT))
+
+
+# --- an answer in the state it arrives in (#57) -------------------------------------------
+
+
+def test_in_live_mode_a_decision_records_the_sim_time_the_call_took(store: EventStore) -> None:
+    events, _ = _run(store, YAW, "live", lambda w: _AfterSteps(w, steps=7))
+
+    decided = _first(events, "planner_decided").payload
+    assert decided.waited_sim_s == pytest.approx(7 * DT)
+    lines = list(replay_lines(events))
+    assert any("insert_scripted -> " in line and "after 0.35s" in line for line in lines)
+
+
+def test_in_frozen_mode_a_call_the_loop_waited_on_took_no_sim_time(store: EventStore) -> None:
+    events, _ = _run(store, YAW, "frozen", lambda w: _SleepsThenSwitches(), fake_wall=False)
+
+    assert _first(events, "planner_decided").payload.waited_sim_s == 0.0
+
+
+def test_an_answer_in_the_calls_first_step_is_read_one_period_later(store: EventStore) -> None:
+    # The loop never waits on such a call (ADR 016): the world takes its step, and the answer
+    # is read on the next tick. The rule planner answers so, in either mode.
+    events, _ = _run(store, YAW, "frozen", lambda w: RulePlanner())
+
+    assert _first(events, "planner_decided").payload.waited_sim_s == pytest.approx(DT)
+
+
+def test_a_switch_whose_preconditions_stopped_holding_during_the_call_is_rejected(
+    store: EventStore,
+) -> None:
+    # insert_act needs a valid wrench: it had one when the call began, and the answer arrives
+    # in the second of two samples without one. Rejected like invalid output (ADR 008):
+    # nothing runs, and the run ends aborted.
+    def drops(world: _CountingWorld) -> _DropsThenAnswers:
+        return _DropsThenAnswers(world, SWITCH_TO_ACT)
+
+    events, _ = _run(store, YAW, "live", drops, registry=_needing_wrench("insert_act"))
+
+    called = _first(events, "planner_called")
+    before = [e for e in events if e.type == "signal_sampled" and e.ts <= called.ts]
+    assert before[-1].payload.wrench_valid  # it held when the call began
+    rejected = _first(events, "planner_output_rejected").payload
+    assert rejected.errors == ["skill: preconditions_not_met"]
+    assert "switch_skill" in rejected.raw
+    assert not any(e.type in ("planner_decided", "precondition_failed") for e in events)
+    assert not any(e.type == "skill_started" and e.payload.skill == "insert_act" for e in events)
+    # No recovery is spent on it.
+    assert not any(e.type == "recovery_started" and e.ts >= called.ts for e in events)
+    finished = events[-1].payload
+    assert (finished.outcome, finished.reason) == (
+        "aborted",
+        "insert_scripted failed: UNKNOWN (planner answer no longer applies)",
+    )
+
+
+def test_a_retry_whose_preconditions_stopped_holding_during_the_call_is_rejected(
+    store: EventStore,
+) -> None:
+    # A retry runs the failed skill again: its preconditions are the ones checked.
+    def drops(world: _CountingWorld) -> _DropsThenAnswers:
+        return _DropsThenAnswers(world, {"kind": "retry"})
+
+    events, _ = _run(store, YAW, "live", drops, registry=_needing_wrench("insert_scripted"))
+
+    rejected = _first(events, "planner_output_rejected").payload
+    assert rejected.errors == ["skill: preconditions_not_met"]
+    called = _first(events, "planner_called")
+    assert not any(
+        e.type == "skill_started" and e.ts > called.ts and e.payload.skill == "insert_scripted"
+        for e in events
+    )
+
+
+def test_in_frozen_mode_a_switch_whose_preconditions_do_not_hold_is_rejected_too(
+    store: EventStore,
+) -> None:
+    # The state did not change during the call, but the answer is still checked against it.
+    events, _ = _run(
+        store,
+        YAW,
+        "frozen",
+        lambda w: _SleepsThenSwitches(),
+        fake_wall=False,
+        registry=_never_ready("insert_act"),
+    )
+
+    rejected = _first(events, "planner_output_rejected").payload
+    assert rejected.errors == ["skill: preconditions_not_met"]
+    assert not any(e.type == "skill_started" and e.payload.skill == "insert_act" for e in events)
+
+
+def test_a_switch_whose_preconditions_hold_again_on_arrival_runs(store: EventStore) -> None:
+    # The wrench comes back one sample before the answer arrives: the switch runs.
+    def recovers(world: _CountingWorld) -> _DropsThenAnswers:
+        return _DropsThenAnswers(world, SWITCH_TO_ACT, gap=1)
+
+    events, _ = _run(store, YAW, "live", recovers, registry=_needing_wrench("insert_act"))
+
+    assert not any(e.type == "planner_output_rejected" for e in events)
+    assert any(e.type == "skill_started" and e.payload.skill == "insert_act" for e in events)
+    assert events[-1].payload.outcome == "success"
 
 
 # --- configuration -----------------------------------------------------------------------------

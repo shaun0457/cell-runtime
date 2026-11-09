@@ -219,6 +219,25 @@ def test_calls_cut_short_by_the_monitor_are_counted_and_shown() -> None:
     assert row[header.index("preempted")] == "1"
 
 
+def test_an_answer_refused_as_stale_is_not_counted_as_invalid() -> None:
+    # Valid, but the skill it chose could no longer start when it arrived (ADR 020).
+    events = _log(
+        (1.0, _verdict("UNKNOWN")),
+        (1.0, _called(1)),
+        (1.5, _rejected("skill: preconditions_not_met")),
+        _finish("aborted", steps=3, at=1.5),
+    )
+
+    summary = summarize_agent_run(events)
+
+    assert summary is not None
+    assert (summary.invalid, summary.stale, summary.errors) == (0, 1, 0)
+    lines = render_agent_report(variant_rows([("C-llm", [events])]))
+    header = lines[0].split()
+    row = next(line for line in lines if line.startswith("C-llm ")).split()
+    assert (row[header.index("invalid")], row[header.index("stale")]) == ("0.0%", "1")
+
+
 def test_latency_and_tokens_come_from_the_traced_calls() -> None:
     events = _log(
         (1.0, _called(1)),
