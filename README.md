@@ -92,9 +92,13 @@ The first run with a real model, and what it did and did not show, is in
 [`docs/phase3-llm-results.md`](docs/phase3-llm-results.md).
 
 `cellrt promote` turns a recurring UNKNOWN into a Monitor rule with a recovery plan (ADR 021,
-ADR 022), in four steps. `group` replays the Monitor over a mock store and prints its UNKNOWN
-verdicts grouped by signature. `validate` replays every run again with a candidate rule (a JSON
-file: a rule in a small, bounded language and its plan) and checks four gates: the replay
+ADR 022), in five steps. `group` replays the Monitor over a mock store and prints its UNKNOWN
+verdicts grouped by signature. `propose` asks the model on NIM, once, for a candidate for one
+group: it sees the group's readings and the rule language, never run ids or fault labels, and
+its answer is kept as a record (prompt and answer scrubbed) and, when it parses, as a
+candidate file. A candidate can also be written by hand. `validate` replays every run again
+with a candidate rule (a JSON file: a rule in a small, bounded language and its plan) and
+checks four gates: the replay
 reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
 other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
 passed under the Monitor configuration in use now, with the approver's name. `eval --promoted
@@ -102,6 +106,9 @@ DIR` runs with the approved rules, whose plans run in B and C without the planne
 
 ```sh
 uv run cellrt promote group --db runs/phase3.sqlite
+# optional, one model call: the llm extra and NVIDIA_API_KEY, as for --planner llm
+uv run cellrt promote propose --group "<label from group>" --db runs/phase3.sqlite \
+  --out proposal.json --candidate-out rule.json
 uv run cellrt promote validate rule.json --group "<label from group>" --db runs/phase3.sqlite \
   --out report.json
 uv run cellrt promote approve report.json --by "Your Name"

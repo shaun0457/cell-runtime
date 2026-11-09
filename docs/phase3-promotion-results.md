@@ -1,4 +1,4 @@
-# Phase 3 results: two recurring UNKNOWNs promoted to Monitor rules (T3)
+# Phase 3 results: two recurring UNKNOWNs promoted to Monitor rules (T3, T4)
 
 What happened when the two UNKNOWNs of the phase 3 scenarios were turned into Monitor rules with
 a recovery plan each: found in a store, checked by replay (ADR 022), approved, and run in the
@@ -13,10 +13,10 @@ the stall rule would have.
 Read this with four limits in mind:
 
 - **The scenarios are ours, and so are the rules.** `eval/scenarios/phase3.yaml` (ADR 019) holds
-  two UNKNOWN faults built so that their right answers differ. The two rules below were written
-  by Claude, the coding assistant, from the evidence `cellrt promote group` printed; they did
-  not come from the proposer (T4), which asks a model through the rule language. The gates
-  checked them; they did not find them.
+  two UNKNOWN faults built so that their right answers differ. The two rules measured first were
+  written by Claude, the coding assistant, from the evidence `cellrt promote group` printed. The
+  gates checked them; they did not find them. What a model proposed for the same two groups is
+  in [A model's proposals (T4)](#a-models-proposals-t4): one call per group, one rule passed.
 - **The approval is a stand-in.** Both rules were approved as `Claude` into `runs/`, for this
   measurement. Nothing is committed under `eval/promoted/`: adopting a rule is Shaun's call.
 - **The held-out seeds are a weak test.** The rules were validated on seeds 0-4 and the eval ran
@@ -38,7 +38,7 @@ Read this with four limits in mind:
 | Scenarios | `eval/scenarios/phase3.yaml`: `baseline`, `yaw_mismatch` (fixable: switch to `insert_act`), `damaged_port` (unfixable: stop early) |
 | Survey store | settings A, B and C, seeds 0-4: 45 runs, 40 recorded verdicts |
 | Eval | each variant: 3 scenarios x seeds 0-9 = 30 runs; the #52 variants that need no model |
-| Model calls | none. C-llm is not rerun: with both rules adopted, setting C does not reach the planner on these scenarios, so a rerun would make no model call |
+| Model calls | none for the hand-written rules. C-llm is not rerun: with both rules adopted, setting C does not reach the planner on these scenarios, so a rerun would make no model call. Two for the proposer (T4), below |
 
 ## Commands
 
@@ -183,6 +183,101 @@ How `damaged_port` ended:
 Planner calls over the 30 runs: C-rule 30 -> 0, C-fixed 40 -> 0. Mean sim duration for C-rule:
 9.0 s -> 7.9 s. No run in any variant had a force-limit or off-limit event.
 
+## A model's proposals (T4)
+
+`cellrt promote propose` asked a model once per group for a candidate, on the same survey
+store. The model saw the group's readings (torque as a magnitude), their ranges, the other
+groups' signatures and ranges, the rule language's bounds, and the insertion skills with their
+one-line descriptions; no run ids, no scenario names, no fault labels (ADR 015). The
+descriptions are the ones #52's planner was given, and `insert_act`'s says it "frees a plug
+rotated against the port". Its answers went through the same parser, the same gates and the
+same approval as the hand-written rules, approved as `Claude`, a stand-in, like them.
+
+| | |
+|---|---|
+| Model | `nvidia/nemotron-3.5-lightning-30b-a3b` on NVIDIA NIM, through the `propose` tool |
+| Settings | temperature 0, `max_tokens` 4096, a 60 s deadline, a cap of one call per command |
+| Prompt version | `b37e8193b27e` (system prompt, tool schema and the user message's shape) |
+| Calls | 2, one per group, of a cap of 3 set before the run. No output file holds the key's prefix (checked over every file the run wrote) |
+
+```sh
+N=$R/nim   # with `uv sync --extra llm` and NVIDIA_API_KEY set
+uv run cellrt promote propose --group "$ROT" --db $R/survey.sqlite \
+  --out $N/rotated-proposal.json --candidate-out $N/rotated-candidate.json
+uv run cellrt promote propose --group "$BLK" --db $R/survey.sqlite \
+  --out $N/blocked-proposal.json --candidate-out $N/blocked-candidate.json
+uv run cellrt promote validate $N/rotated-candidate.json --group "$ROT" --db $R/survey.sqlite \
+  --out $N/rotated-report.json
+uv run cellrt promote validate $N/blocked-candidate.json --group "$BLK" --db $R/survey.sqlite \
+  --out $N/blocked-report.json
+uv run cellrt promote approve $N/rotated-report.json --by Claude --dir $N/approved
+uv run cellrt promote approve $N/blocked-report.json --by Claude --dir $N/approved  # refused
+uv run cellrt eval --scenarios $S --seeds 10 --k 1 --settings B --db $N/B-after.sqlite \
+  --promoted $N/approved
+uv run cellrt eval --scenarios $S --seeds 10 --k 1 --settings C --planner rule \
+  --db $N/C-rule-after.sqlite --promoted $N/approved
+uv run cellrt eval --scenarios $S --seeds 10 --k 1 --settings C --planner fixed \
+  --db $N/C-fixed-after.sqlite --promoted $N/approved
+uv run cellrt agent-report \
+  --db B=$R/B-before.sqlite --db C-rule=$R/C-rule-before.sqlite \
+  --db C-fixed=$R/C-fixed-before.sqlite --db B-model=$N/B-after.sqlite \
+  --db C-rule-model=$N/C-rule-after.sqlite --db C-fixed-model=$N/C-fixed-after.sqlite
+```
+
+The store query above, pointed at `$N/*-after.sqlite`, gives the per-scenario counts.
+
+What the model answered:
+
+| group | rule | plan | tokens (prompt / completion) | latency |
+|---|---|---|---|---|
+| rotated plug (`torque >=0.1 Nm`) | `INSERT_SCRIPTED_TORQUE_STALL`: force < 10 N, torque >= 0.1 Nm, progress < 0.5 mm, over 0.5 s | switch to `insert_act` | 2350 / 1213 | 16.4 s |
+| damaged port (`torque <0.1 Nm`) | `INSERT_SCRIPTED_STALLED_LOW_TORQUE`: force < 10 N, torque < 0.1 Nm, progress **> 0.0 mm**, over 0.8 s | switch to `insert_act` | 2353 / 2419 | 31.0 s |
+
+Both answers parsed and named registered skills, so both became candidate files. The gates:
+
+| gate | rotated plug | damaged port |
+|---|---|---|
+| 0, reproduction | 40 verdicts in 45 runs reproduced | the same |
+| 1, coverage | 15 of 15 windows, a median 0.55 s before the recorded UNKNOWN | 15 of 15 windows, a median 1.65 s before |
+| 2, no false alarms | 0 of 15 runs without an injected fault | **failed: 15 of 15** |
+| 3, no theft | 0 of 25 other windows changed | **failed: 15 of 25** |
+
+The 25 other windows are the rotated plug's 15 on `insert_scripted` and the damaged port's 10 on
+`insert_act`. The rule watches `insert_scripted` only, so the 15 it changed are the rotated
+plug's (the report lists 5 of them, all `yaw_mismatch`).
+
+`promote approve` took the first and refused the second (`not_passed`). With only the model's
+rule adopted:
+
+```text
+variant        setting  runs  success  wasted_s  wasted_steps  calls/run  invalid
+B-model        B          30    66.7%      0.00           0.0       0.00        -
+C-rule-model   C          30    66.7%      2.20           2.0       0.67     0.0%
+C-fixed-model  C          30    66.7%      1.15           1.0       0.67     0.0%
+```
+
+`yaw_mismatch` succeeded in 10 of 10 runs in all three (5 of 5 on each seed half); `baseline`
+stayed 10 of 10. `damaged_port` has no rule, so it ended as before: B failed at the first
+UNKNOWN, and C-rule and C-fixed asked the planner twice per run. Planner calls over the 30 runs:
+C-rule 30 -> 20, C-fixed 40 -> 20.
+
+Read the two answers this way:
+
+- **The rule that passed restates the signature.** Its force and torque thresholds are the
+  group's band edges (10 N, 0.1 Nm), printed in the label the model was given, plus a progress
+  condition. The model turned a signature into the rule language correctly; it found nothing
+  the signature did not already say.
+- **The rule that failed has a progress condition that separates nothing.** `progress_mm > 0.0`
+  holds for the group's own readings (0.0019 to 0.1649 mm at its stall verdicts, as the model
+  was shown) and for any plug that moves at all; a stall rule needs an upper bound. With force and
+  torque low as well, it fired in all 15 fault-free runs of the survey store (gate 2) and on the
+  rotated plug's windows before their own stall (gate 3). The record keeps the answer, not why
+  the model chose it. Its plan, a switch to `insert_act`, is also what #52's model chose for
+  this fault, and it does not fix it. The gates stopped the rule without a person; nothing
+  checks a plan before an eval runs it.
+- **The third call was not spent.** The proposer cannot yet feed a gate's result back to the
+  model, so asking again with the same prompt would not be a different experiment.
+
 ## What this shows
 
 - **The loop works end to end.** A recurring UNKNOWN in a store becomes a rule with a plan, the
@@ -202,6 +297,6 @@ Planner calls over the 30 runs: C-rule 30 -> 0, C-fixed 40 -> 0. Mean sim durati
 
 - That the rules are right outside the mock (see the limits at the top: a seated plug pressed
   below 10 N, above all).
-- That a model can find such rules. T4 gives a model the group's evidence and the rule language;
-  its proposals go through the same gates.
+- That a model finds such rules in general. Two calls to one model at temperature 0, on mock
+  evidence, gave one rule that restates its signature and one that the gates refused.
 - How promotion behaves when a fault's signature drifts. The mock's faults do not drift.

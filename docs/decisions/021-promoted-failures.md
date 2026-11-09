@@ -141,6 +141,10 @@ samples it replayed, and those came from one skill.
   such files and checks each again (file name, configuration, hash, registered skills) before
   the store is opened. A rule approved under other Monitor thresholds or mock parameters is
   refused as `config_stale`: its gates vouched for a Monitor that no longer runs.
+- A model's proposal (`cellrt promote propose`, one call per group) is a candidate like a
+  hand-written one: the same parser, registry check, gates and approval. The model sees the
+  group's readings and the rule language, never run ids or fault labels (ADR 015), and the
+  record of the call keeps the prompt and the answer, scrubbed.
 - The hashes catch an accident (a candidate edited after its report, a configuration changed
   since), not tampering: they are not signatures, and anyone who can write the report or the
   approval directory can forge both. Write access to `eval/promoted/` is the trust root, as

@@ -26,7 +26,7 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.trees import SETTINGS
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.monitor.promoted import MAX_CANDIDATE_CHARS, Candidate, CandidateRefused
-from cellrt.planner.base import Planner
+from cellrt.planner.base import MAX_PLANNER_DEADLINE_S, Planner
 from cellrt.planner.factory import (
     DEFAULT_MAX_MODEL_CALLS,
     PLANNER_KINDS,
@@ -35,6 +35,7 @@ from cellrt.planner.factory import (
     llm_client_and_config,
     model_call_cap,
 )
+from cellrt.planner.llm import MAX_TOKENS_LIMIT
 from cellrt.planner.nim import (
     DEFAULT_MODEL,
     KEY_ENV,
@@ -55,10 +56,12 @@ from cellrt.promotion.groups import (
     DEFAULT_MIN_SIZE,
     MAX_MIN_SIZE,
     SurveyTooLarge,
+    gate_0,
     group_unknowns,
     render_survey,
     survey,
 )
+from cellrt.promotion.propose import PROPOSE_DEADLINE_S, PROPOSE_MAX_TOKENS, propose
 from cellrt.promotion.replay import ReplayConfig
 from cellrt.promotion.validate import GroupNotFound, check_registry, validate
 from cellrt.replay import replay_lines
@@ -80,8 +83,8 @@ MAX_SHOWN_ERRORS = 5
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
 promote_app = typer.Typer(
     no_args_is_help=True,
-    help="UNKNOWN promotion: group recurring UNKNOWNs, check a candidate rule by replay"
-    " (ADR 021, ADR 022).",
+    help="UNKNOWN promotion: group recurring UNKNOWNs, propose a candidate rule, check it by"
+    " replay and approve it (ADR 021, ADR 022).",
 )
 app.add_typer(promote_app, name="promote")
 
@@ -232,6 +235,16 @@ def baseline(
     if differences:
         _fail("\n  ".join([f"the eval no longer matches {path}:", *differences]))
     typer.echo(f"matches {path}")
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """`a` and `b` name one file: the same path once resolved, or a link to the same file."""
+    try:
+        if a.resolve() == b.resolve():
+            return True
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _write_whole(path: Path, text: str, *, what: str) -> None:
@@ -471,6 +484,84 @@ def promote_approve(
         _fail(f"cannot write the approved rule in {directory} ({type(exc).__name__})")
     typer.echo(f"approved {adopted.rule.name} ({adopted.candidate_hash}) by {adopted.approved_by}")
     typer.echo(str(path))
+
+
+@promote_app.command(name="propose")
+def promote_propose(
+    group: Annotated[
+        str, typer.Option(help="the group's label, as `cellrt promote group` prints it")
+    ],
+    out: Annotated[Path, typer.Option(help="write the proposal record (JSON) to this file")],
+    candidate_out: Annotated[
+        Path | None,
+        typer.Option(
+            help="write the candidate here when the answer is valid; a file left there by an"
+            " earlier run is removed when it is not"
+        ),
+    ] = None,
+    db: DbOption = DEFAULT_DB,
+    model: ModelOption = DEFAULT_MODEL,
+    max_tokens: Annotated[
+        int, typer.Option(min=1, max=MAX_TOKENS_LIMIT, help="the model's answer budget")
+    ] = PROPOSE_MAX_TOKENS,
+    deadline_s: Annotated[
+        float,
+        typer.Option(min=0.001, max=MAX_PLANNER_DEADLINE_S, help="wall time for the one call"),
+    ] = PROPOSE_DEADLINE_S,
+) -> None:
+    """Ask the model on NVIDIA NIM, once, for a candidate rule for one UNKNOWN group of a mock
+    store (ADR 021). The record keeps the prompt and the answer, scrubbed. A valid candidate
+    still has to pass `cellrt promote validate` and an approval. Exits 1 unless the answer is
+    a valid candidate."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    # Before the one call: replacing the store would lose its log for good, and one output on
+    # the other would lose the record of the call.
+    outputs = [("--out", out), *([("--candidate-out", candidate_out)] if candidate_out else [])]
+    for i, (name, path) in enumerate(outputs):
+        if _same_file(path, db):
+            _fail(f"{name} is the event store itself; nothing sent")
+        if any(_same_file(path, other) for _, other in outputs[:i]):
+            _fail(f"{name} is the same file as --out; nothing sent")
+    try:  # before the store is read: without a key nothing else happens
+        client, config = llm_client_and_config(
+            model=model, max_tokens=max_tokens, deadline_s=deadline_s, cap=model_call_cap(1)
+        )
+    except LlmSetupError as exc:
+        _fail(str(exc))
+    try:
+        runs = survey(_runs_of("store", db), ReplayConfig.mock())
+    except (StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    lines, passed = gate_0(runs)
+    if not passed:  # groups from a store the replay cannot reproduce mean nothing
+        _fail("\n".join(lines))
+    groups = group_unknowns(runs)
+    target = next((g for g in groups if g.signature.label() == group), None)
+    if target is None:
+        _fail("no UNKNOWN group with that label in the store")
+    others = [g for g in groups if g is not target]
+    proposal = propose(client, config, target, others, mock_registry())
+    _write_whole(out, json.dumps(proposal.as_dict(), indent=2) + "\n", what="the proposal")
+    if proposal.candidate is not None and candidate_out is not None:
+        candidate = Candidate.parse(json.dumps(proposal.candidate))
+        _write_whole(candidate_out, candidate.canonical() + "\n", what="the candidate")
+    elif candidate_out is not None:
+        # An older candidate there would be validated as if this call had produced it.
+        try:
+            candidate_out.unlink(missing_ok=True)
+        except OSError as exc:
+            _fail(f"cannot remove the earlier candidate {candidate_out} ({type(exc).__name__})")
+    typer.echo(f"outcome: {proposal.outcome}")
+    for line in (*proposal.errors, *([proposal.error] if proposal.error else [])):
+        typer.echo(f"  {line}")
+    if proposal.candidate is not None:
+        typer.echo(f"candidate {proposal.candidate['rule']['name']} ({proposal.candidate_hash})")
+    tokens = f"{proposal.prompt_tokens} prompt, {proposal.completion_tokens} completion tokens"
+    latency = "-" if proposal.latency_s is None else f"{proposal.latency_s:.1f} s"
+    typer.echo(f"{tokens}, {latency}")
+    if proposal.outcome != "candidate":
+        raise typer.Exit(code=1)
 
 
 @app.command()
