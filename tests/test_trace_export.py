@@ -165,6 +165,17 @@ def test_monitor_verdicts_recoveries_and_faults_are_instants(store: EventStore) 
     assert faults == ["fault_injected: yaw_mismatch#0", "fault_cleared: yaw_mismatch#0"]
 
 
+def test_the_process_id_is_no_track_s_thread_id(store: EventStore) -> None:
+    """Perfetto shows the thread whose id is the process id as the "main thread"."""
+    trace = _round_trip(export_trace(_yaw_run(store, planner=RulePlanner())))
+
+    pids = {e["pid"] for e in trace["traceEvents"]}
+    used = {e["tid"] for e in trace["traceEvents"] if e["ph"] in ("X", "i")}
+    assert len(pids) == 1
+    assert used <= set(_tracks(trace).values())  # every mark is on a named track
+    assert pids.isdisjoint(used | set(_tracks(trace).values()))
+
+
 def _counter(trace: dict[str, Any], name: str) -> list[tuple[int, float]]:
     return [
         (e["ts"], *e["args"].values())

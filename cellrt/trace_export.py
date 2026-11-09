@@ -23,7 +23,8 @@ _T = TypeVar("_T")
 # does not show: read the log (`cellrt replay --signals`) for every sample.
 MAX_COUNTER_POINTS = 2_000
 
-PID = 1
+# No track's id: Perfetto shows the thread whose id is the process id as the "main thread".
+PID = 100
 TRACKS = {"run": 1, "skills": 2, "planner": 3, "monitor": 4}
 _RUN_ARGS = ("scenario_id", "setting", "seed", "attempt")
 # No mark of their own: progress happens inside a skill span, and tree ticks are noise.
