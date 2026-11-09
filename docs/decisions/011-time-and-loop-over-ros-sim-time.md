@@ -123,4 +123,5 @@ Current shape (since #23 and #24, the plan's defaults):
 - A run starts reading TF and F/T as soon as the goal arrives. CheatCode first waits up to 10 s
   for the ground-truth frames (`CheatCode.py:45-70`). The policy aborts at once
   (`ground_truth_unavailable`), and the first wrench may take longer than the Monitor's 0.2 s
-  dropout window to arrive. A bounded wait for readiness is still open (#25 or #27).
+  dropout window to arrive. A bounded wait for readiness is still open (neither #25 nor #27
+  added one; to settle with the VM run, #28).

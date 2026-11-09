@@ -57,7 +57,7 @@ class _Port(FakeNode):
     fail_on_init = False
     fail_on_close = False
 
-    def __init__(self, node: Any, move_robot: Any) -> None:
+    def __init__(self, node: Any, move_robot: Any, send_feedback: Any) -> None:
         if type(self).fail_on_init:
             raise RuntimeError(SECRET)
         super().__init__(task=TASK)

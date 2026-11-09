@@ -21,8 +21,16 @@ import json
 import py_trees
 from py_trees.common import Status
 
+from adapters.aic.feedback import FeedbackRecorder
 from adapters.aic.node import NodePort
-from adapters.aic.skills import AicApproach
+from adapters.aic.skills import (
+    STEP_S,
+    AicAlign,
+    AicApproach,
+    AicInsertScripted,
+    AicVerify,
+    Descent,
+)
 from adapters.aic.world import POLL_WALL_S, SIM_STALL_WALL_S, AicWorld
 from cellrt.eval.runner import adapters_fingerprint, code_fingerprint, hash_parts, lock_fingerprint
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
@@ -36,12 +44,11 @@ from cellrt.runtime.events import (
     RunFinished,
     RunStarted,
 )
-from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 from cellrt.world.base import HOLD, WorldStopped
 
-PERIOD_S = 0.05  # the camera rate and CheatCode's step
+PERIOD_S = STEP_S  # the camera rate and CheatCode's step
 SETTING = "A"  # no recovery in Phase 1: every verdict ends the task, visibly
 SEED = 0
 GEOMETRY_SOURCE = "ground_truth"
@@ -78,7 +85,9 @@ async def _run_goal(
 ) -> bool:
     attempt = store.next_attempt(task.id, SETTING, SEED)
     clock = SimClock()
-    recorder = Recorder(f"{task.id}/{SETTING}/{SEED}/a{attempt}", store, clock)
+    recorder = FeedbackRecorder(
+        f"{task.id}/{SETTING}/{SEED}/a{attempt}", store, clock, node.send_feedback
+    )
     parts = _config_parts(task, monitor, stall_wall_s, poll_wall_s)
     recorder.emit(
         RunStarted(
@@ -167,10 +176,16 @@ def _confirm_hold(world: AicWorld, clock: SimClock, *, wait: bool) -> HoldChecke
 
 
 def _tree(world: AicWorld, env: ExecEnv) -> py_trees.behaviour.Behaviour:
-    # The tracer bullet runs approach only; the full setting-A sequence comes with the other
-    # scripted skills (#27).
-    approach = SkillBehaviour(AicApproach(world.geometry), env)
-    return py_trees.composites.Sequence(name="aic_setting_A", memory=True, children=[approach])
+    """Setting A, as for the mock: approach, align, insert, verify; any failure ends the task."""
+    descent = Descent()
+    skills = [
+        AicApproach(world.geometry),
+        AicAlign(world.geometry, descent),
+        AicInsertScripted(world.geometry, descent),
+        AicVerify(world.geometry),
+    ]
+    children = [SkillBehaviour(skill, env) for skill in skills]
+    return py_trees.composites.Sequence(name="aic_setting_A", memory=True, children=children)
 
 
 def _config_parts(
@@ -190,7 +205,10 @@ def _config_parts(
         },
         "recovery": None,
         "monitor": monitor.as_dict(),
-        "skills": {"approach": AicApproach.config()},
+        "skills": {
+            skill.name: skill.config()
+            for skill in (AicApproach, AicAlign, AicInsertScripted, AicVerify)
+        },
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),

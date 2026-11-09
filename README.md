@@ -61,7 +61,12 @@ environment. Each goal (one task) becomes one run in the store named by `CELLRT_
 (default `runs/aic.sqlite`): scenario = task id, setting A, seed 0. `cellrt replay` reads those
 runs like any other.
 
-So far the policy runs the `approach` skill only (#24); the other scripted skills follow.
+The policy runs setting A as CheatCode's two phases split into skills: `approach`, `align`
+(down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
+-0.015) and `verify` (5 s settle, then depth from ground truth); `retract` is there for
+recovery. z_offset is CheatCode's height above the port; where the plug tip actually ends
+depends on CheatCode's tip-offset quirk (`adapters/aic/geometry.py`), to be checked in the sim. Skill starts, ends and progress (at most once per sim second) go out as
+`InsertCable` feedback.
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS
 against a fake node (`tests/aic_fakes.py`); those two files run only where ROS 2 and AIC are
 installed, and their tests are skipped elsewhere.

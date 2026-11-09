@@ -68,3 +68,7 @@ class NodePort(Protocol):
     def send(self, motion: MotionCommand) -> None:
         """Hand a motion update to `move_robot`."""
         ...
+
+    def send_feedback(self, message: str) -> None:
+        """Send `InsertCable` feedback (aic_model's `send_feedback`)."""
+        ...
