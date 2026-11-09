@@ -28,6 +28,7 @@ class ControllerSnapshot:
     tcp: Pose  # `tcp_pose`, the measured TCP in the base frame
     tare_force: Vec3  # `fts_tare_offset.wrench.force`, same frame as the raw reading
     tare_torque: Vec3
+    tcp_speed_mm_s: float  # |`tcp_velocity.linear`|, to confirm the arm stopped
 
 
 class NodePort(Protocol):
@@ -41,6 +42,13 @@ class NodePort(Protocol):
 
     def wall_sleep(self, seconds: float) -> None:
         """Block the policy thread for `seconds` of real time while sim time moves on."""
+        ...
+
+    def goal_stop_reason(self) -> str | None:
+        """Why the goal must stop now, as a code, or None while it may go on:
+        `goal_cancel_requested`, `goal_aborted` (cancel_task), `node_deactivated`,
+        `aic_goal_handle_unavailable` when the goal handle could not be read at the start, or
+        `goal_handle_unreadable` when it could not be read later."""
         ...
 
     def transform(self, frame: str) -> Pose | None:

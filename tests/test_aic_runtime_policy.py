@@ -112,7 +112,20 @@ def test_insert_cable_runs_the_goal_into_the_store_and_closes_the_port(
 
 
 def test_a_failing_goal_returns_false_logs_the_type_only_and_closes_the_port(
-    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+    policy_module: types.ModuleType,
+) -> None:
+    node = _Node()
+    policy = policy_module.RuntimePolicy(node)
+
+    # A task message without its fields: the goal fails before a run starts.
+    assert policy.insert_cable(object(), None, None, None) is False
+
+    assert _Port.closed == 1
+    assert node.logger.errors == ["cell-runtime goal failed: AttributeError"]
+
+
+def test_a_node_that_raises_is_a_recorded_run_not_a_crash(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(policy_module, "RosNodePort", _RaisingPort)
     node = _Node()
@@ -120,7 +133,12 @@ def test_a_failing_goal_returns_false_logs_the_type_only_and_closes_the_port(
     assert _insert(policy_module, node) is False
 
     assert _Port.closed == 1
-    assert node.logger.errors == ["cell-runtime goal failed: RuntimeError"]
+    assert node.logger.errors == []
+    with EventStore(tmp_path / "store" / "aic.sqlite") as store:
+        (run,) = store.runs()
+        end = store.events(run.run_id)[-1].payload
+    assert isinstance(end, RunFinished)
+    assert (end.outcome, end.reason) == ("aborted", "node_error")
 
 
 def test_a_port_that_cannot_be_built_returns_false_without_raising(

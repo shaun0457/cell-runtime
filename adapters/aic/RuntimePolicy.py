@@ -38,7 +38,7 @@ class RuntimePolicy(Policy):
             self._store_path.parent.mkdir(parents=True, exist_ok=True)
             with EventStore(self._store_path) as store:
                 return run_goal(port, core_task(task), store)
-        except Exception as ex:  # an unfinished run stays in the store and is rerun
+        except Exception as ex:  # before or outside a run: run_goal records its own stops
             self._log_failure("goal", ex)
             return False
         finally:

@@ -10,6 +10,7 @@ from cellrt.runtime.events import (
     Event,
     FaultCleared,
     FaultInjected,
+    HoldChecked,
     MonitorVerdict,
     PlannerCalled,
     PlannerDecided,
@@ -76,6 +77,11 @@ def describe(event: Event) -> str:
             return f"{p.skill} rejected: {', '.join(p.errors)}"
         case BtNodeChanged() as p:
             return f"{p.node} -> {p.status}"
+        case HoldChecked() as p:
+            return (
+                f"{p.result} (max {p.max_speed_mm_s:.1f}mm/s, {p.samples} samples, "
+                f"{p.waited_s:.2f}s)"
+            )
         case RunFinished() as p:
             return f"{p.outcome}: {p.reason} (steps={p.steps}, duration={p.duration:.2f}s)"
     raise AssertionError(f"no description for {event.type}")  # pragma: no cover
