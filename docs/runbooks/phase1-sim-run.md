@@ -29,13 +29,13 @@ As in AIC's `docs/getting_started.md:45-95`, plus what a fresh image lacks:
 
 ```bash
 # results disk, mounted under $HOME so the eval container sees it (distrobox shares $HOME)
-sudo mkfs.ext4 -m 0 /dev/disk/by-id/google-results      # first use only: erases the disk
+sudo blkid /dev/disk/by-id/google-results || \
+  sudo mkfs.ext4 -m 0 /dev/disk/by-id/google-results    # formats only a disk with no filesystem
 mkdir -p ~/results && sudo mount /dev/disk/by-id/google-results ~/results
 sudo chown "$USER": ~/results && mkdir -p ~/results/aic ~/results/aic_cancel ~/results/cellrt
 ```
 
-The mount does not survive a stop and start of the VM: after one, run the `mount` line again
-(without the `mkfs`).
+The mount does not survive a stop and start of the VM: after one, run the `mount` line again.
 
 1. NVIDIA driver for the T4; check with `nvidia-smi`.
 2. Docker Engine, then let the user run it: `sudo usermod -aG docker "$USER"`, and log in again.
@@ -55,6 +55,21 @@ git clone https://github.com/shaun0457/aic && cd aic && git checkout 3ab0653
 pixi install
 
 git clone https://github.com/shaun0457/cell-runtime ~/cell-runtime
+git -C ~/cell-runtime log --oneline -1                  # record this commit in #28's report
+grep -q '^def session_label' ~/cell-runtime/adapters/aic/run.py &&
+  grep -q '^READY_TIMEOUT_S' ~/cell-runtime/adapters/aic/world.py && echo 'merged: ok'
+```
+
+No `merged: ok` means the readiness wait or the per-goal scenarios are not on `main` yet: stop
+here.
+
+Every host shell below needs the same paths. Write them once:
+
+```bash
+cat > ~/cellrt.env <<'EOF'
+export AIC_PY=$HOME/ws_aic/src/aic/.pixi/envs/default/bin/python
+export CELLRT_STORE=$HOME/results/cellrt/aic.sqlite
+EOF
 ```
 
 Install cell-runtime into aic_model's environment without touching the fork's `pixi.toml`:
@@ -62,7 +77,7 @@ that environment has no pip, and pyyaml and pydantic are already in it, so uv ad
 `typer` and cell-runtime itself:
 
 ```bash
-AIC_PY=~/ws_aic/src/aic/.pixi/envs/default/bin/python
+source ~/cellrt.env
 uv pip install --python "$AIC_PY" -e ~/cell-runtime
 ```
 
@@ -90,8 +105,11 @@ export AIC_RESULTS_DIR=$HOME/results/aic        # the scorer writes scoring.yaml
 ```
 
 The VM has no display: `gazebo_gui:=false launch_rviz:=false` are the flags AIC's own compose
-file runs the eval with (`docker/docker-compose.yaml:8`). `ground_truth:=true` publishes the TF
-frames the skills read; the submission environment blocks them (`docs/access_control.md`).
+file runs the eval with (`docker/docker-compose.yaml:9`). That file also passes
+`shutdown_on_aic_engine_exit:=true`; it is left out here so the sim and the engine terminal stay
+up after the last trial, to read the scores. Ctrl-C stops the launch. `ground_truth:=true`
+publishes the TF frames the skills read; the submission environment blocks them
+(`docs/access_control.md`).
 
 ## 5. Start the policy
 
@@ -99,8 +117,8 @@ In a second shell on the host (not in the container):
 
 ```bash
 cd ~/ws_aic/src/aic
-export CELLRT_STORE=$HOME/results/cellrt/aic.sqlite   # default is runs/aic.sqlite under this directory
-export CELLRT_SESSION=sample_config                   # names the engine config: change it per config
+source ~/cellrt.env                       # without CELLRT_STORE the store is runs/aic.sqlite here
+export CELLRT_SESSION=sample_config       # names the engine config: change it per config
 pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
   -p policy:=adapters.aic.RuntimePolicy
 ```
@@ -114,22 +132,38 @@ down (`aic_engine.cpp:618-620`).
 ## 6. Where the results are
 
 - **Engine terminal:** trial progression and each trial's score.
-- **Scorer report:** `$AIC_RESULTS_DIR/scoring.yaml` (`aic_engine.cpp:2011`), per trial and tier.
-  Each engine run overwrites it, so every run gets its own directory.
-- **Our store:** `$CELLRT_STORE`. List its runs, then replay one with its force curve:
+- **Scorer report:** `~/results/aic/scoring.yaml` on the host (`$AIC_RESULTS_DIR` in the
+  container, `aic_engine.cpp:2011`), per trial and tier. Each engine run overwrites it, so every
+  run gets its own directory.
+- **Our store:** `$CELLRT_STORE`. The step 5 shell is busy with aic_model, so open a new one;
+  list the runs, then replay one with its force curve:
 
   ```bash
-  AIC_PY=~/ws_aic/src/aic/.pixi/envs/default/bin/python
+  source ~/cellrt.env
   "$AIC_PY" -c "from pathlib import Path; from cellrt.runtime.store import EventStore; s = EventStore(Path('$CELLRT_STORE')); print(*[(r.run_id, r.finished) for r in s.runs()], sep='\n')"
   "$(dirname "$AIC_PY")/cellrt" replay 'sample_config/goal1/task_1/A/0/a1' --db "$CELLRT_STORE" --signals
   ```
 
 ## 7. The cancel check
 
-A second engine run: stop the first container's launch (Ctrl-C), then start it again with
-`AIC_RESULTS_DIR=$HOME/results/aic_cancel`, and start a fresh aic_model process with
-`CELLRT_SESSION=sample_config_cancel` (the engine needs a new, unconfigured node). During the
-first goal's descent, abort it from a third shell:
+A second engine run, with a fresh aic_model process (the engine configures only a new,
+unconfigured node). Stop aic_model (Ctrl-C) and the launch (Ctrl-C), then, in the container:
+
+```bash
+export AIC_RESULTS_DIR=$HOME/results/aic_cancel
+/entrypoint.sh gazebo_gui:=false launch_rviz:=false ground_truth:=true start_aic_engine:=true
+```
+
+and in the policy shell:
+
+```bash
+cd ~/ws_aic/src/aic && source ~/cellrt.env
+export CELLRT_SESSION=sample_config_cancel
+pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
+  -p policy:=adapters.aic.RuntimePolicy
+```
+
+During the first goal's descent, abort it from a third shell:
 
 ```bash
 cd ~/ws_aic/src/aic
@@ -137,8 +171,10 @@ pixi run ros2 service list | grep cancel_task          # aic_model's service (ai
 pixi run ros2 service call /cancel_task std_srvs/srv/Empty
 ```
 
-Expected in the store: that run ends `aborted` with reason `goal_aborted`, and its
-`hold_checked` reads `hold_confirmed` (ADR 012).
+Expected in the store: that run (`sample_config_cancel/goal1/task_1/A/0/a1`) ends `aborted`
+with reason `goal_aborted`, and its `hold_checked` reads `hold_confirmed` (ADR 012). After an
+abort aic_model can accept the next goal while the old run is still holding: record in #28's
+report whether goal 2 started before goal 1's `run_finished`.
 
 ## 8. What #28's report records
 
