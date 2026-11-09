@@ -1,11 +1,13 @@
-"""`cellrt run | eval | baseline | replay | trace | smoke-llm`."""
+"""`cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report`."""
 
 from __future__ import annotations
 
 import contextlib
 import json
 import os
+import sqlite3
 import tempfile
+from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -14,6 +16,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from cellrt.eval.agent_report import StoreRefused, parse_label, render_agent_report, variant_rows
 from cellrt.eval.baseline import MAX_BASELINE_SEEDS, BaselineConfig, BaselineFile, compare, snapshot
 from cellrt.eval.metrics import compute_metrics
 from cellrt.eval.report import NOTES, render_confusion, render_gains, render_table
@@ -292,6 +295,43 @@ def smoke_llm(
         raise typer.Exit(code=1)
 
 
+@app.command(name="agent-report")
+def agent_report(
+    db: Annotated[
+        list[str],
+        typer.Option(
+            help="LABEL=PATH, once per store: one variant per store; name#N marks repeats"
+        ),
+    ],
+) -> None:
+    """Print the planner variants side by side (#51): success and its spread over repeats, what
+    a failed run wastes after its first UNKNOWN, planner calls and decisions, invalid answers,
+    timeouts, latency and tokens."""
+    stores: list[tuple[str, Path]] = []
+    seen: dict[Path, str] = {}
+    for arg in db:
+        label, sep, path = arg.partition("=")
+        if not sep or not path:
+            _fail("--db takes LABEL=PATH, for example C-llm#1=runs/llm1.sqlite")
+        try:
+            parse_label(label)
+        except StoreRefused as exc:
+            _fail(f"--db takes LABEL=PATH: {exc}")
+        if not Path(path).is_file():  # never create a store that is not there
+            _fail(f"{label}: no event store at {path}")
+        resolved = Path(path).resolve()
+        if resolved in seen:  # one store given as two repeats would fake a stable spread
+            _fail(f"{label}: the same event store as {seen[resolved]} ({path})")
+        seen[resolved] = label
+        stores.append((label, Path(path)))
+    try:
+        rows = variant_rows([(label, _runs_of(label, path)) for label, path in stores])
+    except StoreRefused as exc:
+        _fail(str(exc))
+    for line in render_agent_report(rows):
+        typer.echo(line)
+
+
 @app.command()
 def replay(
     run_id: Annotated[str, typer.Argument(help="run id printed by `cellrt run`")],
@@ -301,6 +341,20 @@ def replay(
     """Print every step of a run from its event log."""
     for line in replay_lines(_run_events(run_id, db), signals=signals):
         typer.echo(line)
+
+
+def _runs_of(label: str, path: Path) -> Iterator[list[Event]]:
+    """Every run's events in the store at `path`, read one run at a time; the store is open only
+    while its runs are read. A store that cannot be read is refused by the error's type, never
+    its text, which can quote the database."""
+    try:
+        with EventStore(path) as store:
+            for run in store.runs():
+                yield store.events(run.run_id)
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pydantic's ValidationError included
+        raise StoreRefused(
+            f"{label}: cannot read the event store at {path} ({type(exc).__name__})"
+        ) from None
 
 
 class TraceClockOption(StrEnum):

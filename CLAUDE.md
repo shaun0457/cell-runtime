@@ -60,8 +60,8 @@ cellrt/
   executor/    behaviours.py (py_trees <-> async skills), trees.py (tree builders per setting)
   planner/     base.py (Planner protocol), rule_planner.py, llm_planner.py (Phase 3), schemas.py
   world/       base.py (World protocol), mock_world.py
-  eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py
-  cli.py       `cellrt run | eval | replay`
+  eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py, agent_report.py
+  cli.py       `cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report`
 adapters/
   aic/         RuntimePolicy (an aic_model Policy plugin), AicWorld, skills on top of move_robot
 eval/scenarios/   *.yaml

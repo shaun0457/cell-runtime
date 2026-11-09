@@ -76,6 +76,18 @@ uv run cellrt smoke-llm
 uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings C --seeds 3 --planner llm
 ```
 
+`cellrt agent-report` puts the planner variants side by side, one event store per variant
+(`--db LABEL=PATH`; `C-llm#1`, `C-llm#2`, ... are repeats, pooled into one row with the spread
+of their success rates). Per variant: success, the sim time and skills a failed run spends
+after its first UNKNOWN, planner calls and decisions, invalid answers, timeouts, and the wall
+latency and tokens of model calls. It refuses a store holding more than one setting or
+configuration, the same store given twice, and repeats that asked different planners:
+
+```sh
+uv run cellrt agent-report --db B=runs/b.sqlite --db C-rule=runs/rule.sqlite \
+  --db "C-llm#1=runs/llm1.sqlite" --db "C-llm#2=runs/llm2.sqlite"
+```
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
