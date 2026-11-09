@@ -1,4 +1,4 @@
-"""`cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report`."""
+"""`cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report | promote`."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.trees import SETTINGS
+from cellrt.monitor.classifier import MonitorConfig
 from cellrt.monitor.promoted import MAX_CANDIDATE_CHARS, Candidate, CandidateRefused
 from cellrt.planner.base import Planner
 from cellrt.planner.factory import (
@@ -42,6 +43,14 @@ from cellrt.planner.nim import (
     ModelCallCap,
 )
 from cellrt.planner.smoke import run_smoke
+from cellrt.promotion.adopt import (
+    MAX_REPORT_CHARS,
+    ApprovalRefused,
+    approve,
+    load_promoted,
+    with_promoted,
+    write_adopted,
+)
 from cellrt.promotion.groups import (
     DEFAULT_MIN_SIZE,
     MAX_MIN_SIZE,
@@ -60,6 +69,7 @@ from cellrt.trace_export import export_trace
 
 DEFAULT_DB = Path("runs") / "cellrt.sqlite"
 DEFAULT_SCENARIOS = Path("eval") / "scenarios" / "phase0.yaml"
+DEFAULT_PROMOTED = Path("eval") / "promoted"
 MAX_SEEDS = 1000
 # `cellrt baseline --write` defaults: the config of eval/baselines/phase0-small.json.
 BASELINE_SEEDS = 3
@@ -140,12 +150,17 @@ def eval_(
     planner: PlannerOption = "rule",
     model: ModelOption = DEFAULT_MODEL,
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
+    promoted: Annotated[
+        Path | None,
+        typer.Option(help="directory of approved promoted rules (`cellrt promote approve`)"),
+    ] = None,
 ) -> None:
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
     loaded = _load(scenarios)
     cap = _cap(max_model_calls)
-    recovery = RecoveryConfig()  # one config for the call pre-check and the eval
+    # One config for the call pre-check and the eval; checked before the store is opened.
+    monitor, recovery = _with_promoted(promoted)
     # Every unit of setting C may ask the planner, finished ones included: an upper bound.
     units_with_planner = len(loaded) * seeds if "C" in chosen else 0
     chosen_planner = _planner(planner, units_with_planner, recovery, model=model, cap=cap)
@@ -156,6 +171,7 @@ def eval_(
             seeds,
             store,
             recovery=recovery,
+            monitor=monitor,
             planner=chosen_planner,
         )
         table = compute_metrics((store.events(r) for r in runs.run_ids), k)
@@ -281,6 +297,20 @@ def _planner(
 
 def _planner_name(name: str, model: str) -> str:
     return f"{name} ({model})" if name == "llm" else name
+
+
+def _with_promoted(directory: Path | None) -> tuple[MonitorConfig, RecoveryConfig]:
+    """The Monitor and recovery configs, with the approved rules in `directory` if given."""
+    monitor, recovery = MonitorConfig(), RecoveryConfig()
+    if directory is None:
+        return monitor, recovery
+    try:
+        loaded = load_promoted(directory, mock_registry())
+    except ApprovalRefused as exc:
+        _fail(str(exc))
+    names = ", ".join(r.name for r in loaded.rules) or "none"
+    typer.echo(f"promoted rules: {names}", err=True)  # the table does not say
+    return with_promoted(loaded, monitor, recovery)
 
 
 def _cap(max_model_calls: int) -> ModelCallCap:
@@ -412,6 +442,35 @@ def promote_validate(
             _fail(f"cannot write the report at {out} ({type(exc).__name__})")
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+@promote_app.command(name="approve")
+def promote_approve(
+    report: Annotated[
+        Path, typer.Argument(help="report JSON written by `cellrt promote validate --out`")
+    ],
+    by: Annotated[str, typer.Option(help="who approves the rule: a plain name")],
+    directory: Annotated[
+        Path, typer.Option("--dir", help="directory of approved rules")
+    ] = DEFAULT_PROMOTED,
+) -> None:
+    """Approve the candidate of a report whose gates all passed: write `<dir>/<NAME>.json`.
+    Refuses a report with a failed gate or whose candidate no longer has the hash it names,
+    and never replaces an approved rule (ADR 021)."""
+    try:
+        with report.open(encoding="utf-8") as f:
+            raw = f.read(MAX_REPORT_CHARS + 1)  # approval refuses anything longer
+    except (OSError, UnicodeDecodeError) as exc:
+        _fail(f"cannot read the report at {report} ({type(exc).__name__})")
+    try:
+        adopted = approve(raw, by, mock_registry())
+        path = write_adopted(adopted, directory)
+    except ApprovalRefused as exc:
+        _fail(str(exc))
+    except OSError as exc:
+        _fail(f"cannot write the approved rule in {directory} ({type(exc).__name__})")
+    typer.echo(f"approved {adopted.rule.name} ({adopted.candidate_hash}) by {adopted.approved_by}")
+    typer.echo(str(path))
 
 
 @app.command()

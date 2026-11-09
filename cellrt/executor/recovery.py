@@ -7,11 +7,16 @@ the plan's skills and then the failed skill again. Budgets are shared by the who
 In setting C an insert step also has a planner: a failure the Monitor classified as UNKNOWN goes
 to it (within the planner budget and the task budget), and its validated decision runs: switch
 to another insert skill, retry the failed one, or abort.
+
+In B and C, an UNKNOWN whose Monitor rule is an approved promoted rule (`promoted:<NAME>`, ADR
+021) runs that rule's plan instead, without the planner, within the UNKNOWN class budget and
+the task budget.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -22,6 +27,7 @@ from py_trees.common import Status
 
 from cellrt.executor.behaviours import ExecEnv, PlannerBehaviour, SkillBehaviour
 from cellrt.monitor.classifier import FailureClass
+from cellrt.monitor.promoted import NAME_PATTERN, PROMOTED_PREFIX, PromotedPlan
 from cellrt.planner.base import FailureContext, Planner
 from cellrt.planner.schemas import PRECONDITIONS_NOT_MET, Abort, Escalate, Retry, SwitchSkill
 from cellrt.runtime.events import RecoveryStarted
@@ -73,11 +79,16 @@ class RecoveryConfig:
     sensor_wait_s: float = 2.0  # longest wait for the sensor to come back
     sensor_valid_samples: int = 3  # valid samples in a row that count as "back"
     planner_budget: int = 2  # planner calls per task (setting C)
+    # The plans of approved promoted rules, by rule name (ADR 021): an UNKNOWN verdict whose
+    # rule is `promoted:<NAME>` runs its plan in B and C, without the planner.
+    promoted: Mapping[str, PromotedPlan] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         known = {c.value for c in FailureClass}
         if unknown := sorted((set(self.plans) | set(self.budgets)) - known):
             raise ValueError(f"unknown failure classes: {', '.join(unknown)}")
+        if any(not re.fullmatch(NAME_PATTERN, name) for name in self.promoted):
+            raise ValueError("promoted plans must be keyed by rule name")
         if (
             self.total_budget < 0
             or self.planner_budget < 0
@@ -95,16 +106,23 @@ class RecoveryConfig:
         # Frozen all the way down, so the hash cannot drift after a run started.
         object.__setattr__(self, "plans", MappingProxyType(dict(self.plans)))
         object.__setattr__(self, "budgets", MappingProxyType(dict(self.budgets)))
+        object.__setattr__(self, "promoted", MappingProxyType(dict(self.promoted)))
 
     def as_dict(self) -> dict[str, object]:
-        """Every parameter but the planner budget, which counts only where there is a planner."""
+        """Every parameter but the planner budget, which counts only where there is a planner.
+        Promoted plans count only when there are any, so a run without them keeps the hash it
+        had before they existed."""
         data: dict[str, object] = {
             f.name: getattr(self, f.name)
             for f in dataclasses.fields(self)
-            if f.name != "planner_budget"
+            if f.name not in ("planner_budget", "promoted")
         }
         data["plans"] = {k: dataclasses.asdict(p) for k, p in sorted(self.plans.items())}
         data["budgets"] = dict(sorted(self.budgets.items()))
+        if self.promoted:
+            data["promoted"] = {
+                k: p.model_dump(mode="json") for k, p in sorted(self.promoted.items())
+            }
         return data
 
 
@@ -149,8 +167,8 @@ class RecoveryBudget:
 
 
 class Recovering(py_trees.composites.Composite):
-    """One task step with recovery. Children: the step's skill, the plans' skills, and in
-    setting C the planner and the skills it may switch to."""
+    """One task step with recovery. Children: the step's skill, the plans' skills, the skills a
+    planner (setting C) or a promoted plan may switch to, and in setting C the planner."""
 
     def __init__(
         self,
@@ -182,8 +200,8 @@ class Recovering(py_trees.composites.Composite):
         self._queue: list[py_trees.behaviour.Behaviour] = []
         self._consulted: SkillBehaviour | None = None  # the failure the planner is asked about
         self.failure_reason: str | None = None
-        # The planner stopped the run (abort or escalate), timed out, or its output was
-        # rejected.
+        # The planner or a promoted plan stopped the run (abort or escalate), or the planner
+        # timed out or its output was rejected.
         self.aborted = False
 
     def tick(self) -> Iterator[py_trees.behaviour.Behaviour]:
@@ -213,6 +231,12 @@ class Recovering(py_trees.composites.Composite):
                 self._queue.pop(0)
                 continue
             assert isinstance(node, SkillBehaviour)
+            if (promoted := self._promoted_for(node)) is not None:
+                if self._run_promoted(node, *promoted):
+                    continue
+                self.stop(Status.FAILURE)
+                yield self
+                return
             plan = self._plan_for(node)
             if plan is None:
                 if self._consult(node):
@@ -223,6 +247,57 @@ class Recovering(py_trees.composites.Composite):
             self._recover(node, plan)
         self.stop(Status.SUCCESS)
         yield self
+
+    def _promoted_for(self, node: SkillBehaviour) -> tuple[str, PromotedPlan] | None:
+        """The approved plan for a Monitor UNKNOWN whose rule is `promoted:<NAME>`, if any."""
+        verdict = node.verdict
+        if (
+            node.error
+            or node.failure != FailureClass.UNKNOWN.value
+            or node.failure_source != "monitor"
+            or verdict is None
+            or not verdict.rule.startswith(PROMOTED_PREFIX)
+        ):
+            return None
+        name = verdict.rule.removeprefix(PROMOTED_PREFIX)
+        plan = self._budget.config.promoted.get(name)
+        return None if plan is None else (name, plan)
+
+    def _run_promoted(self, node: SkillBehaviour, name: str, plan: PromotedPlan) -> bool:
+        """Carry out an approved plan, as a known class's plan is: within the UNKNOWN class
+        budget and the task budget, never through the planner. False (with a reason) if the
+        step fails or the run stops."""
+        skill = node.skill.name
+        unknown = FailureClass.UNKNOWN.value
+        if plan.action in ("abort", "escalate"):
+            self.aborted = True  # the run ends aborted, as a planner's abort or escalation does
+            self.failure_reason = f"{skill} failed: UNKNOWN (promoted {name}: {plan.action})"
+            return False
+        if refusal := self._budget.why_not(unknown):
+            self.failure_reason = f"{skill} failed: UNKNOWN ({refusal})"
+            return False
+        if plan.action == "retry":
+            again, action = node, "retry"
+        else:
+            assert plan.skill is not None  # the plan's own validator
+            target = self._options.get(plan.skill)
+            if target is None:  # `build_recovering_steps` gives every insert step its options
+                self.failure_reason = f"{skill} failed: UNKNOWN (promoted {name}: no such option)"
+                return False
+            again, action = target, f"switch_skill:{plan.skill}"
+        count_for_class, count_total = self._budget.next_counts(unknown)
+        self._env.recorder.emit(
+            RecoveryStarted(
+                skill=skill,
+                failure_class=unknown,
+                action=f"{PROMOTED_PREFIX}{name}:{action}",
+                count_for_class=count_for_class,
+                count_total=count_total,
+                source="monitor",
+            )
+        )
+        self._queue = [again, *self._queue[1:]]
+        return True
 
     def _recover(self, node: SkillBehaviour, plan: Plan) -> None:
         """Queue the plan's helpers, then the failed skill again (its slow variant for a
@@ -391,7 +466,7 @@ def build_recovering_steps(
             },
             budget,
             env,
-            *_planner_for(name, registry, env, planner, config.slow_speed_scale),
+            *_planner_for(name, registry, env, planner, config),
         )
         for name in skills
     ]
@@ -402,11 +477,15 @@ def _planner_for(
     registry: SkillRegistry,
     env: ExecEnv,
     planner: Planner | None,
-    slow_scale: float,
+    config: RecoveryConfig,
 ) -> tuple[PlannerBehaviour | None, dict[str, tuple[SkillBehaviour, SkillBehaviour]]]:
-    """The planner node and the switch options for a step (none unless it is an insert step)."""
-    if planner is None or registry.get(step).monitor_profile != "insertion":
+    """The planner node and the switch options for a step (none unless it is an insert step).
+    Without a planner an insert step still gets the options when a promoted plan may switch
+    (setting B with promoted rules)."""
+    switches = any(p.action == "switch_skill" for p in config.promoted.values())
+    if registry.get(step).monitor_profile != "insertion" or (planner is None and not switches):
         return None, {}
+    slow_scale = config.slow_speed_scale
     others = [
         n
         for n in sorted(registry.names())
@@ -421,6 +500,8 @@ def _planner_for(
         )
         for n in others
     }
+    if planner is None:
+        return None, alternatives
     node = PlannerBehaviour(
         planner, registry, env, frozenset({step, *others}), name=f"planner@{step}"
     )

@@ -131,8 +131,33 @@ samples it replayed, and those came from one skill.
 ## Consequences
 
 - `MonitorConfig` gets `promoted: tuple[PromotedRule, ...] = ()`; `RecoveryConfig` gets
-  `promoted: Mapping[str, Plan]`; both are validated against each other and the registry.
-- Reports group UNKNOWN by rule, so "UNKNOWN reaching the planner" is `insert_stalled` only.
+  `promoted: Mapping[str, PromotedPlan]`, keyed by rule name. Both enter their config's hash only
+  when non-empty.
+- Approval is a file: `cellrt promote approve REPORT --by NAME` refuses a report unless all four
+  gates passed with no failing window, the report was made under the Monitor configuration in
+  use now, and its candidate still has the hash the report names. It writes
+  `eval/promoted/<NAME>.json` (rule, plan, candidate and report hashes, that configuration,
+  approver) and never replaces an approved rule. `cellrt eval --promoted DIR` loads at most 16
+  such files and checks each again (file name, configuration, hash, registered skills) before
+  the store is opened. A rule approved under other Monitor thresholds or mock parameters is
+  refused as `config_stale`: its gates vouched for a Monitor that no longer runs.
+- The hashes catch an accident (a candidate edited after its report, a configuration changed
+  since), not tampering: they are not signatures, and anyone who can write the report or the
+  approval directory can forge both. Write access to `eval/promoted/` is the trust root, as
+  write access to the code is. `approve` trusts the report's gate results; re-running the
+  replay on the store at approval time would close that gap and is a follow-up.
+- By default UNKNOWN has no class budget: only the planner handled it. With promoted rules and
+  no UNKNOWN budget set, the budget becomes 2, the planner's per-task budget, so a retry plan
+  cannot loop. In setting C a recovery the planner chose for an UNKNOWN also counts against
+  that class, so a task whose planner already recovered twice from other UNKNOWNs has no
+  budget left for a promoted plan; the run then fails with the budget named in its reason.
+- Setting B gets the insert-skill alternatives it had no use for before, when a promoted plan
+  switches skill, so a switch goes through the same option check as a planner's.
+- An `abort` or `escalate` plan ends the run as `aborted`, with the rule named in the reason; it
+  starts no recovery, so it spends no budget. The other plans emit `recovery_started` with the
+  action `promoted:<NAME>:<action>` and count against both budgets.
+- The log carries the rule on every verdict (`promoted:<NAME>`) and every promoted recovery. The
+  eval reports do not yet group UNKNOWN by rule; that column is a follow-up.
 - A rule is removed by deleting its file under `eval/promoted/`; the runs made with it keep their
   hash and stay separate.
 - If promoted rules ever need their own budgets or their own accuracy numbers, Option 1A becomes

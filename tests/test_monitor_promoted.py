@@ -210,6 +210,37 @@ def test_a_known_class_wins_over_a_promoted_rule_on_the_same_sample() -> None:
     assert verdict.evidence["also_matched"] == ["promoted:PLUG_ROTATED"]
 
 
+@pytest.mark.parametrize(
+    "condition, samples, known",
+    [
+        # 2 mm off in XY for 0.2 s (5 samples): a pose error, and the rule's XY condition.
+        (
+            {"field": "xy_error_mm", "op": ">", "value": 1.5},
+            [_signals(xy_mm=2.0)] * 5,
+            FailureClass.POSE_ERROR,
+        ),
+        # 15 N for four samples, then 25 N with 0.6 s over the limit already spent: a force-limit
+        # verdict on the fifth, where the rule's window is first full.
+        (
+            {"field": "force_n", "op": ">", "value": 14.0},
+            [_signals(force_n=15.0)] * 4 + [_signals(force_n=25.0)],
+            FailureClass.FORCE_LIMIT,
+        ),
+    ],
+)
+def test_a_pose_or_force_limit_verdict_wins_over_a_promoted_rule_on_the_same_sample(
+    condition: dict[str, Any], samples: list[Signals], known: FailureClass
+) -> None:
+    rule = _rule(window_s=0.2, conditions=[condition])
+    monitor = Monitor(PERIOD_S, MonitorConfig(promoted=(rule,)), force_time=lambda: 0.6)
+    monitor.reset("insertion", skill="insert_scripted")
+    verdicts = _feed(monitor, samples)
+    assert verdicts[:-1] == [None] * (len(samples) - 1)
+    verdict = verdicts[-1]
+    assert verdict is not None and verdict.failure_class is known
+    assert verdict.evidence["also_matched"] == ["promoted:PLUG_ROTATED"]
+
+
 def test_a_promoted_rule_wins_over_the_stall_rule_on_the_same_sample() -> None:
     rule = _rule(window_s=1.0, conditions=[{"field": "torque_nm", "op": ">=", "value": 0.3}])
     monitor = _monitor(rule)
