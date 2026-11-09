@@ -39,9 +39,14 @@ def describe(event: Event) -> str:
         case RunStarted() as p:
             return f"{p.scenario_id} setting={p.setting} seed={p.seed} attempt={p.attempt}"
         case SignalSampled() as p:
+            # force is the tared magnitude; over20 is the step's time over 20 N where the world
+            # reads the F/T stream faster than it samples (the AIC cell), absent in the mock.
+            over = "" if p.force_over_limit_s is None else f" over20={p.force_over_limit_s:.3f}s"
+            dropped = f" dropped={p.wrench_dropped}" if p.wrench_dropped else ""
             return (
                 f"height={p.height_mm:.2f}mm depth={p.depth_mm:.2f}mm "
-                f"xy={p.xy_error_mm:.3f}mm force={p.force_n:.2f}N valid={p.wrench_valid}"
+                f"xy={p.xy_error_mm:.3f}mm force={p.force_n:.2f}N{over} "
+                f"valid={p.wrench_valid}{dropped}"
             )
         case SkillStarted() as p:
             params = f" params={p.params}" if p.params else ""

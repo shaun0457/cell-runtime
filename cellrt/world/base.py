@@ -25,6 +25,8 @@ class Signals:
     when the world reads the F/T stream faster than it samples (AIC: the scorer's sum over every
     wrench message, valid or not); None means the step counts as a whole, as in the mock.
     Never negative, NaN or infinite: the event log rejects it.
+    `wrench_dropped` counts the F/T readings dropped in that step for want of buffer space (AIC);
+    None where there is no buffer, as in the mock.
     """
 
     height_mm: float
@@ -34,6 +36,7 @@ class Signals:
     torque_nm: float
     wrench_valid: bool
     force_over_limit_s: float | None = None
+    wrench_dropped: int | None = None
 
     @property
     def force_n(self) -> float:

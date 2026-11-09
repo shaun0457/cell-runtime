@@ -26,6 +26,7 @@ def sampled(step: int, s: Signals) -> SignalSampled:
         torque_nm=s.torque_nm,
         wrench_valid=s.wrench_valid,
         force_over_limit_s=s.force_over_limit_s,
+        wrench_dropped=s.wrench_dropped,
     )
 
 
@@ -41,4 +42,5 @@ def signals_of(event: SignalSampled) -> Signals:
         torque_nm=event.torque_nm,
         wrench_valid=event.wrench_valid,
         force_over_limit_s=event.force_over_limit_s,
+        wrench_dropped=event.wrench_dropped,
     )

@@ -1,8 +1,9 @@
 """`NodePort` over rclpy: the aic_model node's clock, its TF buffer, two subscriptions and the
 `move_robot` callback. ROS-only; runs where AIC is installed (not tested on CI).
 
-Callbacks run on aic_model's MultiThreadedExecutor while the policy thread reads, so each feed
-keeps only its newest message behind a lock; the policy body reads a snapshot at step ends.
+Callbacks run on aic_model's MultiThreadedExecutor while the policy thread reads. The controller
+state keeps only its newest message behind a lock; every wrench goes, tared with the newest tare,
+into a bounded `WrenchFeed` that the policy body drains at step ends (ADR 013).
 
 The goal handle is the one aic_model stores on the node before it starts the policy thread
 (`aic_model.py:179-181` @ `3ab0653`). It is read once, here: after a cancel the node's execute
@@ -24,6 +25,7 @@ from std_msgs.msg import Header
 from tf2_ros import TransformException
 
 from adapters.aic import convert
+from adapters.aic.force import WrenchDrain, WrenchFeed
 from adapters.aic.node import ControllerSnapshot, WrenchReading
 
 WRENCH_TOPIC = "/fts_broadcaster/wrench"
@@ -42,7 +44,7 @@ class RosNodePort:
         self._goal = goal if readable and hasattr(node, "is_active") else None
         self._tf = node._tf_buffer  # the TF buffer aic_model's Policy examples use
         self._lock = threading.Lock()
-        self._wrench: WrenchReading | None = None
+        self._wrenches = WrenchFeed()
         self._state: ControllerSnapshot | None = None
         # One mutually exclusive group per feed: callbacks of one feed never overlap, so an
         # older message cannot overwrite a newer one (controller_state is 500 Hz).
@@ -104,9 +106,8 @@ class RosNodePort:
         t, r = tf.translation, tf.rotation
         return convert.Pose(position=(t.x, t.y, t.z), orientation=(r.w, r.x, r.y, r.z))
 
-    def latest_wrench(self) -> WrenchReading | None:
-        with self._lock:
-            return self._wrench
+    def drain_wrenches(self) -> WrenchDrain:
+        return self._wrenches.drain()
 
     def controller_state(self) -> ControllerSnapshot | None:
         with self._lock:
@@ -122,8 +123,7 @@ class RosNodePort:
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
         f, t = msg.wrench.force, msg.wrench.torque
         reading = WrenchReading(stamp_s=stamp, force=(f.x, f.y, f.z), torque=(t.x, t.y, t.z))
-        with self._lock:
-            self._wrench = reading
+        self._wrenches.on_wrench(reading)
 
     def _on_state(self, msg: ControllerState) -> None:
         p, q = msg.tcp_pose.position, msg.tcp_pose.orientation
@@ -137,6 +137,7 @@ class RosNodePort:
         )
         with self._lock:
             self._state = snapshot
+        self._wrenches.on_tare(snapshot.tare_force, snapshot.tare_torque)
 
 
 def to_motion_update(motion: convert.MotionCommand, *, stamp: Any) -> MotionUpdate:
