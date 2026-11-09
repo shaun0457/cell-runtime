@@ -24,6 +24,7 @@ from cellrt.runtime.events import (
     Outcome,
 )
 from cellrt.runtime.task import Task
+from cellrt.world.base import WorldStopped
 
 MAX_DRAIN_YIELDS = 100
 # A world step may take longer than the period, never shorter: a step that reports less (or no
@@ -54,21 +55,29 @@ async def run_task(
                 return "aborted", stopped
             return "failed", _failure_reason(root)
         await drain(env)
-        elapsed = env.world.step(env.period_s)
+        try:
+            elapsed = env.world.step(env.period_s)
+        except WorldStopped as stopped:
+            return await _stop(root, statuses, env, stopped.reason)
         if not (math.isfinite(elapsed) and elapsed >= env.period_s - STEP_TOLERANCE_S):
-            root.stop(Status.INVALID)
-            _record_status_changes(root, statuses, env)
-            await _finish(env)
-            return "aborted", "world step time invalid"
+            return await _stop(root, statuses, env, "world step time invalid")
         env.clock.advance(elapsed)
         step += 1
         _record_faults(env)
         _record_signal(env, step)
         if env.clock.now() >= task.time_limit:
-            root.stop(Status.INVALID)
-            _record_status_changes(root, statuses, env)
-            await _finish(env)
-            return "aborted", "time limit reached"
+            return await _stop(root, statuses, env, "time limit reached")
+
+
+async def _stop(
+    root: py_trees.behaviour.Behaviour, statuses: dict[int, str], env: ExecEnv, reason: str
+) -> tuple[Outcome, str]:
+    """End the run from outside the tree: stop every running node (each skill is cancelled and
+    HOLD is sent), then check that no skill task is left."""
+    root.stop(Status.INVALID)
+    _record_status_changes(root, statuses, env)
+    await _finish(env)
+    return "aborted", reason
 
 
 async def drain(env: ExecEnv) -> None:
