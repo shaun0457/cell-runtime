@@ -60,7 +60,9 @@ configuration given (period, thresholds, skill profiles).
   timeout are accounted for. Otherwise the check is refused.
 - **Gate 1, coverage:** with the candidate, it is the first verdict of every skill attempt in its
   group, no later than the recorded UNKNOWN.
-- **Gate 2, no false alarms:** it is never a first verdict in a run without an injected fault.
+- **Gate 2, no false alarms:** it is never a first verdict in a run without an injected fault,
+  in the group's own windows too: without a fault the mock has no referee to tell a false alarm
+  from a natural failure (ADR 015), so a group drawn from such runs cannot pass.
 - **Gate 3, no theft:** every other attempt's first verdict is unchanged.
 
 #### Option A — all four, each a hard gate

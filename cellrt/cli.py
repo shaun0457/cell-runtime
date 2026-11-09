@@ -24,6 +24,7 @@ from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.trees import SETTINGS
+from cellrt.monitor.promoted import MAX_CANDIDATE_CHARS, Candidate, CandidateRefused
 from cellrt.planner.base import Planner
 from cellrt.planner.factory import (
     DEFAULT_MAX_MODEL_CALLS,
@@ -50,9 +51,11 @@ from cellrt.promotion.groups import (
     survey,
 )
 from cellrt.promotion.replay import ReplayConfig
+from cellrt.promotion.validate import GroupNotFound, check_registry, validate
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
+from cellrt.skills.mock import mock_registry
 from cellrt.trace_export import export_trace
 
 DEFAULT_DB = Path("runs") / "cellrt.sqlite"
@@ -367,6 +370,47 @@ def promote_group(
     for line in lines:
         typer.echo(line)
     if not passed:
+        raise typer.Exit(code=1)
+
+
+@promote_app.command(name="validate")
+def promote_validate(
+    candidate: Annotated[Path, typer.Argument(help="candidate JSON: a rule and its plan")],
+    group: Annotated[
+        str, typer.Option(help="the group's label, as `cellrt promote group` prints it")
+    ],
+    db: DbOption = DEFAULT_DB,
+    out: Annotated[Path | None, typer.Option(help="write the report as JSON to this file")] = None,
+    min_size: Annotated[
+        int,
+        typer.Option(min=1, max=MAX_MIN_SIZE, help="windows the group needs (gate 1)"),
+    ] = DEFAULT_MIN_SIZE,
+) -> None:
+    """Check a candidate rule by replay against a mock store (gates 0-3, ADR 022). Replay checks
+    the rule, not its plan; the report says so. Exits 1 unless every gate passes."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    try:
+        with candidate.open(encoding="utf-8") as f:
+            raw = f.read(MAX_CANDIDATE_CHARS + 1)  # the parser refuses anything longer
+    except (OSError, UnicodeDecodeError) as exc:
+        _fail(f"cannot read the candidate at {candidate} ({type(exc).__name__})")
+    try:
+        parsed = Candidate.parse(raw)
+        check_registry(parsed, mock_registry())
+        report = validate(
+            _runs_of("store", db), parsed, group, ReplayConfig.mock(), min_size=min_size
+        )
+    except (CandidateRefused, GroupNotFound, StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    for line in report.lines():
+        typer.echo(line)
+    if out is not None:
+        try:
+            out.write_text(json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot write the report at {out} ({type(exc).__name__})")
+    if not report.passed:
         raise typer.Exit(code=1)
 
 

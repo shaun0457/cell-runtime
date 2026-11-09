@@ -89,6 +89,22 @@ Order: dropout, force limit, stuck, pose error, promoted rules (in file order), 
 - Cons: every config hash changes, so the baseline gate would report a change for every unit
   and the baseline would need re-approval for a change that alters no behaviour.
 
+### 5. Which skills a promoted rule watches
+
+#### Option A — the skill its group came from
+The rule names one skill; the Monitor learns the running skill on `reset` and the rule is
+silent for any other.
+- Pros: the rule fires only where its evidence was collected: a group's signature includes the
+  skill (ADR 022), so the replay validated the rule on that skill's samples and no other.
+- Cons: the same failure under another skill needs its own group and its own approval.
+
+#### Option B — every skill with the insertion profile
+- Pros: one rule covers `insert_scripted` and `insert_act` at once.
+- Cons: the rule judges a skill it was never validated on. `insert_act` stops descending and
+  twists while it meets torque, which is close to what a rotated-plug rule describes. In the
+  mock the twist lasts 0.15 s, too short for a 0.5 s window, so nothing shows; in the sim the
+  ACT policy's behaviour is not in any recorded evidence.
+
 ## Decision
 
 <!-- Decision and Why drafted by Claude. Shaun delegated these sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
@@ -98,6 +114,7 @@ Order: dropout, force limit, stuck, pose error, promoted rules (in file order), 
    planner, inside the UNKNOWN class budget and the task budget.
 3. Option A: promoted rules after the known-class rules and before `insert_stalled`.
 4. Option A: promoted rules enter `MonitorConfig.as_dict()` only when there are any.
+5. Option A: a promoted rule watches only the skill its group came from.
 
 ## Why
 
@@ -108,7 +125,8 @@ the new knowledge. The rule-keyed plan is what makes the effect measurable: sett
 handling with no model at all, so the before/after separates what the rule is worth from what
 the model is worth. The order and the conditional hash keep the change one-sided: a promoted
 rule can only take what would have gone to the planner, and nothing that ran before it is
-re-hashed.
+re-hashed. The skill scope keeps the rule inside its evidence: a replay can only vouch for the
+samples it replayed, and those came from one skill.
 
 ## Consequences
 

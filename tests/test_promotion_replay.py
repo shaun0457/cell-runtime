@@ -10,6 +10,7 @@ import pytest
 from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import load_scenarios
 from cellrt.monitor.classifier import MonitorConfig
+from cellrt.monitor.promoted import PromotedRule
 from cellrt.promotion.replay import ReplayConfig, replay_run
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
@@ -327,3 +328,63 @@ def test_two_verdicts_in_one_tick_are_a_mismatch() -> None:
     assert result.status == "mismatch"
     assert result.mismatch is not None
     assert result.mismatch.seq == events[2 + STALL_SAMPLES + 1].seq
+
+
+def test_each_skill_attempt_is_its_own_window() -> None:
+    retry = SkillStarted(skill="insert_scripted", attempt=2)
+    again = [retry, *[_sample(k) for k in range(STALL_SAMPLES + 1, 2 * STALL_SAMPLES + 1)]]
+    events = _stalled_run(30.0, [STALL_VERDICT, PREEMPTED, *again, STALL_VERDICT, PREEMPTED])
+    result = replay_run(events, ReplayConfig.mock())
+    assert result.status == "ok"
+    assert [(j.attempt, j.window) for j in result.judged] == [(1, 0), (2, 1)]
+
+
+# With a candidate: each window's first verdict and one lost to success are kept, nothing is
+# compared.
+
+# Fires on a plug pressing at 3 N without moving, once 0.2 s of samples (5) are held.
+PRESSING = PromotedRule.model_validate_json(
+    '{"name": "PRESSING", "skill": "insert_scripted", "window_s": 0.2, "conditions": ['
+    '{"field": "force_n", "op": ">", "value": 2.0},'
+    ' {"field": "progress_mm", "op": "<", "value": 0.2}]}'
+)
+
+
+@pytest.mark.parametrize(
+    "samples, outcomes",
+    [
+        (5, ["lost_to_success"]),
+        # The 5th and the 6th match; the skill succeeds in the tick that judges the 6th.
+        (6, ["replayed", "lost_to_success"]),
+        # The 5th to the 15th match: only the first of them is kept, then the lost one.
+        (15, ["replayed", "lost_to_success"]),
+    ],
+)
+def test_a_candidate_verdict_on_the_tick_the_skill_succeeds_is_lost(
+    samples: int, outcomes: list[str]
+) -> None:
+    events = _log(
+        [
+            SkillStarted(skill="insert_scripted", attempt=1),
+            *[_sample(k) for k in range(1, samples + 1)],
+            SkillFinished(skill="insert_scripted", ok=True),
+        ]
+    )
+    result = replay_run(events, ReplayConfig.mock(), candidate=PRESSING)
+    assert [j.outcome for j in result.judged] == outcomes
+    assert {j.verdict.rule for j in result.judged} == {"promoted:PRESSING"}
+    assert replay_run(events, ReplayConfig.mock()).judged == ()  # without it: nothing
+
+
+def test_a_candidate_that_matches_every_sample_keeps_one_verdict_per_window() -> None:
+    # Two stalled attempts of 21 samples each: PRESSING matches from the 5th sample of each.
+    retry = SkillStarted(skill="insert_scripted", attempt=2)
+    again = [retry, *[_sample(k) for k in range(STALL_SAMPLES + 1, 2 * STALL_SAMPLES + 1)]]
+    events = _stalled_run(30.0, [STALL_VERDICT, PREEMPTED, *again, STALL_VERDICT, PREEMPTED])
+    result = replay_run(events, ReplayConfig.mock(), candidate=PRESSING)
+    assert result.status == "ok"
+    assert [(j.window, j.attempt, j.outcome) for j in result.judged] == [
+        (0, 1, "replayed"),
+        (1, 2, "replayed"),
+    ]
+    assert result.judged[0].step == 5

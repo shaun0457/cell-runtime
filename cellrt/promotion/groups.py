@@ -17,7 +17,7 @@ from types import MappingProxyType
 from typing import Any
 
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
-from cellrt.promotion.replay import ReplayConfig, RunReplay, replay_run
+from cellrt.promotion.replay import Judged, ReplayConfig, RunReplay, replay_run
 from cellrt.runtime.events import Event, FaultInjected
 from cellrt.runtime.state import FORCE_LIMIT_N
 from cellrt.skills.mock import InsertAct
@@ -104,6 +104,26 @@ def survey(
     return out
 
 
+def signature_of(
+    judged: Judged,
+    force_edges: Sequence[float] = DEFAULT_FORCE_EDGES_N,
+    torque_edges: Sequence[float] = DEFAULT_TORQUE_EDGES_NM,
+) -> Signature | None:
+    """The signature of a recorded UNKNOWN verdict, from its evidence only; None for any other
+    verdict (a known class, or one that lost to the skill's own success)."""
+    verdict = judged.verdict
+    if judged.outcome != "recorded" or verdict.failure_class is not FailureClass.UNKNOWN:
+        return None
+    evidence = verdict.evidence
+    torque = evidence.get("torque_nm")
+    return Signature(
+        skill=judged.skill,
+        rule=verdict.rule,
+        force_band=band(evidence.get("force_n"), force_edges),
+        torque_band=band(None if torque is None else abs(torque), torque_edges),
+    )
+
+
 def group_unknowns(
     runs: Iterable[SurveyedRun],
     *,
@@ -126,19 +146,13 @@ def group_unknowns(
             continue
         kinds_of[replay.run_id] = run.injected
         for judged in replay.judged:
-            verdict = judged.verdict
-            if judged.outcome != "recorded" or verdict.failure_class is not FailureClass.UNKNOWN:
+            signature = signature_of(judged, force_edges, torque_edges)
+            if signature is None:
                 continue
-            evidence = verdict.evidence
-            torque = evidence.get("torque_nm")
-            signature = Signature(
-                skill=judged.skill,
-                rule=verdict.rule,
-                force_band=band(evidence.get("force_n"), force_edges),
-                torque_band=band(None if torque is None else abs(torque), torque_edges),
-            )
             members.setdefault(signature, []).append(
-                Member(replay.run_id, judged.seq, judged.skill, judged.attempt, evidence)
+                Member(
+                    replay.run_id, judged.seq, judged.skill, judged.attempt, judged.verdict.evidence
+                )
             )
     groups = []
     for signature, found in members.items():
@@ -156,6 +170,20 @@ def render_survey(
 ) -> tuple[list[str], bool]:
     """The lines `cellrt promote group` prints, and whether gate 0 passed. When it did not, no
     group is shown: a group is only as good as the replay behind it."""
+    lines, passed = gate_0(runs)
+    if not passed:
+        return lines, False
+    lines.append(f"UNKNOWN groups, at least {min_size} verdicts:")
+    lines += [_group_line(g) for g in groups if len(g.members) >= min_size] or ["  none"]
+    if small := [g for g in groups if len(g.members) < min_size]:
+        lines.append(f"too few (under {min_size}):")
+        lines += [_group_line(g) for g in small]
+    return lines, True
+
+
+def gate_0(runs: Sequence[SurveyedRun]) -> tuple[list[str], bool]:
+    """How many runs were replayed and with what status, and gate 0: no run fails to replay,
+    and at least one replayed."""
     counts = Counter(r.replay.status for r in runs)
     shown = ", ".join(f"{s} {counts[s]}" for s in _STATUS_ORDER if s == "ok" or counts[s])
     lines = [f"replayed {len(runs)} runs: {shown}"]
@@ -180,11 +208,6 @@ def render_survey(
         f"gate 0 passed: every recorded verdict reproduced ({verdicts} verdicts in "
         f"{counts['ok']} runs; {timeouts} skill timeouts, decided by the clock)"
     )
-    lines.append(f"UNKNOWN groups, at least {min_size} verdicts:")
-    lines += [_group_line(g) for g in groups if len(g.members) >= min_size] or ["  none"]
-    if small := [g for g in groups if len(g.members) < min_size]:
-        lines.append(f"too few (under {min_size}):")
-        lines += [_group_line(g) for g in small]
     return lines, True
 
 

@@ -13,10 +13,14 @@ A run stopped because the world stopped judged its last sample before the failed
 Gate 0 is that the replay reproduces the record: every verdict the run recorded comes back on
 the same sample, with the same class, rule and evidence; a verdict that lost to the skill's own
 success and a skill timeout (decided by the clock, not by a sample) are accounted for.
+
+With a candidate rule the replay compares nothing: it returns every verdict the Monitor gives
+with the rule added, over the same samples and windows, for the gates in `validate`.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -34,6 +38,7 @@ from cellrt.monitor.classifier import (
     Verdict,
 )
 from cellrt.monitor.profiles import MonitorProfile
+from cellrt.monitor.promoted import PromotedRule
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
@@ -58,7 +63,8 @@ from cellrt.world.mock_world import MockParams
 # period), the Monitor (its thresholds) and the skills (the profile each declares).
 REPLAY_PARTS = tuple(monitor_inputs(MockParams(), MonitorConfig(), mock_registry()))
 
-Outcome = Literal["recorded", "lost_to_success"]
+# `replayed`: a verdict of a replay with a candidate, where nothing is compared with the record.
+Outcome = Literal["recorded", "lost_to_success", "replayed"]
 Status = Literal["ok", "mismatch", "config_mismatch", "unfinished", "unjudgeable"]
 
 _PLANNER_ENDS = (PlannerDecided, PlannerOutputRejected, PlannerTimedOut, PlannerPreempted)
@@ -114,6 +120,7 @@ class Judged:
     attempt: int | None  # None: the hold during a live planner call
     verdict: Verdict
     outcome: Outcome
+    window: int  # which watch window of the run, counted from 0 (a skill attempt or a hold)
 
 
 @dataclass(frozen=True)
@@ -135,8 +142,15 @@ class RunReplay:
     timeouts: int = 0  # skill timeouts the run recorded: decided by the clock, not replayed
 
 
-def replay_run(events: Sequence[Event], config: ReplayConfig) -> RunReplay:
-    """Replay the Monitor over one run's events and check the record (gate 0)."""
+def replay_run(
+    events: Sequence[Event], config: ReplayConfig, *, candidate: PromotedRule | None = None
+) -> RunReplay:
+    """Replay the Monitor over one run's events and check the record (gate 0).
+
+    With `candidate`, the Monitor gets the rule after the configured ones and the replay keeps,
+    without comparing, the first verdict of each window (`replayed`) and one on the tick the
+    watched skill succeeded (`lost_to_success`); the run must still carry `config`'s hashes,
+    since its samples are replayed as that configuration judged them."""
     run_id = events[0].run_id if events else ""
     started = events[0].payload if events else None
     if not isinstance(started, RunStarted) or not isinstance(events[-1].payload, RunFinished):
@@ -149,7 +163,12 @@ def replay_run(events: Sequence[Event], config: ReplayConfig) -> RunReplay:
         return RunReplay(run_id, "unjudgeable")
     # The loop checks the time limit right after logging a sample, before the next tick.
     unjudged = samples[-1].seq if samples and samples[-1].ts >= started.task.time_limit else None
-    return _Replay(config, unjudged).run(run_id, events)
+    if candidate is None:
+        return _Replay(config, unjudged).run(run_id, events)
+    monitor = dataclasses.replace(config.monitor, promoted=(*config.monitor.promoted, candidate))
+    return _Replay(dataclasses.replace(config, monitor=monitor), unjudged, strict=False).run(
+        run_id, events
+    )
 
 
 @dataclass
@@ -159,13 +178,14 @@ class _Tick:
 
     sample: Event | None = None
     watching: tuple[str, int | None] | None = None
+    window: int = -1
     verdict: Verdict | None = None
     recorded: list[tuple[int, MonitorVerdict]] = field(default_factory=list)
     finished_ok: bool = False
 
 
 class _Replay:
-    def __init__(self, config: ReplayConfig, unjudged: int | None) -> None:
+    def __init__(self, config: ReplayConfig, unjudged: int | None, *, strict: bool = True) -> None:
         self._state = RunState()
         self._monitor = Monitor(
             config.period_s, config.monitor, force_time=lambda: self._state.over_limit_s
@@ -173,9 +193,12 @@ class _Replay:
         self._profiles = config.profiles
         self._live = config.planner_wait == "live"
         self._unjudged = unjudged
+        self._strict = strict
         self._watching: tuple[str, int | None] | None = None
+        self._window = -1  # the current or last watch window
         self._tick = _Tick()
         self._judged: list[Judged] = []
+        self._replayed_windows: set[int] = set()  # windows with a kept verdict (not strict)
         self._timeouts = 0
 
     def run(self, run_id: str, events: Sequence[Event]) -> RunReplay:
@@ -197,7 +220,9 @@ class _Replay:
         verdict = None
         if self._watching is not None and event.seq != self._unjudged:
             verdict = self._monitor.observe(signals_of(sample))
-        self._tick = _Tick(sample=event, watching=self._watching, verdict=verdict)
+        self._tick = _Tick(
+            sample=event, watching=self._watching, window=self._window, verdict=verdict
+        )
 
     def _note(self, event: Event) -> None:
         """Record what the run did in the current tick."""
@@ -216,13 +241,15 @@ class _Replay:
         """Open and close what the Monitor watches, as the run did."""
         if isinstance(payload, SkillStarted):
             self._watching = (payload.skill, payload.attempt)
-            self._monitor.reset(self._profiles[payload.skill])
+            self._window += 1
+            self._monitor.reset(self._profiles[payload.skill], skill=payload.skill)
         elif isinstance(payload, PlannerCalled):
             # Only a live wait watches the hold. In a frozen one nothing is judged until the
             # next skill starts, though the world may step once for a planner that answers at
             # once (the rule planner).
             if self._live:
                 self._watching = (payload.skill, None)
+                self._window += 1
                 self._monitor.reset(HOLD_PROFILE)
             else:
                 self._watching = None
@@ -236,6 +263,17 @@ class _Replay:
         """Compare the replay's verdict on the last judged sample with what that tick recorded."""
         tick, self._tick = self._tick, _Tick()
         verdict = tick.verdict
+        if not self._strict:
+            if verdict is not None:
+                lost = tick.finished_ok and verdict.failure_class not in SAFETY_CLASSES
+                outcome: Outcome = "lost_to_success" if lost else "replayed"
+                # Only a window's first verdict counts (validate), so a rule that matches every
+                # sample keeps one verdict per window, not one per sample. A lost one ends the
+                # window (the skill succeeded), so there is at most one of those.
+                if lost or tick.window not in self._replayed_windows:
+                    self._replayed_windows.add(tick.window)
+                    self._judged.append(self._judged_of(tick, verdict, outcome))
+            return None
         if len(tick.recorded) > 1:  # the loop records at most one verdict per tick
             seq, second = tick.recorded[1]
             return Mismatch(seq, recorded=_name(second), replayed="one verdict per tick")
@@ -266,7 +304,7 @@ class _Replay:
         sample = tick.sample.payload
         assert isinstance(sample, SignalSampled)
         skill, attempt = tick.watching
-        return Judged(tick.sample.seq, sample.step, skill, attempt, verdict, outcome)
+        return Judged(tick.sample.seq, sample.step, skill, attempt, verdict, outcome, tick.window)
 
 
 def _timeout_of(recorded: MonitorVerdict, watching: tuple[str, int | None] | None) -> bool:
