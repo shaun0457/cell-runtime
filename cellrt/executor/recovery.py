@@ -251,6 +251,8 @@ class Recovering(py_trees.composites.Composite):
                 planner_calls_left=config.planner_budget - state.planner_calls,
                 recoveries_left=config.total_budget - state.recoveries_total,
                 catalogue=self._planner.catalogue(),
+                options=tuple(sorted(self._planner.options - {skill})),  # never the failed one
+                descriptions=self._planner.descriptions(),
             )
         )
         self._consulted = node

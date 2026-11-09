@@ -17,8 +17,10 @@ Current shape:
 
 - `Planner` protocol: `async triage(FailureContext) -> object`. The context holds the failed
   skill and attempt, the class, the Monitor rule and its evidence, time left, planner calls and
-  recoveries left, and a catalogue of registered skills with their Monitor profiles. The return
-  value is raw (a dict or a JSON string), so a fake, a rule planner and an LLM share one path.
+  recoveries left, a catalogue of registered skills with their Monitor profiles, and (since
+  #45) the step's options and a one-line description of each skill. The return value is raw (a
+  dict or a JSON string), so a fake, a rule planner and an LLM share one path. A model planner
+  wraps it with the call's trace (`Traced`).
 - `validate_decision` turns raw output into a `Decision` (`switch_skill(skill)`, `retry`,
   `abort(reason)`; pydantic, `extra="forbid"`, discriminator `kind`) or a `Rejection` holding the
   raw text (scrubbed by `runtime.scrub`, then cut to 500 characters: what looks like a key, a
@@ -36,6 +38,8 @@ Current shape:
   that raised, does not.
 - `PlannerBehaviour` runs `triage` as a task on the same bridge as skills (ADR 003) and records
   `planner_called` (with the context), then `planner_decided` or `planner_output_rejected`.
+  For a model planner it records `planner_responded` in between: the prompt, the raw answer
+  (scrubbed), the model, token counts and wall latency (#45).
 - Running a retry or a switch records `recovery_started` (class UNKNOWN, action `retry` or
   `switch_skill:<name>`) and counts against the task recovery budget (4). Planner calls have
   their own budget, 2 per task, checked against `RunState.planner_calls` folded from the log.
@@ -43,8 +47,10 @@ Current shape:
   ends it as `failed`.
 - A skill the planner switched to is a full member of the step: if it then fails with a known
   class, B's plan applies to it (a FORCE_LIMIT reruns it at half speed).
-- In setting C, `config_hash` also covers the planner's type and budget; B's hash does not
-  include the planner budget.
+- In setting C, `config_hash` also covers the planner's type and budget, and the configuration
+  a planner describes (a model planner's model, prompt version, sampling, mode and client,
+  #45); B's hash
+  does not include the planner budget.
 
 ## Options
 
@@ -122,7 +128,8 @@ Current shape:
   active, so the Monitor watches nothing; the arm holds (the failed skill's access was revoked
   and HOLD sent), and the task time limit still applies. A planner timeout, late answers, and what the supervisor does during a slow LLM
   call are open for Phase 3 (#14).
-- The hash names the planner type, not how an instance is set up: two LLM planners of one type
-  with different models or prompts would share a hash. Phase 3 needs a planner config in it.
+- The hash named only the planner type in Phase 0, so two LLM planners of one type with
+  different models or prompts would have shared a hash. Since #45 a planner that describes its
+  configuration has it hashed too.
 - Adding a new insert skill adds it to every insert step's options automatically; adding a
   planner to other steps needs a decision about their options.

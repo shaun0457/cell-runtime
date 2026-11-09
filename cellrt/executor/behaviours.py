@@ -23,7 +23,14 @@ from py_trees.common import Status
 
 from cellrt.executor.samples import signals_of
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
-from cellrt.planner.base import FailureContext, Planner
+from cellrt.planner.base import (
+    MAX_STORED_PROMPT_CHARS,
+    MAX_STORED_RESPONSE_CHARS,
+    FailureContext,
+    Planner,
+    PlannerTrace,
+    Traced,
+)
 from cellrt.planner.schemas import Decision, Rejection, validate_decision
 from cellrt.runtime.clock import SimClock, to_ns
 from cellrt.runtime.events import (
@@ -32,6 +39,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerResponded,
     PreconditionFailed,
     SkillCancelled,
     SkillFinished,
@@ -39,11 +47,14 @@ from cellrt.runtime.events import (
     SkillStarted,
 )
 from cellrt.runtime.recorder import Recorder
+from cellrt.runtime.scrub import scrub
 from cellrt.skills.base import Skill, SkillContext, SkillResult
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import HOLD, CommandLease, FaultSource, World, WorldView
 
 PROGRESS_STEP = 0.25
+# A skill's description, as every planner call (and the log) carries it, is cut to this.
+MAX_DESCRIPTION_CHARS = 300
 
 
 class TaskTracker:
@@ -288,6 +299,14 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         """Registered skills and the Monitor profile each declares, for the planner's context."""
         return {n: self._registry.get(n).monitor_profile for n in sorted(self._registry.names())}
 
+    def descriptions(self) -> dict[str, str]:
+        """What each registered skill does, in one line (empty for a skill without one), cut
+        to MAX_DESCRIPTION_CHARS: it goes into every planner call and into the log."""
+        return {
+            n: str(getattr(self._registry.get(n), "description", ""))[:MAX_DESCRIPTION_CHARS]
+            for n in sorted(self._registry.names())
+        }
+
     def initialise(self) -> None:
         self._task = None
         self.decision = None
@@ -318,10 +337,7 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
                 "", (f"<root>: planner_raised {type(exc).__name__}",)
             )
         else:
-            try:
-                result = validate_decision(raw, self._registry, ctx.skill, self.options)
-            except Exception as exc:  # validation must not crash the run; only the type
-                result = Rejection("", (f"<root>: validator_raised {type(exc).__name__}",))
+            result = self._check(ctx, raw)
         if isinstance(result, Rejection):
             self.rejection = result
             self._env.recorder.emit(
@@ -331,6 +347,23 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self.decision = result
         self._env.recorder.emit(PlannerDecided(skill=ctx.skill, decision=result.model_dump()))
         return Status.SUCCESS
+
+    def _check(self, ctx: FailureContext, raw: object) -> Decision | Rejection:
+        """Record a traced answer's trace, then validate the answer. Nothing a planner returns
+        may crash the run: a trace that cannot be recorded is a rejection."""
+        if isinstance(raw, Traced):
+            try:
+                if not isinstance(raw.trace, PlannerTrace):
+                    raise TypeError("not a PlannerTrace")
+                responded = _responded(ctx.skill, raw.trace)
+            except Exception:  # the trace came from planner code: reject, never echo it
+                return Rejection("", ("<root>: trace_invalid",))
+            self._env.recorder.emit(responded)
+            raw = raw.raw
+        try:
+            return validate_decision(raw, self._registry, ctx.skill, self.options)
+        except Exception as exc:  # validation must not crash the run; only the type
+            return Rejection("", (f"<root>: validator_raised {type(exc).__name__}",))
 
     def terminate(self, new_status: Status) -> None:
         task, self._task = self._task, None
@@ -361,3 +394,27 @@ def _result_of(task: asyncio.Task[SkillResult]) -> tuple[SkillResult, str | None
     except (Exception, asyncio.CancelledError) as exc:
         error = type(exc).__name__
         return SkillResult(ok=False, detail={"error": error}), error
+
+
+# A trace's short fields (provider, model, finish reason) are cut to this length.
+MAX_TRACE_NAME_CHARS = 128
+
+
+def _responded(skill: str, trace: PlannerTrace) -> PlannerResponded:
+    """The trace as the log keeps it: every text scrubbed and cut. The prompt is our own text
+    but may be long; the response came from outside."""
+
+    def name(value: str | None) -> str | None:
+        return None if value is None else scrub(value)[:MAX_TRACE_NAME_CHARS]
+
+    return PlannerResponded(
+        skill=skill,
+        provider=name(trace.provider) or "unknown",
+        model=name(trace.model) or "unknown",
+        prompt=scrub(trace.prompt, max_chars=MAX_STORED_PROMPT_CHARS)[:MAX_STORED_PROMPT_CHARS],
+        response=scrub(trace.response)[:MAX_STORED_RESPONSE_CHARS],
+        prompt_tokens=trace.prompt_tokens,
+        completion_tokens=trace.completion_tokens,
+        finish_reason=name(trace.finish_reason),
+        latency_s=trace.latency_s,
+    )

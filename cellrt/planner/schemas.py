@@ -61,6 +61,36 @@ class Abort(_Decision):
 
 Decision = Annotated[SwitchSkill | Retry | Abort, Field(discriminator="kind")]
 DECISION_ADAPTER: TypeAdapter[Decision] = TypeAdapter(Decision)
+_DECISION_TYPES: tuple[type[_Decision], ...] = (SwitchSkill, Retry, Abort)
+
+
+def decision_json_schema() -> dict[str, object]:
+    """The decision union as one JSON schema object, for a model's tool or prompt.
+
+    It tells the model the shape; it does not replace validation. Each variant is inlined (no
+    `$ref`, which some providers reject), `kind` is required, and the reason's character
+    pattern is left out: it is written for Python's regex engine, and `validate_decision`
+    enforces it anyway.
+    """
+    variants: list[dict[str, object]] = []
+    for model in _DECISION_TYPES:
+        schema = model.model_json_schema()
+        properties: dict[str, object] = {
+            name: {k: v for k, v in prop.items() if k not in ("title", "default", "pattern")}
+            for name, prop in schema["properties"].items()
+        }
+        properties["kind"] = {"type": "string", "const": model.model_fields["kind"].default}
+        required = [r for r in schema.get("required", []) if r != "kind"]
+        variants.append(
+            {
+                "type": "object",
+                "description": (model.__doc__ or "").strip(),
+                "properties": properties,
+                "required": ["kind", *required],
+                "additionalProperties": False,
+            }
+        )
+    return {"type": "object", "oneOf": variants}
 
 
 @dataclass(frozen=True)
@@ -99,6 +129,11 @@ def validate_decision(
         reason = scrub(decision.reason)[:MAX_REASON_CHARS]
         return decision.model_copy(update={"reason": reason})
     return decision
+
+
+def audit_text(raw: object) -> str:
+    """Planner output as text for the audit trail: scrubbed, bounded, never raises."""
+    return _shown(raw)
 
 
 def _json_depth(text: str) -> int:

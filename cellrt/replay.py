@@ -15,6 +15,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerResponded,
     PreconditionFailed,
     RecoveryStarted,
     RunFinished,
@@ -76,6 +77,12 @@ def describe(event: Event) -> str:
             )
         case PlannerCalled() as p:
             return f"{p.skill} {p.failure_class} (call {p.call})"
+        case PlannerResponded() as p:
+            tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
+            return (
+                f"{p.skill} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
+                f"finish={p.finish_reason or '?'}"
+            )
         case PlannerDecided() as p:
             return f"{p.skill} -> {p.decision}"
         case PlannerOutputRejected() as p:
@@ -90,3 +97,7 @@ def describe(event: Event) -> str:
         case RunFinished() as p:
             return f"{p.outcome}: {p.reason} (steps={p.steps}, duration={p.duration:.2f}s)"
     raise AssertionError(f"no description for {event.type}")  # pragma: no cover
+
+
+def _count(tokens: int | None) -> str:
+    return "?" if tokens is None else str(tokens)

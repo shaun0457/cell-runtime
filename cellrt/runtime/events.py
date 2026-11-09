@@ -15,10 +15,10 @@ Outcome = Literal["success", "failed", "aborted"]
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
-# `signal_sampled.wrench_dropped`. Bump it when a payload changes shape
+# `signal_sampled.wrench_dropped`; 7 added `planner_responded`. Bump it when a payload changes shape
 # (a test hashes every payload's schema per version), and keep older rows readable: new fields
 # get defaults.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class _Payload(BaseModel):
@@ -163,6 +163,26 @@ class PlannerCalled(_Payload):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlannerResponded(_Payload):
+    """A model planner's answer as it came back, before validation: the audit trail of one call.
+
+    Recorded only for planners that report a trace (a model planner), so runs with the rule
+    planner keep their shape. The prompt is our own text; the response came from outside and is
+    scrubbed. Both are cut to fixed lengths (`planner.base`).
+    """
+
+    type: Literal["planner_responded"] = "planner_responded"
+    skill: str
+    provider: str
+    model: str
+    prompt: str  # the messages sent, as JSON
+    response: str  # the tool call's arguments, or the text
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
+
+
 class PlannerDecided(_Payload):
     """The planner's output passed validation."""
 
@@ -220,6 +240,7 @@ Payload = Annotated[
     | MonitorVerdict
     | RecoveryStarted
     | PlannerCalled
+    | PlannerResponded
     | PlannerDecided
     | PlannerOutputRejected
     | BtNodeChanged

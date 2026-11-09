@@ -255,9 +255,10 @@ def config_parts(
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
-    counts the planner's type and budget (not how an instance of that type is set up). The core
-    source, the adapter source and the lock file count too, so changed code or a dependency
-    upgrade never reuses an old result.
+    counts the planner's type and budget, and the configuration a planner describes (a model
+    planner's model, prompt version, sampling, mode and client). The core source, the adapter
+    source and the lock file count too, so changed code or a dependency upgrade never reuses an
+    old result.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -269,14 +270,22 @@ def config_parts(
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),
-        "planner": None
-        if planner is None
-        else {
-            "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
-            "budget": recovery.planner_budget,
-        },
+        "planner": None if planner is None else _planner_config(planner, recovery),
     }
     return {name: _digest(value) for name, value in config.items()}
+
+
+def _planner_config(planner: Planner, recovery: RecoveryConfig) -> dict[str, object]:
+    """The planner's type and budget, plus its own configuration if it describes one (a model
+    planner: model, prompt version, sampling). A planner without `describe` hashes as before."""
+    config: dict[str, object] = {
+        "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
+        "budget": recovery.planner_budget,
+    }
+    describe = getattr(planner, "describe", None)
+    if callable(describe):
+        config["config"] = dict(describe())
+    return config
 
 
 def hash_parts(parts: dict[str, str]) -> str:
