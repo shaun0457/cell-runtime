@@ -16,7 +16,7 @@ import asyncio
 import math
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import py_trees
 from py_trees.common import Status
@@ -55,6 +55,11 @@ from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import HOLD, CommandLease, FaultSource, World, WorldView
 
 PROGRESS_STEP = 0.25
+# What the world does while a planner call runs (ADR 020): `frozen` stands still and the loop
+# waits on the call in wall time (ADR 016, the mock); `live` keeps stepping while the arm holds
+# (a simulator or a cell, whose time does not stop).
+PlannerWait = Literal["frozen", "live"]
+PLANNER_WAITS: tuple[PlannerWait, ...] = get_args(PlannerWait)
 # A skill's description, as every planner call (and the log) carries it, is cut to this.
 MAX_DESCRIPTION_CHARS = 300
 
@@ -62,8 +67,9 @@ MAX_DESCRIPTION_CHARS = 300
 @dataclass
 class OutsideWait:
     """A task that waits on something outside the sim (a planner's network call), with its
-    wall-time deadline. The loop sets `started` when it begins to wait on it, and `waited_s`
-    when the deadline has passed; the planner node then cancels the task."""
+    wall-time deadline. The loop sets `started` on the first tick the call holds the world
+    (`frozen`: when it begins to wait on it; `live`: when it first checks its deadline), and
+    `waited_s` when the deadline has passed; the planner node then cancels the task."""
 
     task: asyncio.Task[Any]
     deadline_s: float
@@ -77,8 +83,9 @@ class TaskTracker:
     The loop compares the number of live tasks with the number of pending clock sleeps, so two
     rules hold for everything that runs on the loop: every task is started through `spawn`, and
     a skill task waits on at most one clock sleep at a time and on nothing else. A task started
-    with a deadline is an outside wait instead (a planner call): it may await anything, the loop
-    waits on it in wall time while the world stands still, and it never waits on the clock.
+    with a deadline is an outside wait instead (a planner call): it may await anything and it
+    never waits on the clock. While it runs, the loop either waits on it in wall time with the
+    world standing still (`frozen`) or keeps stepping the world (`live`, ADR 020).
     """
 
     def __init__(self) -> None:
@@ -119,8 +126,18 @@ class TaskTracker:
     def hold_running(self) -> None:
         """Called once a tick, after every new task has taken its first step: a call still
         running then has awaited something, so the world holds this tick, however soon it
-        answers. A call that answers in its first step (the rule planner) never holds it."""
-        if self.outside_waits():
+        answers. A call the loop was already waiting on that has just answered holds it too,
+        so its answer is read before the world steps again. A call that answers in its first
+        step (the rule planner) never holds it."""
+        # Before `outside_waits`, which forgets finished tasks.
+        answered = any(
+            w.started is not None
+            and w.waited_s is None
+            and w.task.done()
+            and not w.task.cancelled()
+            for w in self._outside.values()
+        )
+        if answered or self.outside_waits():
             self._held = True
 
     def take_held(self) -> bool:
@@ -152,8 +169,11 @@ class ExecEnv:
     monitor_config: MonitorConfig = field(default_factory=MonitorConfig)
     # The task's time limit on the clock, so the planner can be told how much time is left.
     time_limit_s: float = math.inf
+    planner_wait: PlannerWait = "frozen"
 
     def __post_init__(self) -> None:
+        if self.planner_wait not in PLANNER_WAITS:
+            raise ValueError(f"planner_wait must be one of {', '.join(PLANNER_WAITS)}")
         recorder = self.recorder
         self.monitor = Monitor(
             self.period_s, self.monitor_config, force_time=lambda: recorder.state.over_limit_s

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from cellrt.eval.faults import materialize
 from cellrt.eval.scenarios import Scenario
-from cellrt.executor.behaviours import ExecEnv
+from cellrt.executor.behaviours import ExecEnv, PlannerWait
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
 from cellrt.executor.trees import Setting, build_tree
@@ -65,6 +65,8 @@ class _UnitConfig:
     recovery: RecoveryConfig
     monitor: MonitorConfig
     planner: Planner | None
+    # The mock always runs `frozen` (ADR 020); the field keeps the hash and the run in step.
+    planner_wait: PlannerWait = "frozen"
 
     @classmethod
     def resolve(
@@ -100,6 +102,7 @@ class _UnitConfig:
             self.monitor,
             self.registry,
             self.planner,
+            planner_wait=self.planner_wait,
         )
 
 
@@ -228,6 +231,7 @@ async def _run(
         fault_source=world,
         monitor_config=monitor,
         time_limit_s=scenario.task.time_limit,
+        planner_wait=config.planner_wait,
     )
     root = build_tree(setting, registry, env, recovery, planner)
     outcome, reason = await run_task(root, env, scenario.task)
@@ -251,16 +255,19 @@ def config_parts(
     monitor: MonitorConfig,
     registry: SkillRegistry,
     planner: Planner | None = None,
+    *,
+    planner_wait: PlannerWait = "frozen",
 ) -> dict[str, str]:
     """Everything that defines the run besides the seed, as one hash per part: a changed
     scenario is a different run, and two settings that share a part show the same hash for it.
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
-    counts the planner's type and budget, and the configuration a planner describes (a model
-    planner's model, prompt version, sampling, mode and client). The core source, the adapter
-    source and the lock file count too, so changed code or a dependency upgrade never reuses an
-    old result.
+    counts the planner's type, budget and wait mode (`frozen` or `live`, ADR 020), and the
+    configuration a planner describes (a model planner's model, prompt version, sampling, mode
+    and client); without a planner the wait mode changes nothing, so it does not count. The core
+    source, the adapter source and the lock file count too, so changed code or a dependency
+    upgrade never reuses an old result.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
@@ -272,18 +279,21 @@ def config_parts(
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),
-        "planner": None if planner is None else _planner_config(planner, recovery),
+        "planner": None if planner is None else _planner_config(planner, recovery, planner_wait),
     }
     return {name: _digest(value) for name, value in config.items()}
 
 
-def _planner_config(planner: Planner, recovery: RecoveryConfig) -> dict[str, object]:
-    """The planner's type, budget and deadline, plus its own configuration if it describes one
-    (a model planner: model, prompt version, sampling)."""
+def _planner_config(
+    planner: Planner, recovery: RecoveryConfig, planner_wait: PlannerWait
+) -> dict[str, object]:
+    """The planner's type, budget, deadline and wait mode, plus its own configuration if it
+    describes one (a model planner: model, prompt version, sampling)."""
     config: dict[str, object] = {
         "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
         "budget": recovery.planner_budget,
         "deadline_s": planner_deadline(planner),
+        "wait": planner_wait,
     }
     describe = getattr(planner, "describe", None)
     if callable(describe):

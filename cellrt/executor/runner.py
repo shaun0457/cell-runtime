@@ -5,10 +5,15 @@ world → advance the clock by the time the step reports → record a signal sam
 ready queue is FIFO and nothing else runs on the loop, so the same inputs always give the same
 schedule.
 
-One exception: while a planner call waits on outside work (a model's answer), the loop does not
-step the world or advance the clock. It waits on the call in wall time, up to the call's
-deadline, then ticks the tree again (ADR 016). The arm holds meanwhile; in the mock the sim
-clock stands still, so sim-time results do not depend on how long the model took.
+While a planner call waits on outside work (a model's answer), the arm holds, and the world does
+what `ExecEnv.planner_wait` says:
+- `frozen` (the default, the mock): the loop does not step the world or advance the clock. It
+  waits on the call in wall time, up to the call's deadline, then ticks the tree again (ADR 016),
+  so sim-time results do not depend on how long the model took.
+- `live` (a simulator or a cell, whose time does not stop): the loop keeps stepping, sampling
+  and recording, and checks the call's wall deadline on each step without blocking; the time
+  limit applies as on any step (ADR 020). An answer, or a deadline passed, is acted on at the
+  next tick, before another step.
 """
 
 from __future__ import annotations
@@ -66,9 +71,15 @@ async def run_task(
             return "failed", _failure_reason(root)
         await drain(env)
         if env.tracker.take_held():
-            if waits := env.tracker.outside_waits():
-                await _wait_outside(waits)
-            continue  # tick again: the world does not move while the planner thinks
+            waits = env.tracker.outside_waits()
+            if env.planner_wait == "frozen":
+                if waits:
+                    await _wait_outside(waits)
+                continue  # tick again: the world does not move while the planner thinks
+            # live: the world steps on while the arm holds. A call that has just answered is
+            # read, and one past its deadline cancelled, on the next tick, before another step.
+            if not waits or _check_deadlines(waits):
+                continue
         try:
             elapsed = env.world.step(env.period_s)
         except WorldStopped as stopped:
@@ -101,7 +112,8 @@ async def drain(env: ExecEnv) -> None:
     running after that step has awaited outside work: it holds the world this tick, even if it
     answers within the yields, so whether the world moves never depends on how fast the answer
     came (ADR 016). After the yields, live calls are fine as long as every other task waits on
-    the clock; the loop then waits on them (`_wait_outside`).
+    the clock; the loop then waits on them (`_wait_outside`, `frozen`) or checks their
+    deadlines and steps on (`_check_deadlines`, `live`).
     """
     for i in range(MAX_DRAIN_YIELDS):
         if env.tracker.live() <= env.clock.pending_waiters():
@@ -123,15 +135,31 @@ async def _wait_outside(waits: list[OutsideWait]) -> None:
     """Wait in wall time until a call finishes or the earliest deadline passes; mark every call
     whose deadline has passed, for its node to cancel on the next tick."""
     now = time.monotonic()
-    for wait in waits:
-        if wait.started is None:
-            wait.started = now
+    _start(waits, now)
     remaining = min(w.started + w.deadline_s for w in waits if w.started is not None) - now
     if remaining > 0:
         await asyncio.wait(
             [w.task for w in waits], timeout=remaining, return_when=asyncio.FIRST_COMPLETED
         )
+    _mark_expired(waits, time.monotonic())
+
+
+def _check_deadlines(waits: list[OutsideWait]) -> bool:
+    """Live mode: the same deadlines as `_wait_outside`, checked once per step, never waited
+    on. Marks every call whose deadline has passed, for its node to cancel; True if any was."""
     now = time.monotonic()
+    _start(waits, now)
+    _mark_expired(waits, now)
+    return any(w.waited_s is not None for w in waits)
+
+
+def _start(waits: list[OutsideWait], now: float) -> None:
+    for wait in waits:
+        if wait.started is None:
+            wait.started = now
+
+
+def _mark_expired(waits: list[OutsideWait], now: float) -> None:
     for wait in waits:
         assert wait.started is not None
         if not wait.task.done() and now >= wait.started + wait.deadline_s:

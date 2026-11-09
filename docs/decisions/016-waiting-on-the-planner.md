@@ -147,9 +147,10 @@ cancellation like a skill that breaks its contract.
 
 - Mock durations leave out thinking time. Reports must show planner latency (p50/p95 from
   `planner_responded.latency_s`) next to durations and success rates (#51, #52).
-- **Open: AIC.** In Gazebo the sim keeps running while the policy waits; we only stop
-  stepping the world. Sim time still passes at the real-time factor, so `Task.time_limit` keeps
-  counting, and the hold must keep the arm still (ADR 014). The adapter notices a cancel request
+- **Open: AIC** (closed by ADR 020, which decides that on AIC the world keeps stepping during
+  a call; this decision still holds for the mock). In Gazebo the sim keeps running while the
+  policy waits; we only stop stepping the world. Sim time still passes at the real-time factor,
+  so `Task.time_limit` keeps counting, and the hold must keep the arm still (ADR 014). The adapter notices a cancel request
   when the world steps (ADR 012), so a cancel arriving during a planner call is seen only after
   the call answers or times out, up to the deadline. Before the planner runs on AIC: set the
   deadline below the time left, check hold behaviour during a long call, and decide whether a
