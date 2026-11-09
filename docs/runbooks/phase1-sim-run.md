@@ -186,7 +186,10 @@ For each of the 3 tasks of the first run, kept apart:
   penalty for the same trial, with the difference and its cause (ADR 013 lists the known ones);
 - every `monitor_verdict`, as a finding;
 - the real-time factor (sim time over wall time for one run);
-- the seated depth that `verify` reported, to set `VERIFY_MIN_DEPTH_MM` (a placeholder of 10).
+- the height that `verify` reported for each seated plug, against the seated band `SEATED`
+  (-3 to +1 mm around the port frame, within 2 mm of its axis; set from #28's seated plugs),
+  and whether `insert_scripted` ended on a plug that was still moving (the rest rule compares
+  one 50 ms step against `SEATED_STILL_MM`, 0.1 mm).
 
 Also to check against the sim, from the PRs' Might miss lists: the CheatCode tip-offset quirk,
 the Monitor's insertion rules near the end of the descent, the 10 s readiness wait, and the

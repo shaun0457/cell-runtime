@@ -131,10 +131,12 @@ runs like any other.
 
 The policy runs setting A as CheatCode's two phases split into skills: `approach`, `align`
 (down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
--0.015) and `verify` (5 s settle, then depth from ground truth); `retract` is there for
-recovery. z_offset is CheatCode's height above the port; where the plug tip actually ends
-depends on CheatCode's tip-offset quirk (`adapters/aic/geometry.py`), to be checked in the sim. Skill starts, ends and progress (at most once per sim second) go out as
-`InsertCable` feedback.
+-0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then the
+tip's height and offset from ground truth, against the seated band measured in the #28 sim
+run); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
+the plug tip actually ends depends on CheatCode's tip-offset quirk
+(`adapters/aic/geometry.py`): in #28 it seated two of the three plugs during align. Skill
+starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS

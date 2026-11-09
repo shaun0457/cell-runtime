@@ -6,6 +6,7 @@ poses (`AicWorld.geometry`), which they get at construction: the executor hands 
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
@@ -75,9 +76,24 @@ ALIGN_HEIGHT_M = 0.010
 INSERT_END_M = -0.015
 ALIGN_XY_MM = 1.0  # align is done once the plug is this close to the port axis
 VERIFY_SETTLE_S = 5.0  # CheatCode's wait for the connector to settle
-# The plug tip at least this far into the port counts as seated. A placeholder for #28: the
-# real seated depth depends on the port and on CheatCode's quirk (geometry.py).
-VERIFY_MIN_DEPTH_MM = 10.0
+# A plug is on its seat when its tip is within this band around the port frame and this close
+# to the port axis. #28 measured one seat per port type: -0.98 mm (SFP, three runs) and
+# +0.07 mm (SC, one run), 0.37-0.62 mm off the axis; the SC plug jammed at its entrance read
+# 13.46 mm. One band serves both types: 1 mm over the higher seat, 2 mm under the lower one
+# (a tip further down is not in a port). 2 mm off the axis is well inside the spacing of
+# neighbouring ports. It reads ground-truth geometry, so it holds only where ground truth is
+# available (local development, not the submission).
+SEATED_MAX_HEIGHT_MM = 1.0
+SEATED_MIN_HEIGHT_MM = -3.0
+SEATED_MAX_XY_MM = 2.0
+# Insertion stops at the seat: in the band and no longer going down, by less than this since
+# the previous command (one commanded step is 0.5 mm). A plug still going down is pushed on.
+SEATED_STILL_MM = 0.1
+SEATED = {
+    "max_height_mm": SEATED_MAX_HEIGHT_MM,
+    "min_height_mm": SEATED_MIN_HEIGHT_MM,
+    "max_xy_mm": SEATED_MAX_XY_MM,
+}
 RETRACT_M = 0.005
 RETRACT_STEPS = 10
 
@@ -108,12 +124,22 @@ class Descent:
 
     def __init__(self) -> None:
         self.integrator = XYIntegrator()
+        self.last_height_mm: float | None = None  # the tip's height at the last command
 
     def command(self, ctx: SkillContext, g: Geometry, z_offset_m: float) -> None:
+        self.last_height_mm, _ = plug_to_port_mm(g.port, g.plug)
         target, self.integrator = gripper_target(
             g.port, g.plug, g.gripper, z_offset_m=z_offset_m, integrator=self.integrator
         )
         ctx.world.command(to_pose_target(target))
+
+
+def seated(g: Geometry) -> tuple[bool, float]:
+    """Whether the plug tip is in the seated band and near the port axis, and its height
+    above the port frame in mm."""
+    height_mm, (dx, dy) = plug_to_port_mm(g.port, g.plug)
+    in_band = SEATED_MIN_HEIGHT_MM <= height_mm <= SEATED_MAX_HEIGHT_MM
+    return in_band and math.hypot(dx, dy) <= SEATED_MAX_XY_MM, height_mm
 
 
 class _AicSkill:
@@ -168,7 +194,9 @@ class AicAlign(_AicSkill):
 
 
 class AicInsertScripted(_AicSkill):
-    """The rest of CheatCode's descent: to z_offset -0.015, 0.5 mm per step."""
+    """The rest of CheatCode's descent: to z_offset -0.015, 0.5 mm per step, ending as soon
+    as the plug rests on its seat (seated, and no longer going down). Pushing on would only
+    press it into the seat, which the Monitor cannot tell from a jam (#28)."""
 
     name = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
@@ -180,15 +208,27 @@ class AicInsertScripted(_AicSkill):
 
     @classmethod
     def _parameters(cls) -> dict[str, object]:
-        return {"steps": INSERT_STEPS, "end_m": INSERT_END_M}
+        return {
+            "steps": INSERT_STEPS,
+            "end_m": INSERT_END_M,
+            "seated": SEATED,
+            "still_mm": SEATED_STILL_MM,
+        }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         _, insert = descent_offsets()
         for i, z in enumerate(insert):
-            self._descent.command(ctx, self._geometry(), z)
+            g = self._geometry()
+            on_seat, height_mm = seated(g)
+            before = self._descent.last_height_mm
+            if on_seat and before is not None and before - height_mm < SEATED_STILL_MM:
+                detail = {"height_mm": round(height_mm, 3), "seated": True}
+                return SkillResult(ok=True, detail=detail)
+            self._descent.command(ctx, g, z)
             ctx.progress((i + 1) / len(insert))
             await ctx.clock.sleep(ctx.period_s)
-        return SkillResult(ok=True, detail={"depth_mm": ctx.world.signals().depth_mm})
+        on_seat, height_mm = seated(self._geometry())
+        return SkillResult(ok=True, detail={"height_mm": round(height_mm, 3), "seated": on_seat})
 
 
 class AicVerify(_AicSkill):
@@ -204,20 +244,19 @@ class AicVerify(_AicSkill):
 
     @classmethod
     def _parameters(cls) -> dict[str, object]:
-        return {"settle_s": VERIFY_SETTLE_S, "min_depth_mm": VERIFY_MIN_DEPTH_MM}
+        return {"settle_s": VERIFY_SETTLE_S, "seated": SEATED}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         steps = round(VERIFY_SETTLE_S / ctx.period_s)
         for i in range(steps):
             ctx.progress(i / steps)
             await ctx.clock.sleep(ctx.period_s)
-        g = self._geometry()
-        height_mm, _ = plug_to_port_mm(g.port, g.plug)
-        depth_mm = round(max(0.0, -height_mm), 3)
+        on_seat, height_mm = seated(self._geometry())
         ctx.progress(1.0)
-        if depth_mm < VERIFY_MIN_DEPTH_MM:
-            return SkillResult(ok=False, detail={"depth_mm": depth_mm, "reason": "not seated"})
-        return SkillResult(ok=True, detail={"depth_mm": depth_mm})
+        detail: dict[str, object] = {"height_mm": round(height_mm, 3)}
+        if not on_seat:
+            return SkillResult(ok=False, detail={**detail, "reason": "not seated"})
+        return SkillResult(ok=True, detail=detail)
 
 
 class AicRetract(_AicSkill):

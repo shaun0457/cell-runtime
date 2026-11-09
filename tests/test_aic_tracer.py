@@ -63,7 +63,7 @@ def test_insert_cable_runs_the_setting_a_tree_and_records_the_run(store: EventSt
 
 
 def test_the_signals_come_from_ground_truth_tf_and_the_tared_wrench(store: EventStore) -> None:
-    node = FakeNode(task=TASK)
+    node = FakeNode(task=TASK, seat_height_m=None)  # the tip hangs freely under the TCP
     run_goal(node, TASK, store)
 
     last = [e.payload for e in _events(store) if isinstance(e.payload, SignalSampled)][-1]
