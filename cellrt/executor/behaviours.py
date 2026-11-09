@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
@@ -22,7 +22,9 @@ import py_trees
 from py_trees.common import Status
 
 from cellrt.executor.samples import signals_of
+from cellrt.executor.wall import wall_now
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
+from cellrt.monitor.profiles import MonitorProfile
 from cellrt.planner.base import (
     MAX_STORED_PROMPT_CHARS,
     MAX_STORED_RESPONSE_CHARS,
@@ -40,6 +42,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerPreempted,
     PlannerResponded,
     PlannerTimedOut,
     PreconditionFailed,
@@ -60,6 +63,10 @@ PROGRESS_STEP = 0.25
 # (a simulator or a cell, whose time does not stop).
 PlannerWait = Literal["frozen", "live"]
 PLANNER_WAITS: tuple[PlannerWait, ...] = get_args(PlannerWait)
+# The Monitor's rules during a live wait: the safety rules only (dropout and the force
+# limit, ADR 006), which are the `motion` profile's. Holding still is no progress, so the
+# insertion rules would call every hold a stall (ADR 020).
+HOLD_PROFILE: MonitorProfile = "motion"
 # A skill's description, as every planner call (and the log) carries it, is cut to this.
 MAX_DESCRIPTION_CHARS = 300
 
@@ -128,13 +135,15 @@ class TaskTracker:
         running then has awaited something, so the world holds this tick, however soon it
         answers. A call the loop was already waiting on that has just answered holds it too,
         so its answer is read before the world steps again. A call that answers in its first
-        step (the rule planner) never holds it."""
+        step (the rule planner) never holds it, nor does a cancelled call that returned
+        anyway: its answer is never read."""
         # Before `outside_waits`, which forgets finished tasks.
         answered = any(
             w.started is not None
             and w.waited_s is None
             and w.task.done()
             and not w.task.cancelled()
+            and not w.task.cancelling()
             for w in self._outside.values()
         )
         if answered or self.outside_waits():
@@ -149,6 +158,10 @@ class TaskTracker:
         """Outside waits still running, cancelled ones included."""
         self.live_names()
         return list(self._outside)
+
+    def wait_of(self, task: asyncio.Task[Any]) -> OutsideWait | None:
+        """The outside wait of `task`, while it is tracked."""
+        return self._outside.get(task)
 
     def expired(self, task: asyncio.Task[Any]) -> OutsideWait | None:
         """The outside wait of `task` if its deadline has passed, else None."""
@@ -170,6 +183,8 @@ class ExecEnv:
     # The task's time limit on the clock, so the planner can be told how much time is left.
     time_limit_s: float = math.inf
     planner_wait: PlannerWait = "frozen"
+    # Wall time, for planner deadlines and the time a call waited (a test passes a fake).
+    wall_clock: Callable[[], float] = wall_now
 
     def __post_init__(self) -> None:
         if self.planner_wait not in PLANNER_WAITS:
@@ -350,7 +365,9 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
     else, a planner that raised included, is recorded (`planner_output_rejected`) and the node
     fails with `rejection` set. The task is an outside wait with the planner's deadline: when
     the deadline passes the call is cancelled, `planner_timed_out` is recorded and the node
-    fails with `timed_out` set (ADR 016).
+    fails with `timed_out` set (ADR 016). In `live` mode the Monitor watches the hold with
+    the safety rules while the call runs: a verdict cancels the call, `monitor_verdict` and
+    `planner_preempted` are recorded, and the node fails with `preempted` set (ADR 020).
     """
 
     def __init__(
@@ -373,6 +390,10 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self.decision: Decision | None = None
         self.rejection: Rejection | None = None
         self.timed_out = False  # the last call passed its deadline
+        self.preempted: Verdict | None = None  # the verdict that cut the last call short
+        self._wait: OutsideWait | None = None
+        self._called_ns = 0  # clock time the call began
+        self._watched_ts: float | None = None  # the newest sample the Monitor has judged
 
     def ask(self, ctx: FailureContext) -> None:
         self._ctx = ctx
@@ -394,6 +415,8 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self.decision = None
         self.rejection = None
         self.timed_out = False
+        self.preempted = None
+        self._wait = None
 
     def update(self) -> Status:
         ctx = self._ctx
@@ -411,7 +434,14 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
             self._task = self._env.tracker.spawn(
                 self._planner.triage(ctx), name=self.name, deadline_s=self.deadline_s
             )
+            self._wait = self._env.tracker.wait_of(self._task)
+            self._called_ns = self._env.clock.now_ns()
+            self._watched_ts = self._env.recorder.state.last_sample_ts
+            if self._env.planner_wait == "live":
+                self._env.monitor.reset(HOLD_PROFILE)
             return Status.RUNNING
+        if self._env.planner_wait == "live" and (verdict := self._watch_hold()):
+            return self._preempt(ctx, verdict)
         if not self._task.done():
             expired = self._env.tracker.expired(self._task)
             if expired is None:
@@ -435,6 +465,46 @@ class PlannerBehaviour(py_trees.behaviour.Behaviour):
         self.decision = result
         self._env.recorder.emit(PlannerDecided(skill=ctx.skill, decision=result.model_dump()))
         return Status.SUCCESS
+
+    def _watch_hold(self) -> Verdict | None:
+        """The Monitor's verdict on the newest sample, if the world stepped since the last
+        one it judged (the sample before the call was judged by the failed skill)."""
+        state = self._env.recorder.state
+        if state.last_signal is None or state.last_sample_ts == self._watched_ts:
+            return None
+        self._watched_ts = state.last_sample_ts
+        return self._env.monitor.observe(signals_of(state.last_signal))
+
+    def _preempt(self, ctx: FailureContext, verdict: Verdict) -> Status:
+        """The Monitor wins (ADR 006, ADR 020): cancel the call, whose answer is never read,
+        record the verdict and the preemption, and fail the node with `preempted` set."""
+        task, self._task = self._task, None
+        assert task is not None
+        if not task.done():
+            task.cancel()
+        elif not task.cancelled():
+            task.exception()  # retrieved, so asyncio never prints it; the answer is not read
+        self.preempted = verdict
+        env = self._env
+        started = self._wait.started if self._wait is not None else None
+        waited_s = 0.0 if started is None else max(env.wall_clock() - started, 0.0)
+        env.recorder.emit(
+            MonitorVerdict(
+                skill=ctx.skill,
+                failure_class=verdict.failure_class.value,
+                rule=verdict.rule,
+                evidence=verdict.evidence,
+            )
+        )
+        env.recorder.emit(
+            PlannerPreempted(
+                skill=ctx.skill,
+                failure_class=verdict.failure_class.value,
+                waited_s=round(waited_s, 6),
+                waited_sim_s=round((env.clock.now_ns() - self._called_ns) / 1e9, 6),
+            )
+        )
+        return Status.FAILURE
 
     def _time_out(self, ctx: FailureContext, wait: OutsideWait) -> Status:
         """The call passed its deadline: cancel it (any later answer is never read), record it,

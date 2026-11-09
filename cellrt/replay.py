@@ -15,6 +15,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerPreempted,
     PlannerResponded,
     PlannerTimedOut,
     PreconditionFailed,
@@ -88,6 +89,11 @@ def describe(event: Event) -> str:
             return (
                 f"{p.skill} no answer within {p.deadline_s:.2f}s "
                 f"(waited {p.waited_s:.2f}s); call cancelled"
+            )
+        case PlannerPreempted() as p:
+            return (
+                f"{p.skill} call cut short by {p.failure_class} after {p.waited_sim_s:.2f}s "
+                f"(wall {p.waited_s:.2f}s); call cancelled"
             )
         case PlannerDecided() as p:
             return f"{p.skill} -> {p.decision}"

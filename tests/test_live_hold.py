@@ -1,24 +1,25 @@
-"""Live hold (#55, ADR 020): in `live` mode the world keeps stepping while a planner call runs.
-The arm holds, every step is sampled and recorded, the clock advances, and both the call's wall
-deadline and the task's time limit apply. `frozen`, the default, is ADR 016 unchanged.
+"""Live hold (#55, #56, ADR 020): in `live` mode the world keeps stepping while a planner call
+runs. The arm holds, every step is sampled and recorded, the clock advances, and both the call's
+wall deadline and the task's time limit apply. The Monitor watches the hold with the safety rules
+only, and a verdict cuts the call short. `frozen`, the default, is ADR 016 unchanged.
 
 The planner here answers when the world has taken a given number of steps, so the tests are
-deterministic without any wall wait; wall time for the deadline comes from a fake that each world
-step advances, and that fails a loop which keeps reading it without stepping.
+deterministic without any wall wait; wall time comes from a fake that each world step advances,
+and that fails a loop which keeps reading it without stepping.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-import cellrt.executor.runner as runner_module
 from cellrt.eval.faults import materialize
 from cellrt.eval.runner import config_parts
 from cellrt.eval.scenarios import Scenario, load_scenarios
@@ -26,25 +27,30 @@ from cellrt.executor.behaviours import ExecEnv, PlannerWait
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
 from cellrt.executor.trees import build_tree
+from cellrt.executor.wall import wall_now
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import FailureContext
 from cellrt.planner.rule_planner import RulePlanner
+from cellrt.replay import replay_lines
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import SCHEMA_VERSION, Event, RunFinished, RunStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
 from cellrt.skills.mock import mock_registry
+from cellrt.trace_export import export_trace
 from cellrt.world.base import Command, Signals, WorldStopped
 from cellrt.world.mock_world import MockParams, MockWorld
 
 PHASE0 = Path(__file__).resolve().parents[1] / "eval" / "scenarios" / "phase0.yaml"
 YAW = {s.id: s for s in load_scenarios(PHASE0)}["yaw_mismatch"]
 SWITCH_TO_ACT = {"kind": "switch_skill", "skill": "insert_act"}
+DT = MockParams().dt
 # What the fake wall clock advances per world step: a power of two, so it adds up exactly.
 WALL_PER_STEP_S = 1 / 64
 # Reads of the fake wall clock allowed between two world steps: the live loop reads it once per
-# step, and once more on a tick that cancels an expired call.
+# step, and once more on a tick that cancels an expired call or records a preemption.
 MAX_READS_PER_STEP = 3
+SQUEEZE_N = 25.0  # contact force over the 20 N limit
 
 
 class _FakeWall:
@@ -67,8 +73,9 @@ class _FakeWall:
 
 
 class _CountingWorld:
-    """A mock world that counts its steps, wakes waiters at a step count, and advances the
-    fake wall clock on each step."""
+    """A mock world that counts its steps, wakes waiters at a step count, advances the fake wall
+    clock on each step, and can read `SQUEEZE_N` of contact force, or an invalid wrench, for a
+    range of steps."""
 
     def __init__(self, inner: MockWorld, wall: _FakeWall) -> None:
         self._inner = inner
@@ -76,9 +83,18 @@ class _CountingWorld:
         self.steps = 0
         self._waiters: list[tuple[int, asyncio.Event]] = []
         self.stop_after: int | None = None  # steps after which the world stops
+        self.squeeze: tuple[int, int] | None = None  # first and last step that read SQUEEZE_N
+        self.dropout: tuple[int, int] | None = None  # first and last step with no wrench
 
     def signals(self) -> Signals:
-        return self._inner.signals()
+        s = self._inner.signals()
+        if self.dropout is not None and self.dropout[0] <= self.steps <= self.dropout[1]:
+            return dataclasses.replace(s, wrench_valid=False)
+        if self.squeeze is None or not self.squeeze[0] <= self.steps <= self.squeeze[1]:
+            return s
+        tare = s.tare_offset_n
+        raw = (tare[0], tare[1], tare[2] + SQUEEZE_N)
+        return dataclasses.replace(s, raw_force_n=raw, wrench_valid=True)
 
     def command(self, cmd: Command) -> None:
         self._inner.command(cmd)
@@ -121,18 +137,66 @@ class _AfterSteps:
         return dict(SWITCH_TO_ACT)
 
 
+@dataclass
+class _SqueezedOnce:
+    """First call: from `after` steps into the call, for `steps` steps, the arm is pressed with
+    SQUEEZE_N (or, with `fault` "dropout", the wrench is invalid), and the call never answers
+    by itself; cancelled, it answers anyway (an answer that must never be read). Later calls
+    abort at once."""
+
+    world: _CountingWorld
+    after: int = 5
+    steps: int = 10
+    fault: str = "squeeze"
+    deadline_s: float = 30.0
+    released: list[bool] = field(default_factory=list)
+    calls: int = 0
+
+    async def triage(self, ctx: FailureContext) -> object:
+        self.calls += 1
+        if self.calls > 1:
+            return {"kind": "abort", "reason": "second call"}
+        first = self.world.steps + self.after
+        setattr(self.world, self.fault, (first, first + self.steps - 1))
+        try:
+            await self.world.after_steps(10_000).wait()
+        except asyncio.CancelledError:
+            return dict(SWITCH_TO_ACT)  # ignores the cancel and answers late
+        finally:
+            self.released.append(True)
+        return dict(SWITCH_TO_ACT)
+
+
+@dataclass
+class _AnswersAtOnce:
+    """Answers in its first step, so the loop never holds for it; the arm is pressed with
+    SQUEEZE_N on the one sample the world takes before the answer is read."""
+
+    world: _CountingWorld
+    deadline_s: float = 30.0
+
+    async def triage(self, ctx: FailureContext) -> object:
+        self.world.squeeze = (self.world.steps + 1, self.world.steps + 1)
+        return dict(SWITCH_TO_ACT)
+
+
+Planner = Any  # the scripted planners above
+
+
 def _run(
     store: EventStore,
     scenario: Scenario,
     planner_wait: PlannerWait,
-    make_planner: Callable[[_CountingWorld], _AfterSteps],
-    monkeypatch: pytest.MonkeyPatch,
+    make_planner: Callable[[_CountingWorld], Planner],
     *,
     fake_wall: bool = True,
-) -> tuple[list[Event], object]:
+    recovery: RecoveryConfig | None = None,
+    monitor_config: MonitorConfig | None = None,
+    judged: list[float] | None = None,
+) -> tuple[list[Event], Planner]:
+    """Runs `scenario` in setting C. `judged`, if given, receives the time of the sample behind
+    each Monitor observation."""
     wall = _FakeWall()
-    if fake_wall:  # live mode reads the deadline per step; frozen waits on the loop's timer
-        monkeypatch.setattr(runner_module, "time", SimpleNamespace(monotonic=wall.monotonic))
     params = MockParams()
     faults = materialize(scenario.faults, random.Random(f"{scenario.id}:0:faults"))
     world = _CountingWorld(MockWorld(random.Random(f"{scenario.id}:0"), params, faults), wall)
@@ -157,11 +221,21 @@ def _run(
         recorder=recorder,
         period_s=params.dt,
         fault_source=world,  # type: ignore[arg-type]
-        monitor_config=MonitorConfig(),
+        monitor_config=monitor_config or MonitorConfig(),
         time_limit_s=scenario.task.time_limit,
         planner_wait=planner_wait,
+        # live mode reads the deadline per step; frozen waits on the loop's own timer
+        wall_clock=wall.monotonic if fake_wall else wall_now,
     )
-    root = build_tree("C", mock_registry(), env, RecoveryConfig(), planner)  # type: ignore[arg-type]
+    if judged is not None:
+        observe = env.monitor.observe
+
+        def judge(signals: Signals) -> Any:
+            judged.append(recorder.state.last_sample_ts)
+            return observe(signals)
+
+        env.monitor.observe = judge  # type: ignore[method-assign]
+    root = build_tree("C", mock_registry(), env, recovery or RecoveryConfig(), planner)
 
     async def go() -> None:
         outcome, reason = await run_task(root, env, scenario.task)
@@ -187,74 +261,71 @@ def _world_events(events: list[Event]) -> list[str]:
     return [e.type for e in events if e.type != "bt_node_changed"]
 
 
+def _first(events: list[Event], kind: str) -> Event:
+    return next(e for e in events if e.type == kind)
+
+
+# --- the world during a call (#55) -----------------------------------------------------------
+
+
 def test_in_live_mode_the_world_steps_and_is_recorded_while_the_planner_thinks(
-    store: EventStore, monkeypatch: pytest.MonkeyPatch
+    store: EventStore,
 ) -> None:
-    events, _ = _run(store, YAW, "live", lambda w: _AfterSteps(w, steps=40), monkeypatch)
+    events, _ = _run(store, YAW, "live", lambda w: _AfterSteps(w, steps=40))
 
     during = _between(events, "planner_called", "planner_decided")
-    # 40 steps until the answer, which the next tick reads before another step.
+    # 40 steps until the answer, which the next tick reads before another step. 2 s of holding
+    # still, twice the stall window: the Monitor watches the hold with the safety rules only, so
+    # no progress, stall or pose rule calls it a failure (#56).
     assert _world_events(during) == ["signal_sampled"] * 40
-    called = next(e for e in events if e.type == "planner_called")
-    decided = next(e for e in events if e.type == "planner_decided")
-    assert decided.ts - called.ts == pytest.approx(40 * MockParams().dt)
+    called = _first(events, "planner_called")
+    decided = _first(events, "planner_decided")
+    assert decided.ts - called.ts == pytest.approx(40 * DT)
     assert events[-1].payload.outcome == "success"  # the switch to insert_act still runs
 
 
-def test_in_frozen_mode_the_world_never_steps_during_a_call(
-    store: EventStore, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_in_frozen_mode_the_world_never_steps_during_a_call(store: EventStore) -> None:
     # The same planner never answers when the world stands still: the call times out at its
     # deadline, with no step taken (ADR 016, unchanged).
     events, planner = _run(
-        store,
-        YAW,
-        "frozen",
-        lambda w: _AfterSteps(w, steps=40, deadline_s=0.05),
-        monkeypatch,
-        fake_wall=False,
+        store, YAW, "frozen", lambda w: _AfterSteps(w, steps=40, deadline_s=0.05), fake_wall=False
     )
 
     during = _between(events, "planner_called", "planner_timed_out")
     assert _world_events(during) == []
-    assert planner.released == [True]  # type: ignore[attr-defined]
+    assert planner.released == [True]
 
 
 def test_in_live_mode_the_wall_deadline_cancels_a_call_without_blocking_the_loop(
-    store: EventStore, monkeypatch: pytest.MonkeyPatch
+    store: EventStore,
 ) -> None:
     # Never answers within the deadline: 0.5 s of fake wall time is 32 world steps, and the
     # call is cancelled on the next tick, before another step.
     events, planner = _run(
-        store, YAW, "live", lambda w: _AfterSteps(w, steps=10_000, deadline_s=0.5), monkeypatch
+        store, YAW, "live", lambda w: _AfterSteps(w, steps=10_000, deadline_s=0.5)
     )
 
     during = _between(events, "planner_called", "planner_timed_out")
     assert _world_events(during) == ["signal_sampled"] * 32
-    timed_out = next(e for e in events if e.type == "planner_timed_out")
-    assert timed_out.payload.waited_s == pytest.approx(0.5)
-    assert planner.released == [True]  # type: ignore[attr-defined]
+    assert _first(events, "planner_timed_out").payload.waited_s == pytest.approx(0.5)
+    assert planner.released == [True]
     assert events[-1].payload.reason.endswith("(planner timed out)")
 
 
-def test_in_live_mode_the_time_limit_ends_a_run_during_a_call(
-    store: EventStore, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_in_live_mode_the_time_limit_ends_a_run_during_a_call(store: EventStore) -> None:
     short = YAW.model_copy(update={"task": YAW.task.model_copy(update={"time_limit": 9.0})})
 
-    events, planner = _run(
-        store, short, "live", lambda w: _AfterSteps(w, steps=10_000), monkeypatch
-    )
+    events, planner = _run(store, short, "live", lambda w: _AfterSteps(w, steps=10_000))
 
     finished = events[-1].payload
     assert (finished.outcome, finished.reason) == ("aborted", "time limit reached")
     assert finished.duration == pytest.approx(9.0)
-    assert planner.released == [True]  # type: ignore[attr-defined]
+    assert planner.released == [True]
     assert not any(e.type == "planner_decided" for e in events)
 
 
 def test_in_live_mode_a_world_that_stops_during_a_call_ends_the_run_and_the_call(
-    store: EventStore, monkeypatch: pytest.MonkeyPatch
+    store: EventStore,
 ) -> None:
     # On AIC a cancelled goal stops the world on its next step (ADR 012): during a live wait
     # that is seen within a step, not after the answer.
@@ -269,14 +340,143 @@ def test_in_live_mode_a_world_that_stops_during_a_call_ends_the_run_and_the_call
         planner.triage = stop_soon  # type: ignore[method-assign]
         return planner
 
-    events, planner = _run(store, YAW, "live", stops_while_waiting, monkeypatch)
+    events, planner = _run(store, YAW, "live", stops_while_waiting)
 
     during = _between(events, "planner_called", "run_finished")
     assert not any(e.type == "planner_decided" for e in events)
     assert _world_events(during).count("signal_sampled") == 5
     finished = events[-1].payload
     assert (finished.outcome, finished.reason) == ("aborted", "goal_cancelled")
-    assert planner.released == [True]  # type: ignore[attr-defined]
+    assert planner.released == [True]
+
+
+# --- the Monitor during a live wait (#56) ----------------------------------------------------
+
+
+def test_a_force_limit_during_a_live_wait_cuts_the_call_short_and_runs_the_force_plan(
+    store: EventStore,
+) -> None:
+    # 25 N from the 5th step of the wait: each sample over 20 N adds the 0.05 s before it, so
+    # the 10th (step 14 of the wait) brings the task's time over the limit to the 0.5 s trigger.
+    events, planner = _run(store, YAW, "live", _SqueezedOnce)
+
+    during = _between(events, "planner_called", "planner_preempted")
+    assert _world_events(during) == ["signal_sampled"] * 14 + ["monitor_verdict"]
+    verdict = during[-1].payload
+    assert (verdict.skill, verdict.failure_class) == ("insert_scripted", "FORCE_LIMIT")
+    preempted = _first(events, "planner_preempted").payload
+    assert (preempted.skill, preempted.failure_class) == ("insert_scripted", "FORCE_LIMIT")
+    assert preempted.waited_sim_s == pytest.approx(14 * DT)
+    assert preempted.waited_s == pytest.approx(14 * WALL_PER_STEP_S)
+    assert planner.released == [True]  # the cancelled call's cleanup ran
+    after = _between(events, "planner_preempted", "run_finished")
+    recovery = next(e.payload for e in after if e.type == "recovery_started")
+    assert (recovery.failure_class, recovery.action, recovery.source) == (
+        "FORCE_LIMIT",
+        "retract_slow",
+        "monitor",
+    )
+    started = [e.payload.skill for e in after if e.type == "skill_started"]
+    assert started[:2] == ["retract", "insert_scripted"]
+
+
+def test_the_late_answer_of_a_cut_call_is_never_read(store: EventStore) -> None:
+    # The cancelled call answers anyway (switch to insert_act): nothing records or runs it. The
+    # only decision is the second call's abort.
+    events, planner = _run(store, YAW, "live", _SqueezedOnce)
+
+    decided = [e.payload.decision for e in events if e.type == "planner_decided"]
+    assert decided == [{"kind": "abort", "reason": "second call"}]
+    assert planner.calls == 2
+    assert not any(e.type == "skill_started" and e.payload.skill == "insert_act" for e in events)
+
+
+def test_with_the_force_budget_used_up_a_cut_call_fails_the_step(store: EventStore) -> None:
+    no_force_recovery = RecoveryConfig(budgets={**RecoveryConfig().budgets, "FORCE_LIMIT": 0})
+
+    events, _ = _run(store, YAW, "live", _SqueezedOnce, recovery=no_force_recovery)
+
+    finished = events[-1].payload
+    assert (finished.outcome, finished.reason) == (
+        "failed",
+        "insert_scripted failed: FORCE_LIMIT (FORCE_LIMIT recovery budget used up)",
+    )
+    assert not any(
+        e.type == "recovery_started" and e.ts > _first(events, "planner_called").ts for e in events
+    )
+
+
+def test_replay_and_the_trace_show_the_preemption(store: EventStore) -> None:
+    events, _ = _run(store, YAW, "live", _SqueezedOnce)
+
+    lines = list(replay_lines(events))
+    assert any(
+        "insert_scripted call cut short by FORCE_LIMIT after 0.70s" in line for line in lines
+    )
+    spans = [
+        e
+        for e in export_trace(events, clock="sim")["traceEvents"]
+        if e["ph"] == "X" and e["name"] == "planner call 1"
+    ]
+    assert [s["args"]["result"] for s in spans] == ["planner_preempted"]
+
+
+def test_after_a_cut_call_the_monitor_judges_every_sample_once(store: EventStore) -> None:
+    # The cut call ignores its cancel and returns: that must not hold the world for a tick in
+    # which the next skill judges the same sample again (it is in the log only once).
+    judged: list[float] = []
+
+    events, _ = _run(store, YAW, "live", _SqueezedOnce, judged=judged)
+
+    assert _first(events, "planner_preempted")
+    assert len(judged) == len(set(judged))
+
+
+def test_a_sensor_dropout_during_a_live_wait_cuts_the_call_short_and_waits_for_the_sensor(
+    store: EventStore,
+) -> None:
+    # No valid wrench from the 5th step of the wait: the dropout rule needs 0.2 s of invalid
+    # samples, 5 at 0.05 s, so the 5th of them (step 9 of the wait) is the verdict.
+    def dropped(world: _CountingWorld) -> _SqueezedOnce:
+        return _SqueezedOnce(world, steps=5, fault="dropout")
+
+    events, _ = _run(store, YAW, "live", dropped)
+
+    during = _between(events, "planner_called", "planner_preempted")
+    assert _world_events(during) == ["signal_sampled"] * 9 + ["monitor_verdict"]
+    assert during[-1].payload.failure_class == "SENSOR_DROPOUT"
+    preempted = _first(events, "planner_preempted").payload
+    assert preempted.waited_sim_s == pytest.approx(9 * DT)
+    after = _between(events, "planner_preempted", "run_finished")
+    recovery = next(e.payload for e in after if e.type == "recovery_started")
+    assert (recovery.failure_class, recovery.action, recovery.source) == (
+        "SENSOR_DROPOUT",
+        "wait_sensor",
+        "monitor",
+    )
+    assert next(e.payload.skill for e in after if e.type == "skill_started") == "wait_sensor"
+
+
+def test_a_verdict_wins_over_an_answer_that_arrived_with_the_same_sample(
+    store: EventStore,
+) -> None:
+    # The call answers in its first step, so the loop never holds for it: the world steps once
+    # before the answer is read, and that sample is over the force limit. With the trigger at
+    # one sample's worth (0.05 s), the Monitor's verdict comes first and the answer is never
+    # read. The loop never waited on the call, so no wall time was spent on it.
+    one_sample = MonitorConfig(force_trigger_s=DT)
+
+    events, _ = _run(store, YAW, "live", _AnswersAtOnce, monitor_config=one_sample)
+
+    during = _between(events, "planner_called", "planner_preempted")
+    assert _world_events(during) == ["signal_sampled", "monitor_verdict"]
+    first_call = _between(events, "planner_called", "planner_called")
+    assert not any(e.type == "planner_decided" for e in first_call)
+    preempted = _first(events, "planner_preempted").payload
+    assert (preempted.waited_s, preempted.waited_sim_s) == (0.0, pytest.approx(DT))
+
+
+# --- configuration -----------------------------------------------------------------------------
 
 
 def test_the_wait_mode_counts_in_the_planner_part_of_the_config_only() -> None:

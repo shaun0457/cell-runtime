@@ -37,6 +37,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerPreempted,
     PlannerResponded,
     PlannerTimedOut,
     RunFinished,
@@ -80,6 +81,7 @@ class AgentRunSummary:
     invalid: int  # answers that failed validation
     errors: int  # calls that raised
     timeouts: int  # calls cut at their deadline
+    preempted: int  # calls cut short by a Monitor verdict during a live wait (ADR 020)
     latencies_s: tuple[float, ...]  # wall time of each traced call
     prompt_tokens: tuple[int, ...]  # of the traced calls that reported them
     completion_tokens: tuple[int, ...]
@@ -100,6 +102,7 @@ class VariantRow:
     invalid_rate: float | None  # invalid answers per planner call; None: no calls
     errors: int
     timeouts: int
+    preempted: int
     latency_p50_s: float | None
     latency_p95_s: float | None
     prompt_tokens_per_call: float | None
@@ -116,7 +119,7 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
     started = events[0].payload
     skills = 0  # skills started so far: the unit of run_finished.steps
     unknown_at: tuple[float, int] | None = None  # (ts, skills) at the first UNKNOWN verdict
-    calls = invalid = errors = timeouts = 0
+    calls = invalid = errors = timeouts = preempted = 0
     decisions: list[str] = []
     latencies: list[float] = []
     prompt_tokens: list[int] = []
@@ -139,6 +142,8 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
                     invalid += 1
             case PlannerTimedOut():
                 timeouts += 1
+            case PlannerPreempted():
+                preempted += 1
             case PlannerResponded() as trace:
                 latencies.append(trace.latency_s)
                 if trace.prompt_tokens is not None:
@@ -165,6 +170,7 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
         invalid=invalid,
         errors=errors,
         timeouts=timeouts,
+        preempted=preempted,
         latencies_s=tuple(latencies),
         prompt_tokens=tuple(prompt_tokens),
         completion_tokens=tuple(completion_tokens),
@@ -266,6 +272,7 @@ def _row(name: str, repeats: list[list[AgentRunSummary]]) -> VariantRow:
         invalid_rate=sum(s.invalid for s in runs) / calls if calls else None,
         errors=sum(s.errors for s in runs),
         timeouts=sum(s.timeouts for s in runs),
+        preempted=sum(s.preempted for s in runs),
         latency_p50_s=percentile(latencies, 50),
         latency_p95_s=percentile(latencies, 95),
         prompt_tokens_per_call=fmean(prompt) if prompt else None,
@@ -279,7 +286,8 @@ def _success_rate(runs: Sequence[AgentRunSummary]) -> float:
 
 HEADER = (
     "variant", "setting", "runs", "success", "wasted_s", "wasted_steps", "calls/run",
-    "invalid", "errors", "timeouts", "p50_s", "p95_s", "prompt/call", "compl/call",
+    "invalid", "errors", "timeouts", "preempted", "p50_s", "p95_s", "prompt/call",
+    "compl/call",
 )  # fmt: skip
 NOTES = (
     "success: pooled over the repeats (name#N), with the min-max over repeats in brackets",
@@ -287,6 +295,7 @@ NOTES = (
     "invalid: answers that failed validation, per planner call; errors: calls that raised",
     "p50/p95: wall time of traced model calls (nearest rank); tokens: mean per traced call",
     "timed-out and raised calls leave no trace, so p50/p95 leave them out: see those columns",
+    "preempted: calls a Monitor verdict cut short while the world stepped on (live mode)",
 )
 
 
@@ -325,6 +334,7 @@ def _cells(r: VariantRow) -> list[str]:
         _num(r.invalid_rate, "{:.1%}"),
         str(r.errors),
         str(r.timeouts),
+        str(r.preempted),
         _num(r.latency_p50_s, "{:.2f}"),
         _num(r.latency_p95_s, "{:.2f}"),
         _num(r.prompt_tokens_per_call, "{:.0f}"),

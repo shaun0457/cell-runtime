@@ -29,6 +29,7 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerPreempted,
     PlannerResponded,
     PlannerTimedOut,
     RunFinished,
@@ -193,6 +194,29 @@ def test_planner_calls_decisions_rejections_errors_and_timeouts_are_counted() ->
     assert summary.decisions == ("retry", "escalate")
     # Invalid output is an answer that failed validation; a raised call is an error, not output.
     assert (summary.invalid, summary.errors, summary.timeouts) == (1, 1, 1)
+
+
+def test_calls_cut_short_by_the_monitor_are_counted_and_shown() -> None:
+    force = MonitorVerdict(skill="insert_scripted", failure_class="FORCE_LIMIT", rule="r")
+    cut = PlannerPreempted(
+        skill="insert_scripted", failure_class="FORCE_LIMIT", waited_s=0.2, waited_sim_s=0.7
+    )
+    events = _log(
+        (1.0, _verdict("UNKNOWN")),
+        (1.0, _called(1)),
+        (1.7, force),
+        (1.7, cut),
+        _finish("failed", steps=3, at=2.0),
+    )
+
+    summary = summarize_agent_run(events)
+
+    assert summary is not None
+    assert (summary.planner_calls, summary.preempted, summary.timeouts) == (1, 1, 0)
+    lines = render_agent_report(variant_rows([("C-llm", [events])]))
+    header = lines[0].split()
+    row = next(line for line in lines if line.startswith("C-llm ")).split()
+    assert row[header.index("preempted")] == "1"
 
 
 def test_latency_and_tokens_come_from_the_traced_calls() -> None:

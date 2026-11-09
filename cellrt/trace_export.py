@@ -121,7 +121,8 @@ class _Trace:
                 # The prompt can be 16,000 characters; `cellrt replay` and the log keep it.
                 self._planner.args.update(_without(fields, "skill", "prompt"))
         elif kind.startswith("planner_"):
-            # Decided, rejected, timed out (planner_timed_out), or a planner event added later:
+            # Decided, rejected, timed out, preempted by the Monitor (planner_preempted), or a
+            # planner event added later:
             # the call is over, and the event's fields say how.
             ending = {"result": kind, **_without(fields, "skill")}
             self._end(self._planner, event, fields, ending, "planner")

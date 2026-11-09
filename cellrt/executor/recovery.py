@@ -220,10 +220,15 @@ class Recovering(py_trees.composites.Composite):
                 self.stop(Status.FAILURE)
                 yield self
                 return
-            again = self._slow_for.get(node, node) if plan.slow else node
-            self._queue = [*(self._helpers[name] for name in plan.before), again, *self._queue[1:]]
+            self._recover(node, plan)
         self.stop(Status.SUCCESS)
         yield self
+
+    def _recover(self, node: SkillBehaviour, plan: Plan) -> None:
+        """Queue the plan's helpers, then the failed skill again (its slow variant for a
+        slow plan), in place of the step's current node."""
+        again = self._slow_for.get(node, node) if plan.slow else node
+        self._queue = [*(self._helpers[name] for name in plan.before), again, *self._queue[1:]]
 
     def _consult(self, node: SkillBehaviour) -> bool:
         """Hand a failure to the planner: only in setting C, only an UNKNOWN from the Monitor
@@ -267,6 +272,17 @@ class Recovering(py_trees.composites.Composite):
         assert failed is not None
         skill = failed.skill.name
         decision = planner.decision
+        if planner.preempted is not None:
+            # The Monitor won during the wait (ADR 020): recover as if the failed skill had
+            # failed with the verdict's class, within that class's budgets.
+            failed.failure = planner.preempted.failure_class.value
+            failed.failure_source = "monitor"
+            failed.verdict = planner.preempted
+            plan = self._plan_for(failed)
+            if plan is None:
+                return False
+            self._recover(failed, plan)
+            return True
         if planner.status != Status.SUCCESS or decision is None:
             self.aborted = True
             why = "planner timed out" if planner.timed_out else "planner output rejected"

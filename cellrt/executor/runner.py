@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import time
 
 import py_trees
 from py_trees.common import Status
@@ -74,11 +73,11 @@ async def run_task(
             waits = env.tracker.outside_waits()
             if env.planner_wait == "frozen":
                 if waits:
-                    await _wait_outside(waits)
+                    await _wait_outside(waits, env)
                 continue  # tick again: the world does not move while the planner thinks
             # live: the world steps on while the arm holds. A call that has just answered is
             # read, and one past its deadline cancelled, on the next tick, before another step.
-            if not waits or _check_deadlines(waits):
+            if not waits or _check_deadlines(waits, env):
                 continue
         try:
             elapsed = env.world.step(env.period_s)
@@ -131,23 +130,23 @@ async def drain(env: ExecEnv) -> None:
     )
 
 
-async def _wait_outside(waits: list[OutsideWait]) -> None:
+async def _wait_outside(waits: list[OutsideWait], env: ExecEnv) -> None:
     """Wait in wall time until a call finishes or the earliest deadline passes; mark every call
     whose deadline has passed, for its node to cancel on the next tick."""
-    now = time.monotonic()
+    now = env.wall_clock()
     _start(waits, now)
     remaining = min(w.started + w.deadline_s for w in waits if w.started is not None) - now
     if remaining > 0:
         await asyncio.wait(
             [w.task for w in waits], timeout=remaining, return_when=asyncio.FIRST_COMPLETED
         )
-    _mark_expired(waits, time.monotonic())
+    _mark_expired(waits, env.wall_clock())
 
 
-def _check_deadlines(waits: list[OutsideWait]) -> bool:
+def _check_deadlines(waits: list[OutsideWait], env: ExecEnv) -> bool:
     """Live mode: the same deadlines as `_wait_outside`, checked once per step, never waited
     on. Marks every call whose deadline has passed, for its node to cancel; True if any was."""
-    now = time.monotonic()
+    now = env.wall_clock()
     _start(waits, now)
     _mark_expired(waits, now)
     return any(w.waited_s is not None for w in waits)
