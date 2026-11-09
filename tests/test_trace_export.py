@@ -3,6 +3,7 @@ left in the event log by `run_unit`, read back and exported."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from cellrt.eval.runner import run_unit
 from cellrt.eval.scenarios import load_scenarios
+from cellrt.planner.base import FailureContext
 from cellrt.planner.llm import ChatReply, ChatRequest, LlmPlanner, LlmPlannerConfig
 from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.events import Event, SignalSampled, SkillStarted
@@ -305,10 +307,10 @@ def test_a_skill_started_again_before_it_ended_ends_its_open_span_unfinished() -
     assert (second["args"]["attempt"], second["ts"], second["dur"]) == (2, 1_000_000, 0)
 
 
-class _PlannerTimedOut(BaseModel):
-    """The shape #47 adds to the log; not in this checkout's event union."""
+class _PlannerFuture(BaseModel):
+    """A planner event no version of the log has: the export must still end the call with it."""
 
-    type: Literal["planner_timed_out"] = "planner_timed_out"
+    type: Literal["planner_future"] = "planner_future"
     skill: str
     deadline_s: float
     waited_s: float
@@ -325,13 +327,13 @@ def test_a_planner_event_the_export_does_not_know_ends_the_call_with_its_fields(
         seq=events[decided].seq,
         ts=events[decided].ts,
         wall_ts=events[decided].wall_ts,
-        payload=_PlannerTimedOut(skill="insert_scripted", deadline_s=30.0, waited_s=30.0),
+        payload=_PlannerFuture(skill="insert_scripted", deadline_s=30.0, waited_s=30.0),
     )
     log = [*events[: called + 1], timed_out, *events[decided + 1 :]]
 
     [call] = _spans(_round_trip(export_trace(log, clock="sim")), "planner")
 
-    assert call["args"]["result"] == "planner_timed_out"
+    assert call["args"]["result"] == "planner_future"
     assert (call["args"]["deadline_s"], call["args"]["waited_s"]) == (30.0, 30.0)
     assert _end(call) == round(events[decided].ts * 1_000_000)
     assert "unfinished" not in call["args"]
@@ -370,3 +372,45 @@ def test_an_end_whose_start_is_not_in_the_log_is_still_shown_as_an_instant(
     assert "planner_responded" not in json.dumps(_instants(trace, "run"))
     [approach_end] = [i for i in _instants(trace, "skills") if i["args"].get("skill") == "approach"]
     assert approach_end["name"] == "skill_finished"
+
+
+# --- planner events added on phase3/llm-path after this export was written (#47, #48) -------
+
+
+@dataclass
+class _NeverAnswers:
+    """A planner call that never answers: the runtime cancels it at its deadline (#47)."""
+
+    deadline_s: float = 0.05
+
+    async def triage(self, ctx: FailureContext) -> object:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
+@dataclass
+class _Escalates:
+    """Hands the task to a person on its first call (#48)."""
+
+    async def triage(self, ctx: FailureContext) -> object:
+        return {"kind": "escalate", "reason": "port looks damaged"}
+
+
+def test_a_timed_out_planner_call_ends_its_span_with_the_timeout(store: EventStore) -> None:
+    trace = _round_trip(export_trace(_yaw_run(store, planner=_NeverAnswers())))
+
+    [call] = _spans(trace, "planner")
+    assert call["args"]["result"] == "planner_timed_out"
+    assert call["args"]["deadline_s"] == 0.05 and call["args"]["waited_s"] >= 0.05
+    [run] = _spans(trace, "run")
+    assert run["args"]["outcome"] == "aborted"
+
+
+def test_an_escalation_ends_the_planner_span_with_its_decision(store: EventStore) -> None:
+    trace = _round_trip(export_trace(_yaw_run(store, planner=_Escalates())))
+
+    [call] = _spans(trace, "planner")
+    assert call["args"]["result"] == "planner_decided"
+    assert call["args"]["decision"] == {"kind": "escalate", "reason": "port looks damaged"}
+    [run] = _spans(trace, "run")
+    assert run["args"]["outcome"] == "aborted"
