@@ -44,6 +44,16 @@ won), each of which must show a recovery or planner call in its log, and notes o
 depend on the mock. `docs/phase0-results.md` has the 20-seed results and what they do and do
 not show.
 
+The Phase 3 scenarios (`eval/scenarios/phase3.yaml`, ADR 019) add a second UNKNOWN,
+`damaged_port`, that no skill can fix: the right decision is to stop early. Both of the file's
+faults are designed by us. `--planner` (on `eval` and `run`) chooses what setting C asks:
+`rule`, the default, or `fixed`, which retries and then aborts on its last planner call without
+reading the evidence. stderr names the planner, since the table's C row does not:
+
+```sh
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --planner fixed
+```
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted

@@ -129,5 +129,29 @@ class YawMismatch:
         }
 
 
+@dataclass(frozen=True)
+class DamagedPort:
+    """The port is damaged at its entrance: the plug stops at `stall_depth_mm` under low force
+    and low torque, whatever the skill does. Like a yaw mismatch it stalls without a known
+    signature, but nothing frees it: not twisting, not pulling out and pushing in again."""
+
+    fault_id: str
+    stall_depth_mm: float
+    force_n: float
+    torque_nm: float
+    kind: str = "damaged_port"
+    label: FailureClass = FailureClass.UNKNOWN
+
+    @property
+    def params(self) -> Mapping[str, Any]:
+        return {
+            "stall_depth_mm": self.stall_depth_mm,
+            "force_n": self.force_n,
+            "torque_nm": self.torque_nm,
+        }
+
+
 TimedFault = ControllerStall | SensorDropout
-Fault = ControllerStall | SensorDropout | Obstacle | TightFit | PoseShift | YawMismatch
+Fault = (
+    ControllerStall | SensorDropout | Obstacle | TightFit | PoseShift | YawMismatch | DamagedPort
+)

@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -19,6 +20,9 @@ from cellrt.eval.report import NOTES, render_confusion, render_gains, render_tab
 from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.trees import SETTINGS
+from cellrt.planner.base import Planner
+from cellrt.planner.fixed_planner import FixedPlanner
+from cellrt.planner.rule_planner import RulePlanner
 from cellrt.replay import replay_lines
 from cellrt.runtime.store import EventStore
 
@@ -30,10 +34,16 @@ BASELINE_SEEDS = 3
 BASELINE_K = 2
 # Validation errors shown for an invalid scenarios file (location and type only).
 MAX_SHOWN_ERRORS = 5
+# The planners setting C can ask, by the name `--planner` takes. Each entry builds one planner
+# that serves every run of the command (ADR 019).
+PLANNERS: dict[str, Callable[[], Planner]] = {"rule": RulePlanner, "fixed": FixedPlanner}
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
 
 DbOption = Annotated[Path, typer.Option(help="SQLite event store")]
+PlannerOption = Annotated[
+    str, typer.Option(help=f"planner for setting C: one of {', '.join(PLANNERS)}")
+]
 
 
 @app.command()
@@ -43,15 +53,23 @@ def run(
     seed: Annotated[int, typer.Option(min=0)] = 0,
     scenarios: Annotated[Path, typer.Option(help="scenarios YAML file")] = DEFAULT_SCENARIOS,
     db: DbOption = DEFAULT_DB,
+    planner: PlannerOption = "rule",
 ) -> None:
     """Run one (scenario, setting, seed) and print its run id."""
     if setting not in SETTINGS:
         _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
+    chosen = _planner(planner)
     by_id = {s.id: s for s in _load(scenarios)}
     if scenario not in by_id:
         _fail(f"unknown scenario {scenario!r}; known: {', '.join(by_id)}")
     with EventStore(db) as store:
-        result = run_unit(by_id[scenario], setting, seed, store)  # type: ignore[arg-type]
+        result = run_unit(
+            by_id[scenario],
+            setting,  # type: ignore[arg-type]
+            seed,
+            store,
+            planner=chosen if setting == "C" else None,
+        )
     typer.echo(f"outcome: {result.outcome}")
     typer.echo(result.run_id)
 
@@ -63,15 +81,19 @@ def eval_(
     seeds: Annotated[int, typer.Option(min=1, max=MAX_SEEDS, help="runs seeds 0..N-1")] = 20,
     k: Annotated[int, typer.Option(min=1, help="k for pass^k")] = 5,
     db: DbOption = DEFAULT_DB,
+    planner: PlannerOption = "rule",
 ) -> None:
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
+    chosen_planner = _planner(planner)
     loaded = _load(scenarios)
     with EventStore(db) as store:
-        runs = run_eval(loaded, chosen, seeds, store)  # type: ignore[arg-type]
+        runs = run_eval(loaded, chosen, seeds, store, planner=chosen_planner)  # type: ignore[arg-type]
         table = compute_metrics((store.events(r) for r in runs.run_ids), k)
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
+    if "C" in chosen:  # the table's C row does not say which planner it ran with
+        typer.echo(f"planner for setting C: {planner}", err=True)
     if runs.gave_up:
         typer.echo(
             f"gave up on {len(runs.gave_up)} units interrupted {MAX_ATTEMPTS} times"
@@ -160,6 +182,13 @@ def _settings(settings: str) -> list[str]:
         if setting not in SETTINGS:
             _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
     return chosen
+
+
+def _planner(name: str) -> Planner:
+    """The planner `--planner` names (used by setting C only); exit on an unknown name."""
+    if name not in PLANNERS:
+        _fail(f"unknown planner {name!r}; known: {', '.join(PLANNERS)}")
+    return PLANNERS[name]()
 
 
 @app.command()

@@ -17,6 +17,9 @@ from cellrt.runtime.store import EventStore
 
 REPO = Path(__file__).resolve().parent.parent
 PHASE0 = REPO / "eval" / "scenarios" / "phase0.yaml"
+PHASE3 = REPO / "eval" / "scenarios" / "phase3.yaml"
+# Fault kinds only the Phase 3 scenarios use (ADR 019): phase0.yaml stays as it was.
+PHASE3_ONLY_KINDS = {"damaged_port"}
 
 TWO_SCENARIOS = """\
 scenarios:
@@ -42,7 +45,8 @@ def _cellrt(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_the_phase0_file_has_a_baseline_and_one_scenario_per_fault_kind() -> None:
+def test_each_fault_kind_has_one_scenario_in_phase0_or_else_in_phase3() -> None:
+    """Every fault kind but the Phase 3 ones, each once; the Phase 3 kinds are in phase3.yaml."""
     scenarios = load_scenarios(PHASE0)
     union = typing.get_args(typing.get_args(FaultSpec)[0])
     all_kinds = {typing.get_args(spec.model_fields["kind"].annotation)[0] for spec in union}
@@ -51,7 +55,9 @@ def test_the_phase0_file_has_a_baseline_and_one_scenario_per_fault_kind() -> Non
     assert ids[0] == "baseline" and scenarios[0].faults == []
     per_scenario = [[f.kind for f in s.faults] for s in scenarios[1:]]
     assert all(len(kinds) == 1 for kinds in per_scenario)
-    assert sorted(k[0] for k in per_scenario) == sorted(all_kinds)
+    assert sorted(k[0] for k in per_scenario) == sorted(all_kinds - PHASE3_ONLY_KINDS)
+    phase3_kinds = {f.kind for s in load_scenarios(PHASE3) for f in s.faults}
+    assert PHASE3_ONLY_KINDS <= phase3_kinds <= all_kinds
 
 
 def test_run_eval_runs_every_scenario_setting_and_seed_in_order(tmp_path: Path) -> None:

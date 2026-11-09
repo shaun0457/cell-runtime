@@ -14,6 +14,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat
 
 from cellrt.world.faults import (
     ControllerStall,
+    DamagedPort,
     Fault,
     Obstacle,
     PoseShift,
@@ -104,13 +105,25 @@ class YawMismatchSpec(BaseModel):
     yaw_deg: MagnitudeRange
 
 
+class DamagedPortSpec(BaseModel):
+    """Phase 3 only (ADR 019): `eval/scenarios/phase3.yaml` uses it, `phase0.yaml` does not."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["damaged_port"] = "damaged_port"
+    stall_depth_mm: DepthRange
+    force_n: MagnitudeRange
+    torque_nm: MagnitudeRange
+
+
 FaultSpec = Annotated[
     ControllerStallSpec
     | SensorDropoutSpec
     | ObstacleSpec
     | TightFitSpec
     | PoseShiftSpec
-    | YawMismatchSpec,
+    | YawMismatchSpec
+    | DamagedPortSpec,
     Field(discriminator="kind"),
 ]
 
@@ -170,6 +183,15 @@ def materialize(specs: list[FaultSpec], rng: random.Random) -> list[Fault]:
                         force_n=_draw(rng, spec.force_n),
                         torque_nm=_draw(rng, spec.torque_nm),
                         yaw_deg=_draw(rng, spec.yaw_deg),  # drawn last: earlier draws unchanged
+                    )
+                )
+            case DamagedPortSpec():
+                faults.append(
+                    DamagedPort(
+                        fault_id=fault_id,
+                        stall_depth_mm=_draw(rng, spec.stall_depth_mm),
+                        force_n=_draw(rng, spec.force_n),
+                        torque_nm=_draw(rng, spec.torque_nm),
                     )
                 )
     return faults
