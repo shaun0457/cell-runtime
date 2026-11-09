@@ -84,7 +84,10 @@ Current shape (since #25, the plan's defaults):
 #### Option B — `aborted` for every stop in the cell, as the plan says
 - Pros: one outcome for "the arm was stopped"; the reason tells them apart.
 - Cons: the cell's runs and the mock's runs disagree on what `failed` means, unless the core
-  changes too. Changing the core changes the outcome of stored mock runs.
+  changes too. Changing the core (`cellrt/executor/runner.py:56`) means no run ends `failed`
+  any more, so the outcome no longer tells a known failure from a run stopped from outside,
+  and about 20 test assertions on a `failed` outcome change with it. No metric changes either
+  way: the metrics and the report only tell success from the rest (`cellrt/eval/metrics.py`).
 
 ### Confirming the arm stopped
 
