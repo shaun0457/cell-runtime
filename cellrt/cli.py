@@ -41,6 +41,15 @@ from cellrt.planner.nim import (
     ModelCallCap,
 )
 from cellrt.planner.smoke import run_smoke
+from cellrt.promotion.groups import (
+    DEFAULT_MIN_SIZE,
+    MAX_MIN_SIZE,
+    SurveyTooLarge,
+    group_unknowns,
+    render_survey,
+    survey,
+)
+from cellrt.promotion.replay import ReplayConfig
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
@@ -56,6 +65,12 @@ BASELINE_K = 2
 MAX_SHOWN_ERRORS = 5
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
+promote_app = typer.Typer(
+    no_args_is_help=True,
+    help="UNKNOWN promotion: group recurring UNKNOWNs, check a candidate rule by replay"
+    " (ADR 021, ADR 022).",
+)
+app.add_typer(promote_app, name="promote")
 
 DbOption = Annotated[Path, typer.Option(help="SQLite event store")]
 # The planners setting C can ask, by the name `--planner` takes (`build_planner`, ADR 019). One
@@ -330,6 +345,29 @@ def agent_report(
         _fail(str(exc))
     for line in render_agent_report(rows):
         typer.echo(line)
+
+
+@promote_app.command(name="group")
+def promote_group(
+    db: DbOption = DEFAULT_DB,
+    min_size: Annotated[
+        int,
+        typer.Option(min=1, max=MAX_MIN_SIZE, help="verdicts a group needs to be a candidate"),
+    ] = DEFAULT_MIN_SIZE,
+) -> None:
+    """Replay the Monitor over every run in a mock store, check that it reproduces each
+    recorded verdict (gate 0, ADR 022), and print the UNKNOWN verdicts grouped by signature."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    try:
+        runs = survey(_runs_of("store", db), ReplayConfig.mock())
+    except (StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    lines, passed = render_survey(runs, group_unknowns(runs), min_size)
+    for line in lines:
+        typer.echo(line)
+    if not passed:
+        raise typer.Exit(code=1)
 
 
 @app.command()
