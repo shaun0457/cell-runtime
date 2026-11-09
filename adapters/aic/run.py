@@ -2,7 +2,9 @@
 
 `RuntimePolicy.insert_cable` calls `run_goal` in aic_model's action thread. Each goal gets its
 own asyncio loop (`asyncio.run`), its own `SimClock` starting at 0 and its own run in the
-store: scenario = task id, setting A, seed 0, next attempt number.
+store: setting A, seed 0, the next attempt number, and the scenario the caller names (by default
+the task id). `RuntimePolicy` names one per goal with `goal_scenario_id`: aic_engine sends no
+trial id, and in its sample config every trial's task is `task_1`.
 
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
@@ -18,6 +20,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import re
 
 import py_trees
 from py_trees.common import Status
@@ -56,8 +59,32 @@ GEOMETRY_SOURCE = "ground_truth"
 HOLD_SPEED_MM_S = 5.0
 HOLD_SAMPLES = 3
 HOLD_DEADLINE_S = 1.0
+DEFAULT_SESSION = "aic"
+_SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # After these the world's clock cannot be trusted to move: the stop is not waited for.
 _CLOCK_STOPPED = frozenset({"sim_clock_stalled", "sim_time_reset", "node_error"})
+
+
+def session_label(raw: str | None) -> str:
+    """The engine config's name for scenario ids (`CELLRT_SESSION`), or the default; raises
+    ValueError for anything but a plain name of 1 to 64 characters."""
+    if raw is None:
+        return DEFAULT_SESSION
+    if not _SESSION.fullmatch(raw):
+        raise ValueError(
+            "CELLRT_SESSION must be 1-64 letters, digits, '_', '.' or '-', starting with a"
+            " letter or digit"
+        )
+    return raw
+
+
+def goal_scenario_id(session: str, goal: int, task_id: str) -> str:
+    """One unit per goal of an engine run: the same engine config run again gives the same ids,
+    so its runs are new attempts of the same units. Goal N is the N-th goal the policy received,
+    which is the N-th task of the config only if the engine sent every goal before it: a trial
+    the engine skips (its model not ready, aic_engine.cpp:730-737) or a task it never sends
+    (after an earlier task's timeout, :1394-1400) shifts every later goal by one."""
+    return f"{session}/goal{goal}/{task_id}"
 
 
 def run_goal(
@@ -65,34 +92,39 @@ def run_goal(
     task: Task,
     store: EventStore,
     *,
+    scenario_id: str | None = None,
     stall_wall_s: float = SIM_STALL_WALL_S,
     poll_wall_s: float = POLL_WALL_S,
     monitor: MonitorConfig | None = None,
 ) -> bool:
     """Run `task` to its end in the calling thread and record it; True if the run succeeded.
     The calling thread must not be running an event loop."""
+    scenario = task.id if scenario_id is None else scenario_id
     return asyncio.run(
-        _run_goal(node, task, store, stall_wall_s, poll_wall_s, monitor or MonitorConfig())
+        _run_goal(
+            node, task, scenario, store, stall_wall_s, poll_wall_s, monitor or MonitorConfig()
+        )
     )
 
 
 async def _run_goal(
     node: NodePort,
     task: Task,
+    scenario_id: str,
     store: EventStore,
     stall_wall_s: float,
     poll_wall_s: float,
     monitor: MonitorConfig,
 ) -> bool:
-    attempt = store.next_attempt(task.id, SETTING, SEED)
+    attempt = store.next_attempt(scenario_id, SETTING, SEED)
     clock = SimClock()
     recorder = FeedbackRecorder(
-        f"{task.id}/{SETTING}/{SEED}/a{attempt}", store, clock, node.send_feedback
+        f"{scenario_id}/{SETTING}/{SEED}/a{attempt}", store, clock, node.send_feedback
     )
     parts = _config_parts(task, monitor, stall_wall_s, poll_wall_s)
     recorder.emit(
         RunStarted(
-            scenario_id=task.id,
+            scenario_id=scenario_id,
             setting=SETTING,
             seed=SEED,
             attempt=attempt,

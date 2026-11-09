@@ -58,7 +58,13 @@ reported on stderr, so a unit that crashes every time cannot block the rest.
 `adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch
 the model with `policy:=adapters.aic.RuntimePolicy`, with cell-runtime installed in its
 environment. Each goal (one task) becomes one run in the store named by `CELLRT_STORE`
-(default `runs/aic.sqlite`): scenario = task id, setting A, seed 0. `cellrt replay` reads those
+(default `runs/aic.sqlite`): setting A, seed 0, and one scenario per goal,
+`<session>/goal<N>/<task id>`, where `CELLRT_SESSION` names the engine config (default `aic`):
+the engine sends no trial id, and every sample-config trial's task is `task_1`. Running the same
+config again gives new attempts of the same scenarios, so set a new `CELLRT_SESSION` for every
+other engine config: two configs under one session would share scenario ids and their runs
+could not be told apart. Goal N matches the config's N-th task only when the engine sent every
+goal before it (a trial it skips shifts the later ones). `cellrt replay` reads those
 runs like any other.
 
 The policy runs setting A as CheatCode's two phases split into skills: `approach`, `align`

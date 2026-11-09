@@ -113,6 +113,34 @@ Current shape:
 - Pros: no hook in the code.
 - Cons: where the kill lands depends on timing; flaky on a loaded CI runner.
 
+### 6. What a unit is in the AIC cell (Phase 1)
+
+aic_engine sends no trial id: a goal carries only its `Task`, and in the sample config every
+trial's task is `task_1`. One `RuntimePolicy` lives for a whole engine run (the engine
+configures the model node only on its first trial).
+
+#### Option A — `<session>/goal<N>/<task id>`: the policy numbers its goals, `CELLRT_SESSION` names the engine config (current)
+- Pros: one unit per trial with nothing from upstream; running the same config again gives new
+  attempts of the same units, as in the mock.
+- Cons: goal N is the config's N-th task only if the engine sent every goal before it (a
+  skipped trial shifts the later ones); two configs under one session share ids; a policy that
+  outlives an engine run (the engine's testing-only `skip_model_ready`, or a node configured by
+  hand) keeps counting, so a rerun gets new units instead of attempts.
+
+#### Option B — the task id alone (before)
+- Pros: nothing to configure.
+- Cons: the three sample-config trials become three attempts of one unit.
+
+#### Option C — a timestamp or random id per policy in the default session
+- Pros: two engine runs can never share ids.
+- Cons: a rerun of the same config is never an attempt of the same unit, so pass^k over reruns
+  needs the ids matched by hand.
+
+#### Option D — the runner that writes the engine configs passes each goal's scenario to the policy
+- Pros: ids name the real scenario, with no counting; the Phase 2 eval needs a runner like this
+  anyway.
+- Cons: no such runner yet (Phase 2); a hand-started engine run still needs one of A-C.
+
 ## Decision
 
 <!-- Written by Shaun. -->
@@ -122,6 +150,16 @@ Current shape:
 <!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
 
 ## Consequences
+
+- In the AIC cell (Phase 1), Option A of question 6: a unit is one goal of an engine run: scenario
+  `<session>/goal<N>/<task id>`, setting A, seed 0. `CELLRT_SESSION` names the engine config, so
+  running it again gives new attempts of the same units. The engine sends no trial id, and in
+  its sample config every trial's task is `task_1`; keyed by task id alone, the three trials
+  would be three attempts of one unit. The cell never reruns a unit by itself. Two limits:
+  two engine configs run under the same session share scenario ids, and goal N is the
+  config's N-th task only when the engine sent every goal before it (a trial it skips because
+  the model was not ready, or a task it never sends after a timeout, shifts the later goals).
+  A Phase 2 runner that writes the engine configs can name the scenarios itself.
 
 - An eval command is safe to rerun any number of times; `ran N units, M already finished` on
   stderr says what it did.
