@@ -100,6 +100,32 @@ Current shape (since #23 and #24, the plan's defaults):
 - Pros: every wrench message has its own sample.
 - Cons: 2.5 times the events; skills ported from CheatCode would need retimed loops.
 
+### Waiting for the cell to be ready at a goal's start
+
+TF and the F/T stream may not be up when a goal arrives: the subscriptions are made per goal,
+and the wrench is usable only after the first controller state has given a tare.
+
+#### Option A — a bounded wait in sim time before the tree starts: ground-truth frames and a fresh tared wrench, up to 10 s, polled every 50 ms (current default)
+- Pros: the same bound as CheatCode's TF wait (`CheatCode.py:45-68`), so the policy is no less
+  patient than the expert it is built from. Frames still missing at the bound stop the run as
+  `ground_truth_unavailable`; a wrench still missing is left to the Monitor (SENSOR_DROPOUT), so
+  a broken F/T stream is classified, not hidden. Cancels and a stalled sim are still seen during
+  the wait. The run's clock counts the wait, so `Task.time_limit` does too, and the wait never
+  outlasts it: a wait that uses the whole limit ends the run without moving.
+- Cons: up to 10 s of a task's time limit is spent before anything moves. 10 s and 50 ms are
+  CheatCode's numbers, not measured ones (#28).
+
+#### Option B — subscribe once, when the policy is created, instead of per goal
+- Pros: from the second goal on the stream is already flowing; no wait at all.
+- Cons: the first goal still needs a wait; readings from between goals sit in the feed; ROS-only
+  code that cannot be tested without the sim.
+
+#### Option C — no wait: read at once, as before
+- Pros: nothing to build.
+- Cons: a goal that arrives before TF fails as `ground_truth_unavailable` where CheatCode would
+  have waited, and a first wrench later than 0.2 s is a SENSOR_DROPOUT that is not a sensor
+  fault.
+
 ## Decision
 
 <!-- Written by Shaun. -->
@@ -120,8 +146,8 @@ Current shape (since #23 and #24, the plan's defaults):
   aic_model switches the controller's target mode with a synchronous service call that has no
   timeout (`aic_model.py:190-194`, `:312-320`). A controller that never answers would block the
   policy thread inside `world.command`. CheatCode has the same exposure.
-- A run starts reading TF and F/T as soon as the goal arrives. CheatCode first waits up to 10 s
-  for the ground-truth frames (`CheatCode.py:45-70`). The policy aborts at once
-  (`ground_truth_unavailable`), and the first wrench may take longer than the Monitor's 0.2 s
-  dropout window to arrive. A bounded wait for readiness is still open (neither #25 nor #27
-  added one; to settle with the VM run, #28).
+- A goal first waits for the cell to be ready (Option A of the readiness options above): the
+  first `skill_started` is stamped with the time the wait took. A wait that ends in a stop has
+  sent no command, so it neither holds nor records `hold_checked` (ADR 012). Wrench readings
+  drained during the wait are not summed into the time over 20 N (ADR 013). Whether 10 s is
+  enough on the VM is to be checked there (#28).

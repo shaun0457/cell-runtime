@@ -95,6 +95,8 @@ Current shape (since #26, the plan's defaults):
     end of the task.
   - A stamp that goes backwards adds 0, where the scorer would add a negative gap; the log
     rejects negative time.
+  - Readings drained while a goal waits for the cell to be ready (up to 10 s, ADR 011) are
+    not summed. The arm has not moved yet, so contact force is unlikely there.
   - The ROS subscription keeps 5 messages (QoS depth, as aic_adapter). Messages lost there,
     while the node's executor is busy, are not counted as drops.
 - To check on the VM (#28): our summed time over 20 N against the scorer's report for the same

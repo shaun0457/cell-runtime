@@ -5,8 +5,10 @@ a test sets it to 0 to stall the sim, or schedules a jump back with `reset_after
 arm tracks every position target exactly, and the plug hangs `PLUG_BELOW_TCP_M` under the TCP.
 Goal events (a cancel, an abort, deactivation) and failures are scripted by sleep count.
 The F/T broadcaster publishes every `wrench_period_s` of sim time (50 Hz by default), from
-`wrench_age_s` before the goal's start, through a real `WrenchFeed`; `force_at` scripts the raw
-force per stamp, and `wrench_until_s` stops the stream.
+`wrench_age_s` before the goal's start (or `wrench_delay_s` after it), through a real
+`WrenchFeed`; `force_at` scripts the raw force per stamp, and `wrench_until_s` stops the stream.
+`frames_from_s` keeps the ground-truth frames away until that much sim time after the goal's
+start, as TF that is not up yet when a goal arrives.
 `tcp_at_send` keeps the TCP measured just before each motion update, so a test can tell HOLD
 (a target at the measured pose) from a skill's last target.
 """
@@ -41,6 +43,8 @@ class FakeNode:
     tcp: Pose = START_TCP
     hide_frames: frozenset[str] = frozenset()
     wrench_age_s: float = 0.0  # how far the F/T stream lags sim time
+    wrench_delay_s: float = 0.0  # the first message comes this long after the goal's start
+    frames_from_s: float | None = None  # no ground-truth frame before this, from the start
     wrench_period_s: float = 0.02  # the broadcaster's 50 Hz
     wrench_until_s: float | None = None  # no message stamped after this
     force_at: Callable[[float], Vec3] | None = None  # raw force per stamp; else raw_force
@@ -104,6 +108,9 @@ class FakeNode:
         after = self.fail_transform_after_sleeps
         if after is not None and self.sleeps >= after:
             raise RuntimeError(SECRET)
+        early = self.frames_from_s
+        if early is not None and self.sim_s - self.start_sim_s < early - 1e-9:
+            return None
         hidden = self.hide_frames_after_sleeps
         if frame in self.hide_frames or (hidden is not None and self.sleeps >= hidden):
             return None
@@ -118,7 +125,7 @@ class FakeNode:
         if self.has_controller_state:
             self.wrenches.on_tare(TARE_N, (0.0, 0.0, 0.0))
         if self.wrench_start_s is None:  # the stream starts with the goal
-            self.wrench_start_s = self.sim_s - self.wrench_age_s
+            self.wrench_start_s = self.sim_s - self.wrench_age_s + self.wrench_delay_s
         until = self.sim_s - self.wrench_age_s
         if self.wrench_until_s is not None:
             until = min(until, self.wrench_until_s)
