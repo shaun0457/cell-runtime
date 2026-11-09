@@ -13,7 +13,7 @@ from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.samples import sampled, signals_of
 from cellrt.monitor.classifier import Monitor, MonitorConfig
 from cellrt.monitor.profiles import MonitorProfile
-from cellrt.runtime.events import Event, RunStarted
+from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted
 from cellrt.runtime.state import RunState, apply, state_at
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -35,7 +35,13 @@ class _Fed:
         self._period_s = period_s
         self._seq = 1
         started = RunStarted(
-            scenario_id="s", setting="A", seed=0, attempt=1, task=Task(), config_hash="h"
+            scenario_id="s",
+            setting="A",
+            seed=0,
+            attempt=1,
+            task=Task(),
+            config_hash="h",
+            schema_version=SCHEMA_VERSION,
         )
         self.state = apply(
             RunState(), Event(run_id="r", seq=1, ts=0.0, wall_ts=0.0, payload=started)

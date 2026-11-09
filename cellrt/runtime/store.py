@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
-from cellrt.runtime.events import PAYLOAD_ADAPTER, Event
+from cellrt.runtime.events import Event, parse_stored
 
 DEFAULT_BUFFER_LIMIT = 500
 # Test only: set to N, and the process exits abruptly after appending its N-th event, without
@@ -112,7 +112,8 @@ class EventStore:
     def events(self, run_id: str) -> list[Event]:
         self.flush()
         rows = self._conn.execute(
-            "SELECT run_id, seq, ts, wall_ts, payload FROM events WHERE run_id = ? ORDER BY seq",
+            "SELECT run_id, seq, ts, wall_ts, type, payload FROM events WHERE run_id = ?"
+            " ORDER BY seq",
             (run_id,),
         )
         return [
@@ -121,7 +122,7 @@ class EventStore:
                 seq=r[1],
                 ts=r[2],
                 wall_ts=r[3],
-                payload=PAYLOAD_ADAPTER.validate_json(r[4]),
+                payload=parse_stored(r[4], r[5]),
             )
             for r in rows
         ]

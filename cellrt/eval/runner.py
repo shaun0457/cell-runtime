@@ -23,7 +23,7 @@ from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import Planner
 from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.clock import SimClock
-from cellrt.runtime.events import Outcome, RunFinished, RunStarted
+from cellrt.runtime.events import SCHEMA_VERSION, Outcome, RunFinished, RunStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
 from cellrt.skills.base import Skill
@@ -215,6 +215,7 @@ async def _run(
             task=scenario.task,
             config_hash=hash_parts(parts),
             config_parts=parts,
+            schema_version=SCHEMA_VERSION,
         )
     )
     env = ExecEnv(

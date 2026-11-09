@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cellrt.runtime.events import Event, RunStarted, SignalSampled
+from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted, SignalSampled
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 
@@ -46,6 +46,7 @@ def _started(run_id: str, scenario: str, setting: str, seed: int, attempt: int) 
             attempt=attempt,
             task=Task(),
             config_hash="x",
+            schema_version=SCHEMA_VERSION,
         ),
     )
 

@@ -25,7 +25,7 @@ from cellrt.eval.runner import (
     run_unit,
 )
 from cellrt.eval.scenarios import Scenario, load_scenarios
-from cellrt.runtime.events import Event, RunStarted, SkillStarted
+from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted, SkillStarted
 from cellrt.runtime.store import CRASH_AFTER_EVENTS_ENV, CRASH_EXIT_CODE, RUNS_SQL, EventStore
 from cellrt.runtime.task import Task
 from cellrt.world.mock_world import MockParams
@@ -56,7 +56,8 @@ def _interrupted(store: EventStore, unit: str, attempt: int, config_hash: str) -
     """What a kill leaves behind: the attempt started, never finished."""
     scenario, setting, seed = unit.split("/")
     started = RunStarted(scenario_id=scenario, setting=setting, seed=int(seed), attempt=attempt,
-                         task=Task(), config_hash=config_hash)  # fmt: skip
+                         task=Task(), config_hash=config_hash,
+                         schema_version=SCHEMA_VERSION)  # fmt: skip
     for seq, payload in enumerate([started, SkillStarted(skill="approach", attempt=1)], start=1):
         store.append(
             Event(run_id=f"{unit}/a{attempt}", seq=seq, ts=0.0, wall_ts=0.0, payload=payload)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -9,6 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from cellrt.runtime.task import Task
 
 Outcome = Literal["success", "failed", "aborted"]
+
+# The version of the event payloads a run was written with, recorded on `run_started`. Version 1
+# is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
+# field itself. Bump it when a payload changes shape, and keep older rows readable: new fields
+# get defaults.
+SCHEMA_VERSION = 2
 
 
 class _Payload(BaseModel):
@@ -27,6 +34,9 @@ class RunStarted(_Payload):
     # adapters, lock, recovery, planner), so a log shows which parts two runs share;
     # config_hash covers them all.
     config_parts: dict[str, str] = Field(default_factory=dict)
+    # Required, so no writer can forget it; rows stored before it existed get 1 on reading
+    # (`parse_stored`).
+    schema_version: int
 
 
 class FaultInjected(_Payload):
@@ -192,6 +202,17 @@ Payload = Annotated[
     Field(discriminator="type"),
 ]
 PAYLOAD_ADAPTER: TypeAdapter[Payload] = TypeAdapter(Payload)
+
+
+def parse_stored(event_type: str, raw: str) -> Payload:
+    """A payload as stored in the event log. A `run_started` row written before the schema
+    version existed has no `schema_version`; it reads as version 1."""
+    if event_type != "run_started":
+        return PAYLOAD_ADAPTER.validate_json(raw)
+    data = json.loads(raw)
+    if isinstance(data, dict):
+        data.setdefault("schema_version", 1)
+    return PAYLOAD_ADAPTER.validate_python(data)
 
 
 class Event(BaseModel):
