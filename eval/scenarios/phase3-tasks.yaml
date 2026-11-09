@@ -1,0 +1,29 @@
+# Phase 3 task scenarios (ADR 023): two tasks whose right plans differ, so a task planner has to
+# read the task. Designed by us; nothing here is measured in the sim.
+# - sfp: the default task, no fault. insert_scripted seats it.
+# - sc: an SC plug. #28 saw the SC plug jam at the port mouth in the AIC sim; whether insert_act
+#   frees it there is not known. The mock has no plug geometry, so the SC plug is modelled with
+#   the rotated-plug fault of phase3.yaml on every SC task: insert_scripted stalls (UNKNOWN to the
+#   Monitor) on every attempt, insert_act twists it free. A plan that starts with insert_act
+#   needs no recovery; the fixed steps need the planner (setting C) or fail (setting B).
+# The fault belongs to the scenario, so every tree faces the same world; its label is ground
+# truth for evaluation and no planner sees it. phase0.yaml and phase3.yaml are unchanged.
+scenarios:
+  - id: sfp
+    description: The default SFP task, no injected fault.
+
+  - id: sc
+    description: >-
+      An SC plug, which in the mock wedges rotated against the port on every attempt:
+      insert_scripted does not twist and stalls, insert_act twists it free. Ours, after #28.
+    task:
+      id: insert-sc-0
+      cable_type: sc
+      plug_type: sc
+      port_type: sc
+    faults:
+      - kind: yaw_mismatch
+        stall_depth_mm: [3.0, 5.0]
+        force_n: [6.0, 9.0]
+        torque_nm: [0.4, 0.8]
+        yaw_deg: [5.0, 15.0]

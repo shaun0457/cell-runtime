@@ -199,9 +199,17 @@ for a plan look different.
   emitted only when there is a task planner; `cellrt replay` prints them. A rejected plan keeps
   at most 9 names, each scrubbed and cut to 64 characters.
 - The `table` planner encodes what we wrote into it, as a recipe table does. The mock scenario
-  where a plug type needs `insert_act` is ours too (after #28's SC plug jamming at the port
-  mouth; whether `insert_act` frees it in the sim is not known). A model planner's value has to
-  be read against the table, not against the fixed tree.
+  where a plug type needs `insert_act` is ours too (`eval/scenarios/phase3-tasks.yaml`: the
+  rotated-plug fault on every SC task, after #28's SC plug jamming at the port mouth; whether
+  `insert_act` frees it in the sim is not known). On it the table's plan needs no recovery and
+  no planner call, but descends at `insert_act`'s half speed from the start, so in setting C it
+  takes longer in sim time than the fixed steps with one planner switch; a planner call costs
+  wall time the arm holds in the sim, which the mock does not count. A model planner's value has
+  to be read against the table, not against the fixed tree.
+- A plan whose skill clears a fault before any verdict (the table's `insert_act` twisting the
+  SC plug free) leaves that fault without a verdict, and the eval's confusion matrix counts it
+  as missed: classification accuracy is not comparable between trees until the metrics tell a
+  fault a skill cleared from one the Monitor missed.
 - A rejected run counts as an aborted task with no steps and no time in the eval table, so it
   pulls the mean duration and steps down, and the table has no column for rejections. Before a
   model plans tasks, the eval has to report the plan rejection rate and keep rejected runs out

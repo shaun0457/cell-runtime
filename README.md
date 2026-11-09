@@ -97,10 +97,16 @@ default, runs approach, align, insert_scripted, verify for every task and record
 ours) and records the plan as `task_planned` before anything moves. A plan is checked against
 the registry and a step contract per skill (what each step needs and gives) before the tree is
 built; a plan that fails the check is recorded as `task_plan_rejected` with its codes, and the
-run ends `aborted` with no skill started. Each step still recovers as its setting says:
+run ends `aborted` with no skill started. Each step still recovers as its setting says.
+`eval/scenarios/phase3-tasks.yaml` holds an SFP task and an SC task whose plug, in the mock,
+wedges rotated on every attempt (the rotated-plug fault, ours, after #28's SC jam; not
+measured in the sim): with the fixed steps B loses it and C needs a planner call; with `table`
+both seat it with no recovery, at insert_act's slower descent. The table's confusion matrix
+then lists the SC faults as missed: insert_act twists the plug free before the Monitor sees a
+stall, and the metrics do not yet tell a fault a skill cleared from one the Monitor missed:
 
 ```sh
-uv run cellrt run --scenario baseline --setting B --tree table
+uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
 ```
 
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
