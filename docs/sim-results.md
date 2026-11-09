@@ -47,7 +47,9 @@ What happened, by setting:
   - goal1 #1: the model answered `retry` after 10.65 s of wall time. The world kept running while
     it thought (3.03 s of sim time, ADR 020), and the link came back at 27.06 s, during the wait.
     The retried `insert_scripted` seated the plug in 0.3 s, `verify` passed, and the scorer gave
-    75.
+    75. It did not get there by the scripted descent (0.5 mm per 0.05 s step): the tip went from
+    11.6 mm to -1.0 mm in three samples (0.15 s), because the descent resumed from the targets
+    the dropout had swallowed, well below the arm (see Force).
   - goal2 #1: `escalate` to a human, with a reason that names the stall and guesses at a
     misalignment or an obstruction.
   - goal2 #2: cut at the 30 s deadline.
@@ -62,10 +64,13 @@ What happened, by setting:
 - **The loop works end to end in the sim:** a fault the runtime cannot see, a Monitor verdict
   from signals alone, a model call while the arm holds and the sim runs on, a validated decision,
   a bounded recovery, and a scorer that agrees with the runtime's own outcome on every task.
-- **The model's one success depended on timing.** `retry` was right in goal1 #1 because the link
-  had come back by the time the answer arrived. In goal3 the dropout began at about 19.5 s, so
-  it was still active when the calls ended (29.6 s and 33.1 s): a retry would have stalled
-  again. The model cannot know the link state; neither can the rule planner.
+- **The model's one success depended on timing, and on a skill defect.** `retry` worked in
+  goal1 #1 because the link had come back by the time the answer arrived, and the retried
+  descent then jumped about 12 mm in 0.15 s instead of stepping down (see Force). So it shows
+  that the answer was validated and executed, not that a retry recovers a dropout cleanly. In
+  goal3 the dropout began at about 19.5 s, so it was still active when the calls ended (29.6 s
+  and 33.1 s): a retry would have stalled again. The model cannot know the link state; neither
+  can the rule planner.
 - **A deterministic answer may exist, for some of them.** The 14 dropout verdicts look alike:
   `insert_stalled` on the first second of `insert_scripted`, under 2.1 N, with no progress.
   "Wait for the link, then retry" is a hypothesis for the 9 on the SFP goals; the 5 on goal3
@@ -80,9 +85,13 @@ What happened, by setting:
 
 The scorer saw force over 20 N once, in goal1 C-LLM #1: 0.02 s with a peak of 86.39 N, under
 its 1 s budget, no penalty. Our F/T stream counted the same 0.02 s over the limit at 28.82 s, in
-the retried descent; our 20 Hz samples peaked at 14.2 N, so the spike fell between samples. That is the known limit #60 recorded: while the link is down the descent's
-commanded target keeps moving, so the first target after the dropout can be well below the arm.
-The Monitor's force rule did not fire, correctly: 0.02 s is far below its 0.5 s trigger.
+the retried descent; our 20 Hz samples peaked at 14.2 N, so the spike fell between samples. That
+is the known limit #60 recorded: while the link is down the descent's commanded target keeps
+moving (`Descent.command` records each target whether or not it reached the arm), so the first
+target after the dropout can be well below the arm. Here it was: the tip fell 12.6 mm in 0.15 s
+into the port, which is where the spike and the seat both came from. Only a retract re-anchors
+the descent on the measured pose; a retry does not. The Monitor's force rule did not fire,
+correctly: 0.02 s is far below its 0.5 s trigger. Fixing the descent is open (PR review, F1).
 
 ## Media
 
@@ -91,7 +100,7 @@ log as a caption panel, at 2x speed. Kept outside the repository until the proje
 reviewed:
 
 - `c_llm_goal1_retry_hero.mp4` (12 s, 292 KB): the stall, the model thinking while the arm
-  holds, the retry seating the plug.
+  holds, the retry's jump seating the plug.
 - `c_llm_goal1_full.mp4`, `a_goal1_full.mp4` (the same fault under A), `c_llm_goal2_escalate.mp4`.
 - `trace_c_llm_goal1_wall.json`, `trace_c_llm_goal1_sim.json`: `cellrt trace` of goal1 C-LLM #1;
   on the wall clock the planner call fills 10.65 s of the run.
