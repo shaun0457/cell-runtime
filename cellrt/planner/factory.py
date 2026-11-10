@@ -1,4 +1,4 @@
-"""The planner setting C asks, built from command-line settings, and the eval's call pre-check.
+"""The planner setting C asks, built from command-line settings, and a command's call pre-check.
 
 `build_planner(kind)` builds "rule" (Phase 0's rule planner), "fixed" (the retry-then-abort
 policy, ADR 019) or "llm", the model planner on NIM (ADR 017); `build_llm_task_planner` builds
@@ -39,7 +39,7 @@ class PlannerSettingRefused(LlmSetupError, ValueError):
 
 
 class CallBudgetExceeded(LlmSetupError):
-    """The eval could make more model calls than its cap allows; it does not start."""
+    """The command could make more model calls than its cap allows; it does not start."""
 
 
 def model_call_cap(max_model_calls: int) -> ModelCallCap:

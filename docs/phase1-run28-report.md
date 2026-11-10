@@ -87,12 +87,9 @@ With 10 mm, `verify` fails every seated plug. The diagnostic showed it: task 1 w
   (diagnostic task 3).
 - **10 s readiness wait**: no problem seen. aic_model logs "lifecycle is not in the active state"
   once per engine run, before goal 1. That is the engine's first probe, and the goal then runs.
-- **Hold check (5 mm/s, 1.0 s)**: `hold_confirmed` in every hold check but one (max 0.14–3.3
-  mm/s, 0.15 s). The exception is diagnostic task 3: `hold_unconfirmed`, 33 mm/s over the full
-  1.0 s, after align's TIMEOUT. The arm was still moving 1 s after HOLD. That path is worth a
-  test. (This line used to say "11 of 12 runs", which does not match the 10 RuntimePolicy goals
-  of the engine runs above. The store is on the VM's results disk and was not counted again, so no number
-  is given; #65 review F7.)
+- **Hold check (5 mm/s, 1.0 s)**: `hold_confirmed` in 11 of 12 runs (max 0.14–3.3 mm/s, 0.15 s).
+  The exception is diagnostic task 3: `hold_unconfirmed`, 33 mm/s over the full 1.0 s, after
+  align's TIMEOUT. The arm was still moving 1 s after HOLD. That path is worth a test.
 
 ## 7. Cancel check
 
@@ -135,3 +132,7 @@ This report stays as it was measured. What changed because of it:
   followed a review fix (`docs/sim-results.md`).
 - **Still open:** the SC jam at the port entrance, the align/insert boundary, and acting on
   `hold_unconfirmed`. The 3/3 criterion above has not been met yet.
+- **A count that does not add up:** section 6's "11 of 12 runs" does not match the
+  RuntimePolicy goals of the engine runs above: 9 full goals and `diag_nostuck`'s partial goal
+  1, so 10. The store is on the VM's results disk and was not counted again. Read it as every
+  hold check but one confirmed, with no number (#65 review F7).

@@ -124,7 +124,7 @@ class Connect(Protocol):
 
 
 class ModelCallCap:
-    """The most model calls one eval (one process) may make, shared by every client given it.
+    """The most model calls one command (one process) may make, shared by every client given it.
 
     `take` is called before each request. Each eval unit runs its own event loop, one after the
     other, so a plain counter suffices.

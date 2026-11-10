@@ -1,4 +1,4 @@
-"""A model as the task planner (ADR 023): one chat call per run, before the tree is built.
+"""A model as the task planner (ADR 023): one chat call per plan, before the tree is built.
 
 The model is told the task and the skills it may plan (each with what it does and its step
 contract) and answers through the `plan` tool. Its answer is raw and untrusted: `plan_task`

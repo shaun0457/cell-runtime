@@ -254,7 +254,7 @@ AIC cell"). In the step 5 shell, before starting aic_model:
 ```bash
 export CELLRT_SESSION=s61                     # one session name per family of runs
 export CELLRT_SETTING=C                       # A, B or C
-export CELLRT_PLANNER=llm                     # rule, fixed or llm; read in setting C only
+export CELLRT_PLANNER=llm                     # rule, fixed or llm; used in setting C only
 export NVIDIA_API_KEY="$(cat ~/.nvidia_key)"  # llm only; the file is mode 600
 export CELLRT_MAX_TOKENS=4096                 # llm only; 1 to 8192, 1024 when unset (ADR 017)
 export CELLRT_REASONING=default               # llm only; default or off
@@ -263,10 +263,11 @@ export CELLRT_FAULT='{"kind": "command_dropout", "onset_height_mm": 20, "duratio
 
 A bad `CELLRT_SETTING`, `CELLRT_PLANNER`, `CELLRT_MAX_TOKENS`, `CELLRT_REASONING` or
 `CELLRT_FAULT` refuses every goal before the arm moves, with one fixed message in the aic_model
-log; the model settings are checked in every setting, so a typo shows in A and B too. Without
-the key, setting C with `llm` refuses the same way. The rerun with a 4096-token budget kept
-reasoning on (`docs/sim-results.md`); at 1024, 5 of the F1 rerun's 6 calls stopped at the limit. One engine run took 4 to 6 minutes of wall time on the L4 VM; the five
-faulted runs of #61, one after another, took 25 minutes.
+log. Each is checked in every setting, also where it is not used, so a typo shows in A and B
+too. Without the key, setting C with `llm` refuses the same way. The rerun with a 4096-token
+budget kept reasoning on (`docs/sim-results.md`); at 1024, 5 of the F1 rerun's 6 calls stopped
+at the limit. One engine run took 4 to 6 minutes of wall time on the L4 VM; the five faulted
+runs of #61, one after another, took 25 minutes.
 
 **Recording the cameras.** The engine's bags hold no camera topics, so #61 ran its own rclpy
 recorder beside the policy (`pixi run --frozen python rec61.py <dir>`): it subscribes to
