@@ -110,8 +110,9 @@ class RecoveryConfig:
 
     def as_dict(self) -> dict[str, object]:
         """Every parameter but the planner budget, which counts only where there is a planner.
-        Promoted plans count only when there are any, so a run without them keeps the hash it
-        had before they existed."""
+        Promoted plans count only when there are any, so without them this part of the hash is
+        the one it was before they existed. The run's whole hash still changed with them: it
+        covers the code (ADR 010)."""
         data: dict[str, object] = {
             f.name: getattr(self, f.name)
             for f in dataclasses.fields(self)

@@ -38,7 +38,7 @@ from cellrt.monitor.classifier import (
     Verdict,
 )
 from cellrt.monitor.profiles import MonitorProfile
-from cellrt.monitor.promoted import PromotedRule
+from cellrt.monitor.promoted import CandidateRefused, PromotedRule
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
@@ -150,7 +150,11 @@ def replay_run(
     With `candidate`, the Monitor gets the rule after the configured ones and the replay keeps,
     without comparing, the first verdict of each window (`replayed`) and one on the tick the
     watched skill succeeded (`lost_to_success`); the run must still carry `config`'s hashes,
-    since its samples are replayed as that configuration judged them."""
+    since its samples are replayed as that configuration judged them. A candidate with the name
+    of a configured promoted rule is refused (`CandidateRefused`): the Monitor takes one rule per
+    name."""
+    if candidate is not None and any(r.name == candidate.name for r in config.monitor.promoted):
+        raise CandidateRefused("candidate refused: rule.name: same_as_a_promoted_rule")
     run_id = events[0].run_id if events else ""
     started = events[0].payload if events else None
     if not isinstance(started, RunStarted) or not isinstance(events[-1].payload, RunFinished):
