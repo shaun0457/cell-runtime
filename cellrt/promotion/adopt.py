@@ -5,8 +5,8 @@ four gates passed with no failing window, gate 1 asked the group for at least th
 number of windows, the report was made under the Monitor configuration in use now, and the
 candidate in it still has the hash the report names. The approved file
 `eval/promoted/<NAME>.json` holds the rule, its plan, both hashes, that configuration, the group
-size and who approved it. An eval loads only these files: a promoted plan runs in settings B and C without
-the planner, and counts against the UNKNOWN class budget and the task budget.
+size and who approved it. An eval loads only these files: a promoted plan runs in settings B
+and C without the planner, and counts against the UNKNOWN class budget and the task budget.
 
 Trust: the hashes catch a candidate edited after its report, or a configuration changed since,
 by accident. They are not signatures: anyone who can write the report or the approval directory
