@@ -6,6 +6,7 @@ ground-truth label of an injected fault.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections import deque
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from enum import StrEnum
 from typing import Any
 
 from cellrt.monitor.profiles import MonitorProfile
+from cellrt.monitor.promoted import PromotedRule
 from cellrt.runtime.state import FORCE_LIMIT_N
 from cellrt.world.base import Signals
 
@@ -53,10 +55,24 @@ class MonitorConfig:
     pose_error_s: float = 0.2
     stall_progress_mm: float = 0.2
     stall_window_s: float = 1.0
+    # Approved promoted rules (ADR 021), checked in this order after the known-class rules and
+    # before `insert_stalled`.
+    promoted: tuple[PromotedRule, ...] = ()
+
+    def __post_init__(self) -> None:
+        names = [r.name for r in self.promoted]
+        if len(set(names)) != len(names):
+            raise ValueError("promoted rules must have distinct names")
 
     def as_dict(self) -> dict[str, object]:
-        """Plain values, for `config_hash`."""
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        """Plain values, for `config_hash`. Promoted rules count only when there are any, so a
+        run without them keeps the hash it had before they existed."""
+        out: dict[str, object] = {
+            f.name: getattr(self, f.name) for f in fields(self) if f.name != "promoted"
+        }
+        if self.promoted:
+            out["promoted"] = [r.model_dump(mode="json") for r in self.promoted]
+        return out
 
 
 class Monitor:
@@ -90,9 +106,16 @@ class Monitor:
         self._stuck_n = self._held(c.stuck_window_s)
         self._pose_n = self._held(c.pose_error_s)
         self._stall_n = self._held(c.stall_window_s)
+        promoted = [(rule, self._held(rule.window_s)) for rule in c.promoted]
+        self._promoted: list[Callable[[Signals], Verdict | None]] = [
+            functools.partial(self._promoted_rule, rule, n) for rule, n in promoted
+        ]
         self._safety: deque[Signals] = deque(maxlen=self._dropout_n)
-        self._window: deque[Signals] = deque(maxlen=max(self._stuck_n, self._pose_n, self._stall_n))
+        self._window: deque[Signals] = deque(
+            maxlen=max(self._stuck_n, self._pose_n, self._stall_n, *(n for _, n in promoted))
+        )
         self._profile: MonitorProfile = "motion"
+        self._skill: str | None = None
 
     def _held(self, seconds: float) -> int:
         """Samples whose span (first to last) is at least `seconds`.
@@ -109,9 +132,11 @@ class Monitor:
         """Samples currently held, in both windows."""
         return len(self._safety) + len(self._window)
 
-    def reset(self, profile: MonitorProfile) -> None:
-        """A new skill starts, with the profile it declares."""
+    def reset(self, profile: MonitorProfile, *, skill: str | None = None) -> None:
+        """A new skill starts, with the profile it declares (`skill` is None for the hold during
+        a live planner call): promoted rules that name a skill watch only that one."""
         self._profile = profile
+        self._skill = skill
         self._window.clear()
 
     def observe(self, signals: Signals) -> Verdict | None:
@@ -124,7 +149,7 @@ class Monitor:
         self._window.append(signals)
         rules: list[Callable[[Signals], Verdict | None]] = [self._dropout, self._force_limit]
         if self._profile == "insertion":
-            rules += [self._stuck, self._pose_error, self._stalled]
+            rules += [self._stuck, self._pose_error, *self._promoted, self._stalled]
         matched = [v for rule in rules if (v := rule(signals))]
         if not matched:
             return None
@@ -214,6 +239,35 @@ class Monitor:
             evidence={
                 "progress_mm": round(stalled, 6),
                 "window_s": self._span(self._stall_n),
+                "force_n": s.force_n,
+                "torque_nm": s.torque_nm,
+                "xy_error_mm": round(s.xy_error_mm, 6),
+            },
+        )
+
+    def _promoted_rule(self, rule: PromotedRule, samples: int, s: Signals) -> Verdict | None:
+        """An approved promoted rule: once its window is full, every condition holds on this
+        sample (force, torque magnitude, XY error) and on the progress over the window. A sample
+        with an invalid wrench is never read: the dropout rule owns it."""
+        if rule.skill != self._skill or not s.wrench_valid:
+            return None
+        progress = self._progress(samples)
+        if progress is None:
+            return None
+        readings = {
+            "force_n": s.force_n,
+            "torque_nm": abs(s.torque_nm),
+            "xy_error_mm": s.xy_error_mm,
+            "progress_mm": progress,
+        }
+        if not rule.holds(readings):
+            return None
+        return Verdict(
+            FailureClass.UNKNOWN,
+            rule=rule.verdict_rule,
+            evidence={
+                "progress_mm": round(progress, 6),
+                "window_s": self._span(samples),
                 "force_n": s.force_n,
                 "torque_nm": s.torque_nm,
                 "xy_error_mm": round(s.xy_error_mm, 6),
