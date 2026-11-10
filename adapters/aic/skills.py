@@ -5,11 +5,12 @@ poses (`AicWorld.geometry`), which they get at construction: the executor hands 
 
 For recovery (settings B and C) approach, align and insert_scripted take `speed_scale` (a
 recovery's slow variant), and align and insert_scripted carry on from wherever the descent
-is. A retract takes the descent up from where the arm measurably is (a pressed plug holds
-the TCP far above its target) and then 5 mm, so align and insert go on down from the
-retracted pose instead of from below it or from the approach pose; align first comes back
-up to z_offset 0.01 if the retract left the descent below that. Run once at full speed,
-every skill commands exactly what CheatCode does.
+is. An align or insert_scripted that starts after a broken descent (a run that did not finish,
+or a retract) goes on from the measured pose (`Descent`), not from targets the arm may never
+have reached: after a retract, from the retracted pose, not from below it (a pressed plug
+holds the TCP far above its target) or from the approach pose; align first comes back up to
+z_offset 0.01 if the arm is below that. Run once at full speed, every skill commands exactly
+what CheatCode does.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import math
 from collections.abc import Callable
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
-from adapters.aic.geometry import XYIntegrator, gripper_target, z_offset_at
+from adapters.aic.geometry import XYIntegrator, gripper_target, xy_integrator_at, z_offset_at
 from adapters.aic.world import Geometry
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState
@@ -155,13 +156,37 @@ def descent_from(offsets: list[float], start_m: float | None, scale: float = 1.0
 
 
 class Descent:
-    """CheatCode's XY integrator, shared by align and insert_scripted: CheatCode resets it only
-    during the approach, so it carries on from one part of the descent to the next."""
+    """CheatCode's descent as align and insert_scripted share it: the last z_offset commanded
+    and the XY integrator, which CheatCode resets only during the approach, so both carry on
+    from one part of the descent to the next.
+
+    Both are bookkeeping of what was sent, which is where the arm is only while every command
+    arrives and the arm follows it. A descent run that did not finish (the Monitor stopped it,
+    or its timeout) or a retract breaks that: commands may have been lost in a dropout, or the
+    arm held back by a pressed plug. So after one, the next run goes on from where the arm is
+    measured to be (`begin`). In #61 a retry after a dropout went on from targets the arm never
+    reached and threw the plug 12.6 mm down into the port in 0.15 s. A run that follows a
+    finished one goes on from its last command, as CheatCode's does."""
 
     def __init__(self) -> None:
         self.integrator = XYIntegrator()
         self.last_height_mm: float | None = None  # the tip's height at the last command
         self.z_offset_m: float | None = None  # the last z_offset commanded
+        self._unbroken = True  # every descent run so far ran to its end, and no retract
+
+    def begin(self, g: Geometry) -> None:
+        """At the start of align or insert_scripted."""
+        if not self._unbroken:
+            self._follow(g)
+        self._unbroken = False  # until the run ends by itself
+
+    def finished(self) -> None:
+        """At the end of a descent run that ran to its end."""
+        self._unbroken = True
+
+    def interrupt(self) -> None:
+        """A retract moved the arm off the descent: the next run goes on from where it is."""
+        self._unbroken = False
 
     def command(self, ctx: SkillContext, g: Geometry, z_offset_m: float) -> None:
         self.last_height_mm, _ = plug_to_port_mm(g.port, g.plug)
@@ -171,21 +196,17 @@ class Descent:
         )
         ctx.world.command(to_pose_target(target))
 
-    def follow(self, g: Geometry) -> None:
-        """Take the descent up from where the arm is, not where it was sent (a
-        retract's start): a pressed plug holds the TCP above its target by the force over
-        the controller's stiffness (90 N/m in position mode, so 10 N is 111 mm), and the
-        z_offset last commanded can lie that far below the arm. Before the descent has
-        begun there is nothing to take up."""
+    def _follow(self, g: Geometry) -> None:
+        """Take the descent up from where the arm is, not where it was sent: a pressed plug
+        holds the TCP above its target by the force over the controller's stiffness (90 N/m
+        in position mode, so 10 N is 111 mm), and commands lost in a dropout leave the
+        z_offset last commanded below the arm. The XY integrator starts again from the arm's
+        XY (`xy_integrator_at`): while commands were lost it went on adding the tip's error
+        and holds up to 7.5 mm of correction the arm never got. Before the descent has begun
+        there is nothing to take up."""
         if self.z_offset_m is not None:
             self.z_offset_m = z_offset_at(g.port, g.plug, g.gripper)
-
-    def raised(self, m: float) -> None:
-        """The arm went `m` straight up, plug and all (a retract): z_offset is that much
-        higher (`gripper_target` keeps the TCP-to-tip offset), and the descent goes on from
-        there."""
-        if self.z_offset_m is not None:
-            self.z_offset_m += m
+            self.integrator = xy_integrator_at(g.port, g.plug, g.gripper)
 
 
 def seated(g: Geometry) -> tuple[bool, float]:
@@ -236,7 +257,9 @@ class AicAlign(_AicSkill):
         return {"steps": ALIGN_STEPS, "height_m": ALIGN_HEIGHT_M, "xy_mm": ALIGN_XY_MM}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        align = descent_from(descent_offsets()[0], self._descent.z_offset_m, speed_scale(ctx))
+        scale = speed_scale(ctx)
+        self._descent.begin(self._geometry())
+        align = descent_from(descent_offsets()[0], self._descent.z_offset_m, scale)
         for i, z in enumerate(align):
             self._descent.command(ctx, self._geometry(), z)
             ctx.progress((i + 1) / len(align))
@@ -244,6 +267,7 @@ class AicAlign(_AicSkill):
         while ctx.world.signals().xy_error_mm >= ALIGN_XY_MM:  # bounded by the timeout
             self._descent.command(ctx, self._geometry(), ALIGN_HEIGHT_M)
             await ctx.clock.sleep(ctx.period_s)
+        self._descent.finished()
         return SkillResult(ok=True, detail={"xy_error_mm": ctx.world.signals().xy_error_mm})
 
 
@@ -270,17 +294,21 @@ class AicInsertScripted(_AicSkill):
         }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        insert = descent_from(descent_offsets()[1], self._descent.z_offset_m, speed_scale(ctx))
+        scale = speed_scale(ctx)
+        self._descent.begin(self._geometry())
+        insert = descent_from(descent_offsets()[1], self._descent.z_offset_m, scale)
         for i, z in enumerate(insert):
             g = self._geometry()
             on_seat, height_mm = seated(g)
             before = self._descent.last_height_mm
             if on_seat and before is not None and before - height_mm < SEATED_STILL_MM:
+                self._descent.finished()
                 detail = {"height_mm": round(height_mm, 3), "seated": True}
                 return SkillResult(ok=True, detail=detail)
             self._descent.command(ctx, g, z)
             ctx.progress((i + 1) / len(insert))
             await ctx.clock.sleep(ctx.period_s)
+        self._descent.finished()
         on_seat, height_mm = seated(self._geometry())
         return SkillResult(ok=True, detail={"height_mm": round(height_mm, 3), "seated": on_seat})
 
@@ -318,8 +346,8 @@ class AicRetract(_AicSkill):
 
     It ignores `to_height_mm`, the mock's height above the port to retract to: here the port
     frame lies at a different depth for each port type (#28), so a height above it means
-    different things. Given the descent, it first takes it up from where the arm is, then
-    raises it step by step, so the descent goes on from the retracted pose."""
+    different things. Given the descent, it marks it interrupted, so the next align or insert
+    goes on down from where the arm is measured after the retract."""
 
     name = "retract"
     monitor_profile: MonitorProfile = "unload"
@@ -334,18 +362,15 @@ class AicRetract(_AicSkill):
         return {"steps": RETRACT_STEPS, "distance_m": RETRACT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
-        g = self._geometry()
         if self._descent is not None:
-            self._descent.follow(g)
-        start = g.gripper
+            self._descent.interrupt()
+        start = self._geometry().gripper
         x, y, z = start.position
         for i in range(1, RETRACT_STEPS + 1):
             up = Pose(
                 position=(x, y, z + RETRACT_M * i / RETRACT_STEPS), orientation=start.orientation
             )
             ctx.world.command(to_pose_target(up))
-            if self._descent is not None:
-                self._descent.raised(RETRACT_M / RETRACT_STEPS)
             ctx.progress(i / RETRACT_STEPS)
             await ctx.clock.sleep(ctx.period_s)
         return SkillResult(ok=True, detail={"raised_mm": round(RETRACT_M * 1000, 3)})

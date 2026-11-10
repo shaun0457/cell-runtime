@@ -8,15 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 from aic_fakes import FakeNode
 
-from adapters.aic.convert import MotionCommand
-from adapters.aic.faults import MAX_SPEC_CHARS, SPEC_REFUSED, CommandDropout, FaultSpec
+from adapters.aic.convert import MotionCommand, Pose
+from adapters.aic.faults import (
+    MAX_ONSET_HEIGHT_MM,
+    MAX_SPEC_CHARS,
+    SPEC_REFUSED,
+    CommandDropout,
+    FaultSpec,
+)
 from adapters.aic.run import PolicySetupError, fault_setup, run_goal
+from adapters.aic.skills import DESCENT_STEP_M
 from cellrt.planner.base import FailureContext
 from cellrt.runtime.events import (
     Event,
@@ -140,17 +148,46 @@ async def _next_turn() -> None:
 
 @dataclass
 class _RetriesAfter:
-    """Answers retry once the cell's sim time has moved on `sim_s` since the call."""
+    """Answers retry once the cell's sim time has moved on `sim_s` since the call, and keeps
+    how many commands the arm had received by then."""
 
     node: FakeNode
     sim_s: float
     deadline_s: float = 30.0
+    answered_at: int | None = None  # len(node.sent) when it answered
 
     async def triage(self, ctx: FailureContext) -> object:
         until = self.node.sim_s + self.sim_s
         while self.node.sim_s < until:
             await _next_turn()
+        self.answered_at = len(self.node.sent)
         return {"kind": "retry"}
+
+
+def _moves_after_the_answer(
+    node: FakeNode, planner: _RetriesAfter
+) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+    """(where the TCP was, where it was sent) for every position target after the retry."""
+    assert planner.answered_at is not None
+    sent = list(zip(node.tcp_at_send, node.sent, strict=True))[planner.answered_at :]
+    return [(at.position, m.position_m) for at, m in sent if m.mode == "position"]
+
+
+@dataclass
+class _Slips(FakeNode):
+    """The plug slips `slip_m` along x on the TCP while its tip is within `below_m` of the
+    port, which is where the dropout starts: its XY error stays while no command gets through."""
+
+    slip_m: float = 0.0008
+    below_m: float = 0.02
+
+    @property
+    def plug(self) -> Pose:
+        plug = super().plug
+        x, y, z = plug.position
+        if z - self.port.position[2] > self.below_m:
+            return plug
+        return Pose(position=(x + self.slip_m, y, z), orientation=plug.orientation)
 
 
 def test_setting_c_can_retry_once_the_link_is_back(store: EventStore) -> None:
@@ -166,6 +203,42 @@ def test_setting_c_can_retry_once_the_link_is_back(store: EventStore) -> None:
     events = _events(store)
     kinds = [e.payload.type for e in events]
     assert kinds.index("fault_cleared") < kinds.index("planner_decided")
+
+
+@pytest.mark.parametrize("onset_mm", [20.0, MAX_ONSET_HEIGHT_MM])
+def test_a_retry_after_a_dropout_goes_on_down_from_where_the_arm_is(
+    store: EventStore, onset_mm: float
+) -> None:
+    # #61 goal1 C-LLM #1: the descent's targets went on down while the link was down, so the
+    # retry's first command took the plug from 11.6 mm above the port to 1 mm under it in
+    # 0.15 s, at 86 N. The retry goes on from where the arm is: no target lies more than one
+    # 0.5 mm step under the TCP. From the highest onset it still seats the plug within
+    # insert_scripted's timeout: the dropout's UNKNOWN is the run's only verdict.
+    node = FakeNode(task=TASK)
+    planner = _RetriesAfter(node, 8.0)
+
+    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0, onset_mm))
+
+    assert ok is True
+    assert [v.failure_class for v in _payloads(store, MonitorVerdict)] == ["UNKNOWN"]
+    moves = _moves_after_the_answer(node, planner)
+    assert len(moves) > 10
+    assert max(at[2] - to[2] for at, to in moves) <= DESCENT_STEP_M + 1e-9
+
+
+def test_a_retry_after_a_dropout_does_not_throw_the_arm_sideways(store: EventStore) -> None:
+    # While the link is down the XY integrator adds the plug's 0.8 mm error with every lost
+    # command, up to its limit: 7.5 mm of correction the arm never got. The retry starts the
+    # integrator from where the arm is, so no target lies more than 0.5 mm to the side.
+    node = _Slips(task=TASK)
+    planner = _RetriesAfter(node, 8.0)
+
+    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0))
+
+    assert ok is True
+    moves = _moves_after_the_answer(node, planner)
+    assert len(moves) > 10
+    assert max(math.hypot(to[0] - at[0], to[1] - at[1]) for at, to in moves) <= 0.0005
 
 
 def test_the_fault_is_part_of_the_runs_configuration(tmp_path: Any) -> None:
@@ -241,7 +314,7 @@ def test_without_goals_every_goal_gets_the_fault() -> None:
         '{"kind": "command_dropout", "duration_s": 0.04}',
         '{"kind": "command_dropout", "duration_s": 120.01}',
         '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 0.99}',
-        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 200.01}',
+        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 40.01}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": [0]}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": ' + str(list(range(1, 102))) + "}",
         '{"kind": "command_dropout", "duration_s": 1, "extra": "sk-not-a-key"}',
@@ -268,7 +341,7 @@ def test_a_bad_fault_is_refused_with_a_fixed_message(raw: str) -> None:
     "fields",
     [
         {"duration_s": 0.05, "onset_height_mm": 1.0},
-        {"duration_s": 120.0, "onset_height_mm": 200.0, "goals": list(range(1, 101))},
+        {"duration_s": 120.0, "onset_height_mm": 40.0, "goals": list(range(1, 101))},
     ],
 )
 def test_a_fault_at_its_bounds_is_taken(fields: dict[str, object]) -> None:

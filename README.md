@@ -140,10 +140,10 @@ the plug tip actually ends depends on CheatCode's tip-offset quirk
 starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
 `CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
 wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
-at half speed. After a retract, align and insert go on down from the retracted pose, taken from
-where the arm is measured, not where it was last sent: a plug pressed on something holds the
-TCP far above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the retract left the
-descent below z_offset 0.01, align first comes back up to it. `retract`
+at half speed. After a retract or a broken descent run, align and insert go on down from where
+the arm is measured, not where it was last sent: a plug pressed on something holds the TCP far
+above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the retract left the descent
+below z_offset 0.01, align first comes back up to it. `retract`
 always rises 5 mm: the mock's retract height above the port does not carry over, since the
 port frame sits at a different depth for each port type. Setting C asks the planner
 `CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
@@ -154,9 +154,12 @@ while a planner thinks, so the arm holds, the world steps and the Monitor keeps 
 every motion command for 15 s of sim time from when the plug tip first comes within 20 mm of
 the port (the default), in goal 2 only (every goal without `goals`). The arm stays at its last
 target and the plug hangs; if that lasts past the Monitor's stall window in insert_scripted,
-the verdict is UNKNOWN. The onset is keyed to height, not to a skill, because the plug seats
-during align in the sim. The fault is recorded as `fault_injected` and `fault_cleared` and is
-part of the run's configuration hash. A bad value in any of these variables refuses every
+the verdict is UNKNOWN. A descent run that starts after a broken one (stopped, timed out, or
+after a retract), such as a retry, goes on from where the arm is measured to be, so it does not
+jump to the targets lost in the dropout; a dropout that ends inside a run still does. The onset
+is keyed to height, not to a skill, because the plug seats during align in the sim. The fault
+is recorded as `fault_injected` and `fault_cleared` and is part of the run's configuration
+hash. A bad value in any of these variables refuses every
 goal, before the arm moves.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).

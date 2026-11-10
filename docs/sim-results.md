@@ -66,8 +66,9 @@ What happened, by setting:
   a bounded recovery, and a scorer that agrees with the runtime's own outcome on every task.
 - **The model's one success depended on timing, and on a skill defect.** `retry` worked in
   goal1 #1 because the link had come back by the time the answer arrived, and the retried
-  descent then jumped about 12 mm in 0.15 s instead of stepping down (see Force). So it shows
-  that the answer was validated and executed, not that a retry recovers a dropout cleanly. In
+  descent then jumped about 12 mm in 0.15 s instead of stepping down (see Force; fixed since,
+  not rerun). So it shows that the answer was validated and executed, not that a retry recovers
+  a dropout cleanly. In
   goal3 the dropout began at about 19.5 s, so it was still active when the calls ended (29.6 s
   and 33.1 s): a retry would have stalled again. The model cannot know the link state; neither
   can the rule planner.
@@ -89,9 +90,15 @@ the retried descent; our 20 Hz samples peaked at 14.2 N, so the spike fell betwe
 is the known limit #60 recorded: while the link is down the descent's commanded target keeps
 moving (`Descent.command` records each target whether or not it reached the arm), so the first
 target after the dropout can be well below the arm. Here it was: the tip fell 12.6 mm in 0.15 s
-into the port, which is where the spike and the seat both came from. Only a retract re-anchors
-the descent on the measured pose; a retry does not. The Monitor's force rule did not fire,
-correctly: 0.02 s is far below its 0.5 s trigger. Fixing the descent is open (PR review, F1).
+into the port, which is where the spike and the seat both came from. In this run only a retract
+re-anchored the descent on the measured pose; a retry did not. The Monitor's force rule did not
+fire, correctly: 0.02 s is far below its 0.5 s trigger.
+
+Fixed after this run (PR review, F1), not yet rerun in the sim: a descent run that starts after
+a broken one (stopped by the Monitor, timed out, or after a retract) goes on from the measured
+pose, its z_offset and its XY integrator, so a retry steps down from where the arm is. A
+dropout that ends inside a run still lets that run's next target jump to where its descent has
+got to; only a world that reports lost commands would cover that.
 
 ## Media
 
