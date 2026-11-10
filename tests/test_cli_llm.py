@@ -288,6 +288,8 @@ def test_smoke_llm_takes_the_token_budget_and_reasoning(cli: Cli) -> None:
 
     assert done.returncode == 0, done.stderr
     assert cli.sent() == [{"max_tokens": 1, "extra_body": THINKING_OFF}]
+    report = json.loads(done.stdout)
+    assert (report["max_tokens"], report["reasoning"]) == (1, "off")
 
 
 def test_smoke_llm_refuses_an_unknown_reasoning_setting(cli: Cli) -> None:

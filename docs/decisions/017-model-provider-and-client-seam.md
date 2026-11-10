@@ -219,7 +219,10 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
 - `cellrt promote propose` (ADR 021) keeps its own `--max-tokens` and takes no `--reasoning`:
   it always asks with reasoning as the host sets it.
 - `reasoning: off` relies on the model's chat template. Another model on NIM may ignore it
-  without an error: check its completion tokens with `cellrt smoke-llm --reasoning off`.
+  without an error, and the run is still recorded as reasoning off; or the host may refuse the
+  field, and every call fails as a planner error (the exception type only). Check a new model
+  with `cellrt smoke-llm --reasoning off` first: its completion tokens show whether the switch
+  took. The client does not keep a list of the models that support it.
 - Adding `reasoning` to the planner's `describe()` changes the config hash of every model
   planner run, so a store from before this change is not resumed by a new eval.
 - The SDK reads more of the environment than the refused variables. `OPENAI_LOG` turns on its

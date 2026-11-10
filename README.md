@@ -73,7 +73,8 @@ refuses otherwise; stderr reports the calls made. `--max-tokens` (1 to 8192, def
 bounds each model call, reasoning included, and `--reasoning off` asks the host to answer
 without reasoning (default: as the host sets it); both count in the config hash and apply to
 every model call of the command, `--tree llm`'s too. `cellrt smoke-llm` sends one fixed
-failure to the model and prints how it answered, as JSON; it takes the same two options:
+failure to the model and prints how it answered, as JSON; it takes the same two options and
+names them in its report:
 
 ```sh
 uv sync --extra llm

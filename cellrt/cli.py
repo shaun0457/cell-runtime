@@ -530,8 +530,9 @@ def smoke_llm(
     reasoning: ReasoningOption = "default",
 ) -> None:
     """Send one fixed failure (the yaw mismatch) to the model planner, once, and print how the
-    model answered as JSON: through the tool or as text, valid or not, tokens and latency.
-    Exits 1 unless the answer passed the planner's validation."""
+    model answered as JSON: through the tool or as text, valid or not, tokens and latency, with
+    the token budget and reasoning setting it asked with. Exits 1 unless the answer passed the
+    planner's validation."""
     checked = _check_reasoning(reasoning)
     try:
         client, config = llm_client_and_config(
