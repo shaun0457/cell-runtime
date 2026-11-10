@@ -507,6 +507,10 @@ def promote_validate(
     the rule, not its plan; the report says so. Exits 1 unless every gate passes."""
     if not db.is_file():  # never create a store that is not there
         _fail(f"no event store at {db}")
+    # Before the replay: the report would replace what it was made from, the store for good.
+    for name, source in (("event store", db), ("candidate", candidate)):
+        if out is not None and _same_file(out, source):
+            _fail(f"--out is the {name} itself; no report written")
     try:
         with candidate.open(encoding="utf-8") as f:
             raw = f.read(MAX_CANDIDATE_CHARS + 1)  # the parser refuses anything longer
@@ -523,10 +527,7 @@ def promote_validate(
     for line in report.lines():
         typer.echo(line)
     if out is not None:
-        try:
-            out.write_text(json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8")
-        except OSError as exc:
-            _fail(f"cannot write the report at {out} ({type(exc).__name__})")
+        _write_whole(out, json.dumps(report.as_dict(), indent=2) + "\n", what="the report")
     if not report.passed:
         raise typer.Exit(code=1)
 

@@ -5,6 +5,7 @@ rotated plug)."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -406,6 +407,41 @@ def test_validate_prints_the_gates_and_writes_the_report(
     ]
     assert lines[-2:] == ["passed", f"note: {NOT_CHECKED}"]
     assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
+
+
+@pytest.mark.parametrize("target", ["event store", "candidate"])
+def test_the_report_is_never_written_over_what_it_was_made_from(
+    phase0_store: Path, tmp_path: Path, target: str
+) -> None:
+    db = tmp_path / "copy.sqlite"  # a copy: a write over the module's store would end the module
+    shutil.copyfile(phase0_store, db)
+    candidate = _write(tmp_path, _candidate())
+    out = db if target == "event store" else candidate
+    before = out.read_bytes()
+    done = _cli(str(candidate), "--group", ROTATED, "--db", str(db), "--out", str(out))
+    assert done.returncode == 1
+    assert f"--out is the {target} itself; no report written" in done.stderr
+    assert out.read_bytes() == before
+
+
+def test_a_report_that_cannot_be_written_leaves_the_old_one_whole(
+    phase0_store: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "report.json"
+    out.write_text("old report\n", encoding="utf-8")
+    (tmp_path / "report.json.tmp").mkdir()  # the temporary file cannot be created
+    done = _cli(
+        str(_write(tmp_path, _candidate())),
+        "--group",
+        ROTATED,
+        "--db",
+        str(phase0_store),
+        "--out",
+        str(out),
+    )
+    assert done.returncode == 1
+    assert "cannot write the report" in done.stderr
+    assert out.read_text(encoding="utf-8") == "old report\n"
 
 
 def test_a_failing_candidate_exits_1_with_its_cases(phase0_store: Path, tmp_path: Path) -> None:
