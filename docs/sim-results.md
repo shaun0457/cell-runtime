@@ -12,7 +12,7 @@ the mock (`docs/phase3-llm-results.md`).
 | Where | GCP VM `cellrt-sim` (g2-standard-8, L4), runbook `docs/runbooks/phase1-sim-run.md` |
 | AIC | `ghcr.io/intrinsic-dev/aic/aic_eval@sha256:9aa2ffdbb946d38edde1bac7b5f02a44cfbea26e3b04a9c74e09f14c97472923`, sample engine config: goal1 and goal2 SFP, goal3 SC |
 | cell-runtime | `f60cc83` on `phase3/sim`; the clean run used `3438b9d` (#59, before the fault code; it injects nothing) |
-| Geometry | ground-truth TF (oracle geometry): what the runtime reads about poses is perfect. The ground-truth roles ADR (015) is drafted but not on this branch yet |
+| Geometry | ground-truth TF (oracle geometry): what the runtime reads about poses is perfect. ADR 015 sets out what ground truth may be used for |
 | Fault | `CELLRT_FAULT={"kind": "command_dropout", "onset_height_mm": 20, "duration_s": 15}` (#60) on every goal: from the first sample where the plug tip is within 20 mm of the port, every motion command is dropped for 15 s of sim time. Ground-truth label UNKNOWN |
 | Settings | clean A (no fault), A, B, C-rule, and C-LLM twice: `nvidia/nemotron-3.5-lightning-30b-a3b` on NVIDIA NIM, `max_tokens` 1024, deadline 30 s, live wait (ADR 020) |
 | Model calls | 6: at most 2 per task (the planner budget), under the default cap of 100 per policy process |

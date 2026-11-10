@@ -23,7 +23,7 @@ Constraints:
 - Phase 0's scenarios, metrics and committed baseline (`eval/baselines/phase0-small.json`) do not
   change. CI checks the baseline.
 - A fault acts in the world and is seen only through signals (ADR 005). Its label is for the
-  referee, never for the runtime (ADR 015, ground-truth roles; planned, not yet merged).
+  referee, never for the runtime (ADR 015, ground-truth roles).
 - The Monitor's rules do not change. UNKNOWN stays "stalled during insertion, and no known rule
   explains it" (ADR 006).
 - The budgets stay: 2 planner calls and 4 recoveries per task (ADR 007, ADR 008).
