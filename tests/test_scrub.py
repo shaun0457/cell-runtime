@@ -9,6 +9,13 @@ from cellrt.planner.schemas import Abort
 from cellrt.runtime.scrub import MAX_SCRUB_CHARS, REDACTED, scrub
 
 
+def test_a_lone_surrogate_which_cannot_be_stored_as_utf8_is_replaced() -> None:
+    scrubbed = scrub(f"steps {chr(0xD800)} and {chr(0xDFFF)}, kept: \U0001f600")
+
+    assert scrubbed == "steps ? and ?, kept: \U0001f600"
+    scrubbed.encode("utf-8")  # the store writes UTF-8
+
+
 @pytest.mark.parametrize(
     ("text", "secret"),
     [

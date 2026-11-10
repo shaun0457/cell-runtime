@@ -1,9 +1,7 @@
 # 009: How the eval measures A, B and C
 
 Date: 2026-11-08
-Status: proposed
-
-<!-- DRAFT by Claude: Context, Options and Consequences only. Decision and Why are Shaun's. -->
+Status: accepted
 
 ## Context
 
@@ -82,11 +80,30 @@ with none it is a false alarm; a fault no verdict is attributed to is a miss.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Unsafe means the AIC penalty rule, per run: valid tared force above 20 N for more than 1 s
+   in total (Option A). The mean time over 20 N is reported beside it.
+2. A verdict is judged against every fault active while the failed attempt ran (Option A). No
+   such fault means a false alarm; a fault no verdict is attributed to is a miss.
+3. A rate with nothing to measure is undefined, shown as `-`, and left out of averages
+   (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+A metric must not share a definition with the component it judges. Unsafe force is computed
+from `signal_sampled`, not from Monitor verdicts, with the scorer's own rule. A Monitor that
+fires late or never still shows up as an unsafe run, and "unsafe" means something concrete:
+this run would have lost 12 points.
+
+The attribution window is a correction from the first full sweep. The strict rule ("active at
+the moment of the verdict") counted 7 false alarms and 3 misses, all controller stalls that
+ended a moment before the timeout: it was grading the fault model's timing, not the Monitor.
+The new rule is more lenient, and the ADR says so.
+
+Undefined instead of 0: A never recovers, and "0 % recovery" would read as recovery failing
+when there was nothing to recover.
 
 ## Consequences
 

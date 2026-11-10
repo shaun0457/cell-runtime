@@ -15,6 +15,9 @@ from cellrt.runtime.events import (
     PlannerCalled,
     PlannerDecided,
     PlannerOutputRejected,
+    PlannerPreempted,
+    PlannerResponded,
+    PlannerTimedOut,
     PreconditionFailed,
     RecoveryStarted,
     RunFinished,
@@ -24,6 +27,9 @@ from cellrt.runtime.events import (
     SkillFinished,
     SkillProgress,
     SkillStarted,
+    TaskPlanned,
+    TaskPlanRejected,
+    TaskPlanResponded,
 )
 
 
@@ -38,6 +44,16 @@ def describe(event: Event) -> str:
     match event.payload:
         case RunStarted() as p:
             return f"{p.scenario_id} setting={p.setting} seed={p.seed} attempt={p.attempt}"
+        case TaskPlanResponded() as p:
+            tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
+            return (
+                f"{p.planner} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
+                f"finish={p.finish_reason or '?'}"
+            )
+        case TaskPlanned() as p:
+            return f"{p.planner}: {' -> '.join(p.steps)}"
+        case TaskPlanRejected() as p:
+            return f"{p.planner} rejected: {', '.join(p.errors)}"
         case SignalSampled() as p:
             # force is the tared magnitude; over20 is the step's time over 20 N where the world
             # reads the F/T stream faster than it samples (the AIC cell), absent in the mock.
@@ -76,8 +92,26 @@ def describe(event: Event) -> str:
             )
         case PlannerCalled() as p:
             return f"{p.skill} {p.failure_class} (call {p.call})"
+        case PlannerResponded() as p:
+            tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
+            return (
+                f"{p.skill} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
+                f"finish={p.finish_reason or '?'}"
+            )
+        case PlannerTimedOut() as p:
+            return (
+                f"{p.skill} no answer within {p.deadline_s:.2f}s "
+                f"(waited {p.waited_s:.2f}s); call cancelled"
+            )
+        case PlannerPreempted() as p:
+            return (
+                f"{p.skill} call cut short by {p.failure_class} after {p.waited_sim_s:.2f}s "
+                f"(wall {p.waited_s:.2f}s); call cancelled"
+            )
         case PlannerDecided() as p:
-            return f"{p.skill} -> {p.decision}"
+            # 0: a frozen call the loop waited on, or a row from before schema 10
+            after = f" after {p.waited_sim_s:.2f}s" if p.waited_sim_s else ""
+            return f"{p.skill} -> {p.decision}{after}"
         case PlannerOutputRejected() as p:
             return f"{p.skill} rejected: {', '.join(p.errors)}"
         case BtNodeChanged() as p:
@@ -90,3 +124,7 @@ def describe(event: Event) -> str:
         case RunFinished() as p:
             return f"{p.outcome}: {p.reason} (steps={p.steps}, duration={p.duration:.2f}s)"
     raise AssertionError(f"no description for {event.type}")  # pragma: no cover
+
+
+def _count(tokens: int | None) -> str:
+    return "?" if tokens is None else str(tokens)

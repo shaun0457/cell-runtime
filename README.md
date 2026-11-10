@@ -23,9 +23,17 @@ uv run cellrt run --scenario baseline --setting A --seed 0   # prints outcome an
 uv run cellrt run --scenario pose_shift --setting B --seed 0 # B recovers known failures
 uv run cellrt run --scenario yaw_mismatch --setting C --seed 0 # C asks the planner about UNKNOWN
 uv run cellrt replay baseline/A/0/a1                         # every step; add --signals for samples
+uv run cellrt trace yaw_mismatch/C/0/a1 --out runs/yaw.json  # the run as a trace for Perfetto
 ```
 
 Events go to `runs/cellrt.sqlite` by default (`--db` to change).
+
+`cellrt trace` writes Chrome trace event JSON (stdout without `--out`); open it in
+<https://ui.perfetto.dev> or `chrome://tracing`. It has spans for the run, each skill run and
+each planner call (with the model's answer, tokens and latency when a model planner was asked),
+the Monitor's verdicts, recoveries and faults as instants, and tared force and depth as counters
+(at most 2,000 points each). Marks are timed by wall time, so a model call shows its real cost;
+`--clock sim` times them by the run's clock instead. Each mark has both clocks in its args.
 
 Run every scenario × setting × seed and print the metrics table, read from the event log
 (about 45 s for the defaults: 7 scenarios × A, B, C × 20 seeds):
@@ -43,6 +51,107 @@ with nothing to measure is shown as `-`. Then the wins over A (runs A lost and a
 won), each of which must show a recovery or planner call in its log, and notes on which numbers
 depend on the mock. `docs/phase0-results.md` has the 20-seed results and what they do and do
 not show.
+
+The Phase 3 scenarios (`eval/scenarios/phase3.yaml`, ADR 019) add a second UNKNOWN,
+`damaged_port`, that no skill can fix: the right decision is to stop early. Both of the file's
+faults are designed by us. `--planner` (on `eval` and `run`) chooses what setting C asks:
+`rule`, the default, or `fixed`, which retries and then aborts on its last planner call without
+reading the evidence. stderr names the planner, since the table's C row does not:
+
+```sh
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --planner fixed
+```
+
+`--planner llm` asks a model on NVIDIA NIM (ADR 017; Nemotron 3.5 Lightning by default,
+`--model` to change). It needs the optional `llm` extra and a key in `NVIDIA_API_KEY`; the
+base install, the tests and CI need neither, and no network. Before an eval starts, it checks
+that setting C's units × the planner budget per task fit `--max-model-calls` (default 100), and
+refuses otherwise; stderr reports the calls made. `cellrt smoke-llm` sends one fixed failure to
+the model and prints how it answered, as JSON:
+
+```sh
+uv sync --extra llm
+export NVIDIA_API_KEY=...   # never in a file of the repo
+uv run cellrt smoke-llm
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings C --seeds 3 --planner llm
+```
+
+`cellrt agent-report` puts the planner variants side by side, one event store per variant
+(`--db LABEL=PATH`; `C-llm#1`, `C-llm#2`, ... are repeats, pooled into one row with the spread
+of their success rates). Per variant: success, the sim time and skills a failed run spends
+after its first UNKNOWN, planner calls and decisions, invalid answers, timeouts, and the wall
+latency and tokens of model calls. It refuses a store holding more than one setting or
+configuration, the same store given twice, and repeats that asked different planners:
+
+```sh
+uv run cellrt agent-report --db B=runs/b.sqlite --db C-rule=runs/rule.sqlite \
+  --db "C-llm#1=runs/llm1.sqlite" --db "C-llm#2=runs/llm2.sqlite"
+```
+
+The first run with a real model, and what it did and did not show, is in
+[`docs/phase3-llm-results.md`](docs/phase3-llm-results.md).
+
+`--tree` (on `eval` and `run`, ADR 023) chooses how a task becomes a tree. `fixed`, the
+default, runs approach, align, insert_scripted, verify for every task and records no plan.
+`table` picks the insert skill by the task's plug type (`sc` gets `insert_act`; the row is
+ours) and records the plan as `task_planned` before anything moves. A plan is checked against
+the registry and a step contract per skill (what each step needs and gives) before the tree is
+built; a plan that fails the check is recorded as `task_plan_rejected` with its codes, and the
+run ends `aborted` with no skill started. Each step still recovers as its setting says.
+`eval/scenarios/phase3-tasks.yaml` holds an SFP task and an SC task whose plug, in the mock,
+wedges rotated on every attempt (the rotated-plug fault, ours, after #28's SC jam; not
+measured in the sim): with the fixed steps B loses it and C needs a planner call; with `table`
+both seat it with no recovery, at insert_act's slower descent. The table's confusion matrix
+then lists the SC faults as missed: insert_act twists the plug free before the Monitor sees a
+stall, and the metrics do not yet tell a fault a skill cleared from one the Monitor missed:
+
+```sh
+uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
+```
+
+`--tree llm` asks the model on NIM for the plan instead: one call per run, through a `plan` tool
+limited to the plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the
+eval does not start if its plan calls plus its UNKNOWN calls could exceed it). The model's
+answer is parsed and checked like any plan; the call's prompt, answer (scrubbed and cut), tokens
+and latency are recorded as `task_plan_responded`, and `cellrt replay` prints a summary line for
+it without calling the model. The model is told the task's fields and the skills' descriptions
+and contracts. It is not told which faults the mock injects, but the `insert_act` description
+says it frees a plug rotated against the port, which is the SC task's fault; the table's row
+(ours) encodes that knowledge directly. `eval` prints how many plans were rejected on stderr;
+the table's means still include those runs. The first run with a real model as the task
+planner, and what it did and did not show, is in
+[`docs/phase3-task-to-tree-results.md`](docs/phase3-task-to-tree-results.md): it added nothing
+over the table.
+
+`cellrt promote` turns a recurring UNKNOWN into a Monitor rule with a recovery plan (ADR 021,
+ADR 022), in five steps. `group` replays the Monitor over a mock store and prints its UNKNOWN
+verdicts grouped by signature. `propose` asks the model on NIM, once, for a candidate for one
+group: it sees the group's readings and the rule language, never run ids or fault labels, and
+its answer is kept as a record (prompt and answer scrubbed) and, when it parses, as a
+candidate file. A candidate can also be written by hand. `validate` replays every run again
+with a candidate rule (a JSON file: a rule in a small, bounded language and its plan) and
+checks four gates: the replay
+reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
+other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
+passed under the Monitor configuration in use now, with the approver's name. `eval --promoted
+DIR` runs with the approved rules, whose plans run in B and C without the planner:
+
+```sh
+uv run cellrt promote group --db runs/phase3.sqlite
+# optional, one model call: the llm extra and NVIDIA_API_KEY, as for --planner llm
+uv run cellrt promote propose --group "<label from group>" --db runs/phase3.sqlite \
+  --out proposal.json --candidate-out rule.json
+uv run cellrt promote validate rule.json --group "<label from group>" --db runs/phase3.sqlite \
+  --out report.json
+uv run cellrt promote approve report.json --by "Your Name"
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --promoted eval/promoted
+```
+
+Replay checks the rule, not its plan; the eval is where the plan runs first. The hashes in an
+approved file catch an accidental edit or a changed Monitor, not tampering: write access to
+`eval/promoted/` is what the eval trusts. Two rules for the
+phase 3 faults, before and after, are in
+[`docs/phase3-promotion-results.md`](docs/phase3-promotion-results.md).
 
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
@@ -73,7 +182,8 @@ uv run cellrt baseline eval/baselines/phase0-small.json --write    # regenerate 
 `adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch
 the model with `policy:=adapters.aic.RuntimePolicy`, with cell-runtime installed in its
 environment. Each goal (one task) becomes one run in the store named by `CELLRT_STORE`
-(default `runs/aic.sqlite`): setting A, seed 0, and one scenario per goal,
+(default `runs/aic.sqlite`): the setting `CELLRT_SETTING` names (A, B or C; default A), seed
+0, and one scenario per goal,
 `<session>/goal<N>/<task id>`, where `CELLRT_SESSION` names the engine config (default `aic`):
 the engine sends no trial id, and every sample-config trial's task is `task_1`. Running the same
 config again gives new attempts of the same scenarios, so set a new `CELLRT_SESSION` for every
@@ -82,12 +192,40 @@ could not be told apart. Goal N matches the config's N-th task only when the eng
 goal before it (a trial it skips shifts the later ones). `cellrt replay` reads those
 runs like any other.
 
-The policy runs setting A as CheatCode's two phases split into skills: `approach`, `align`
+By default (setting A) the policy runs CheatCode's two phases split into skills: `approach`, `align`
 (down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
--0.015) and `verify` (5 s settle, then depth from ground truth); `retract` is there for
-recovery. z_offset is CheatCode's height above the port; where the plug tip actually ends
-depends on CheatCode's tip-offset quirk (`adapters/aic/geometry.py`), to be checked in the sim. Skill starts, ends and progress (at most once per sim second) go out as
-`InsertCable` feedback.
+-0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then the
+tip's height and offset from ground truth, against the seated band measured in the #28 sim
+run); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
+the plug tip actually ends depends on CheatCode's tip-offset quirk
+(`adapters/aic/geometry.py`): in #28 it seated two of the three plugs during align. Skill
+starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
+`CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
+wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
+at half speed. After a retract or a broken descent run, align and insert go on down from where
+the arm is measured, not where it was last sent: a plug pressed on something holds the TCP far
+above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the arm is then below
+z_offset 0.01, align first comes back up to it. `retract`
+always rises 5 mm: the mock's retract height above the port does not carry over, since the
+port frame sits at a different depth for each port type. Setting C asks the planner
+`CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
+`NVIDIA_API_KEY` only). The executor runs in `live` mode (ADR 020): the sim does not stop
+while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching.
+`CELLRT_FAULT` injects a fault with a ground-truth label (#60), as JSON:
+`{"kind": "command_dropout", "onset_height_mm": 20, "duration_s": 15, "goals": [2]}` drops
+every motion command for 15 s of sim time from when the plug tip first comes within 20 mm of
+the port (the default), in goal 2 only (every goal without `goals`). The arm stays at its last
+target and the plug hangs; if that lasts past the Monitor's stall window in insert_scripted,
+the verdict is UNKNOWN. A descent run that starts after a broken one (stopped, timed out, or
+after a retract), such as a retry, goes on from where the arm is measured to be, so it does not
+jump to the targets lost in the dropout. The next target still jumps when the link comes back
+inside a run, or after a run that ran to its end while its commands were lost (align, then
+insert_scripted). `onset_height_mm` is at most 40, so a slow retry from where the plug hangs
+fits in insert_scripted's timeout. The onset
+is keyed to height, not to a skill, because the plug seats during align in the sim. The fault
+is recorded as `fault_injected` and `fault_cleared` and is part of the run's configuration
+hash. A bad value in any of these variables refuses every
+goal, before the arm moves.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).
 Everything except `RuntimePolicy.py` and `ros_port.py` is ROS-free and is tested on any OS
@@ -98,3 +236,10 @@ The skills read plug and port poses from the sim's ground-truth TF (launch the s
 `ground_truth:=true`; every run records `geometry_source: ground_truth`). That is for local
 development only: the AIC submission environment blocks those topics (`docs/access_control.md`
 in the AIC repository).
+
+## License
+
+Apache License 2.0: see `LICENSE`. The AIC simulation this project runs on
+([intrinsic-dev/aic](https://github.com/intrinsic-dev/aic)) is under the same license.
+Code adapted from AIC and transforms3d, with its copyright notices and licenses, is listed in
+`THIRD_PARTY_NOTICES.md`.

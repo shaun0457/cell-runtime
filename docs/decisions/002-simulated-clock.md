@@ -1,7 +1,7 @@
 # 002: Time in the core
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -31,12 +31,29 @@ checked against the clock; `asyncio.wait_for` / `asyncio.timeout` are not used.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+Option A. Time in the core comes only from an injected `Clock`. `SimClock` keeps integer
+nanoseconds and moves only when the loop calls `advance` after a world step. Skill timeouts are
+checked against the clock. Real-time APIs are banned in the core by ruff `banned-api`; the
+exceptions are listed per file in `pyproject.toml`.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+"Same seed, same result" is impossible if time comes from the machine: asyncio's timers depend
+on load, so a timeout could fire on a busy CI runner and not on the laptop. With a simulated
+clock, twenty 50 ms steps are exactly one second, and a 10 s insertion runs in milliseconds,
+which is why 420 runs take under a minute.
+
+It also carried over to the sim without a second clock: Phase 1 keeps `SimClock` and advances
+it by the sim time each step reports (ADR 011). The cost is discipline (no `asyncio.wait_for`),
+enforced by a lint rule rather than a convention.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Easier: deterministic tests and evals; long scenarios cost almost nothing.
+- Harder: asyncio's timeout helpers are off-limits; `loop.time()` is a method call the lint rule
+  does not catch.
+- Settled in Phase 1 (ADR 011): in the cell the same clock is advanced by the sim time each step
+  reports, so a paused or reset sim is handled by the adapter, not by a second clock.

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from aic_fakes import FakeNode
 
+from adapters.aic.faults import SPEC_REFUSED
 from cellrt.runtime.events import RunFinished
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -86,6 +87,7 @@ def policy_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[t
     monkeypatch.delitem(sys.modules, "adapters.aic.RuntimePolicy", raising=False)
     monkeypatch.setenv("CELLRT_STORE", str(tmp_path / "store" / "aic.sqlite"))
     monkeypatch.delenv("CELLRT_SESSION", raising=False)
+    monkeypatch.delenv("CELLRT_FAULT", raising=False)
     _Port.closed, _Port.fail_on_init, _Port.fail_on_close = 0, False, False
     module = importlib.import_module("adapters.aic.RuntimePolicy")
     yield module
@@ -235,3 +237,35 @@ def test_a_session_label_of_64_characters_is_accepted(
     assert _insert(policy_module, _Node()) is True
 
     assert _units(tmp_path) == [(f"{label}/goal1/trial_1_task_1", 1)]
+
+
+def test_the_fault_goes_to_the_goals_cellrt_fault_names(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CELLRT_FAULT", '{"kind": "command_dropout", "duration_s": 3, "goals": [2]}')
+    policy = policy_module.RuntimePolicy(_Node())
+
+    for _ in range(3):
+        assert policy.insert_cable(TASK, None, None, None) is True
+
+    with EventStore(tmp_path / "store" / "aic.sqlite") as store:
+        faulted = [
+            r.scenario_id
+            for r in store.runs()
+            if any(e.payload.type == "fault_injected" for e in store.events(r.run_id))
+        ]
+    assert faulted == ["aic/goal2/trial_1_task_1"]
+
+
+def test_a_bad_fault_refuses_every_goal_with_the_fixed_message(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(
+        "CELLRT_FAULT", '{"kind": "command_dropout", "duration_s": 1, "x": "sk-123"}'
+    )
+    node = _Node()
+    policy = policy_module.RuntimePolicy(node)
+
+    assert [policy.insert_cable(TASK, None, None, None) for _ in range(2)] == [False, False]
+    assert node.logger.errors == [f"cell-runtime goal refused: {SPEC_REFUSED}"] * 2
+    assert not (tmp_path / "store" / "aic.sqlite").exists()  # the arm never moved

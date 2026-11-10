@@ -1,7 +1,7 @@
 # 004: Event granularity and the event store
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -41,15 +41,36 @@ reads; a change that cannot have a default would need a format version in `run_s
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+Granularity A and Store A. Every world signal sample is recorded as `signal_sampled`. Events go
+into one SQLite table keyed by `(run_id, seq)`, with JSON payloads, WAL mode, and triggers that
+abort any update, delete or replace. Signal samples are buffered up to 500; any decision event
+flushes the buffer first.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+The point of the log is that every claim can be re-checked from it. If only decisions were
+recorded, nobody could verify a Monitor verdict afterwards, and classification accuracy would
+become "trust me". With every sample stored, a verdict can be recomputed from the log, replay
+can show the force curve, and a fork from step N has the full input history. Phase 3's UNKNOWN
+promotion depends on the same property: a proposed rule is validated by replaying stored
+samples.
+
+SQLite is in the standard library, is a single file that survives a VM restart, and lets the
+eval ask cross-run questions in SQL (which units are finished, how many attempts each had).
+Making append-only a database trigger means it holds even if a bug tries to rewrite history.
 
 ## Consequences
 
-What becomes easier, what becomes harder, what we will need to revisit.
+- Easier: verdicts and metrics are recomputed from the log; the resumable eval (ADR 010) is a
+  query on the store.
+- Harder: size. In Phase 0, 80 % of rows are signal samples (34 MB for 420 runs). A crash can
+  lose up to 500 buffered samples, never a decision.
+- In the cell the F/T stream is 50 Hz and the store keeps one sample per 50 ms step plus that
+  step's `force_over_limit_s` (ADR 013). A future rule that needs the raw 50 Hz stream has to be
+  recorded first; old stores cannot check it.
 
 - Payloads change shape over time, and the store keeps every row forever. Since Phase 1 (#21)
   `run_started` records `schema_version` (`SCHEMA_VERSION` in `runtime/events.py`). The field
@@ -60,5 +81,9 @@ What becomes easier, what becomes harder, what we will need to revisit.
   need the reader to convert rows by their run's version; nothing does that yet. Version 3
   (#23) added `signal_sampled.force_over_limit_s`, version 4 (#24)
   `run_started.geometry_source`, version 5 (#25) `hold_checked`, version 6 (#26)
-  `signal_sampled.wrench_dropped`. A test hashes every payload's JSON schema
-  and pins the hash per version, so a shape change without a bump fails.
+  `signal_sampled.wrench_dropped`, version 7 (#45) `planner_responded`, version 8 (#47)
+  `planner_timed_out`, version 9 (#56) `planner_preempted`, version 10 (#57)
+  `planner_decided.waited_sim_s`, version 11 (ADR 023) `task_planned` and
+  `task_plan_rejected`, version 12 (ADR 023) `task_plan_responded`. A test hashes every
+  payload's JSON schema and pins the hash per version,
+  so a shape change without a bump fails.

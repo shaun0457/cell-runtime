@@ -1,9 +1,7 @@
 # 008: How setting C hands unclassified failures to a planner
 
 Date: 2026-11-08
-Status: proposed
-
-<!-- DRAFT by Claude: Context, Options and Consequences only. Decision and Why are Shaun's. -->
+Status: accepted
 
 ## Context
 
@@ -17,34 +15,43 @@ Current shape:
 
 - `Planner` protocol: `async triage(FailureContext) -> object`. The context holds the failed
   skill and attempt, the class, the Monitor rule and its evidence, time left, planner calls and
-  recoveries left, and a catalogue of registered skills with their Monitor profiles. The return
-  value is raw (a dict or a JSON string), so a fake, a rule planner and an LLM share one path.
+  recoveries left, a catalogue of registered skills with their Monitor profiles, and (since
+  #45) the step's options and a one-line description of each skill. The return value is raw (a
+  dict or a JSON string), so a fake, a rule planner and an LLM share one path. A model planner
+  wraps it with the call's trace (`Traced`).
 - `validate_decision` turns raw output into a `Decision` (`switch_skill(skill)`, `retry`,
-  `abort(reason)`; pydantic, `extra="forbid"`, discriminator `kind`) or a `Rejection` holding the
+  `abort(reason)`, and since #48 `escalate(reason)`, ADR 018; pydantic, `extra="forbid"`,
+  discriminator `kind`) or a `Rejection` holding the
   raw text (scrubbed by `runtime.scrub`, then cut to 500 characters: what looks like a key, a
   token or an e-mail address is redacted, control and direction characters are replaced, since
   the store keeps it for good) and error codes (`field: type`; a key the planner made up
   shows as `<extra>`, so nothing the planner wrote is echoed in a code). Text over 16,000
   characters, or nested more than 8 brackets deep, is rejected unparsed (`too_long`,
   `too_deep`): parsing deep input would hit a recursion limit that differs by platform.
-  Validation never raises (a hostile `repr` included). An `abort` reason may not contain C0 or
-  C1 control characters or direction overrides, and is scrubbed before it is stored.
+  Validation never raises (a hostile `repr` included). An `abort` or `escalate` reason may not
+  contain C0 or C1 control characters or direction overrides, and is scrubbed before it is
+  stored.
   A switch must name a registered skill, not the failed one, and one of the step's options.
-  An abort reason is at most 200 printable characters: it becomes the run's outcome reason.
+  An abort or escalate reason is at most 200 printable characters: it becomes the run's
+  outcome reason.
 - Only insert steps get a planner in Phase 0; their options are the other registered insert
   skills. Only a Monitor-sourced UNKNOWN reaches it; a class a skill reported itself, or a skill
   that raised, does not.
 - `PlannerBehaviour` runs `triage` as a task on the same bridge as skills (ADR 003) and records
   `planner_called` (with the context), then `planner_decided` or `planner_output_rejected`.
+  For a model planner it records `planner_responded` in between: the prompt, the raw answer
+  (scrubbed), the model, token counts and wall latency (#45).
 - Running a retry or a switch records `recovery_started` (class UNKNOWN, action `retry` or
   `switch_skill:<name>`) and counts against the task recovery budget (4). Planner calls have
   their own budget, 2 per task, checked against `RunState.planner_calls` folded from the log.
-- `abort` and a rejection end the run as `aborted` with a reason; an exhausted planner budget
-  ends it as `failed`.
+- `abort`, `escalate` (ADR 018) and a rejection end the run as `aborted` with a reason; an
+  exhausted planner budget ends it as `failed`.
 - A skill the planner switched to is a full member of the step: if it then fails with a known
   class, B's plan applies to it (a FORCE_LIMIT reruns it at half speed).
-- In setting C, `config_hash` also covers the planner's type and budget; B's hash does not
-  include the planner budget.
+- In setting C, `config_hash` also covers the planner's type and budget, and the configuration
+  a planner describes (a model planner's model, prompt version, sampling, mode and client,
+  #45); B's hash
+  does not include the planner budget.
 
 ## Options
 
@@ -104,11 +111,32 @@ Current shape:
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Planners return raw output (a dict or JSON text). The executor validates it into a
+   `Decision` (`switch_skill`, `retry`, `abort`) or a `Rejection` (Option A).
+2. A switch may only name one of the step's explicit options; in Phase 0 only insert steps have
+   options, namely the other insert skills (Option A).
+3. Invalid output aborts the run with a reason, recorded as `planner_output_rejected`
+   (Option A).
+4. Two budgets: 2 planner calls per task, and every retry or switch the planner starts counts
+   against the shared task recovery budget of 4 (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Principle 4 says LLM output is untrusted, and that only holds if no planner can skip
+validation. So the rule planner returns dicts the way an LLM would and goes through the same
+gate; the stub already tests the path the LLM will use in Phase 3.
+
+Explicit options keep the planner inside the task: it may choose how to insert, not decide to
+skip verification. Aborting on invalid output is strict on purpose. Asking again, or quietly
+falling back to B, would hide how often the planner is wrong, and that is exactly the number
+Phase 3 has to report. The budgets cap cost and time per task and stop a planner from looping.
+
+What Phase 0 does not show: the rule planner has one rule, so the C − B gap (14 points) is
+exactly the `yaw_mismatch` scenario. It shows that the gate and the budgets work, not that a
+planner adds value.
 
 ## Consequences
 
@@ -118,11 +146,13 @@ Current shape:
 - The Phase 0 result says little about an LLM: the rule planner knows the one UNKNOWN fault the
   mock has. What it does show is that the plumbing (context, validation, budgets, events) holds,
   and the malformed-output tests show that bad output is contained.
-- While the planner runs, the world keeps stepping and signals are recorded, but no skill is
-  active, so the Monitor watches nothing; the arm holds (the failed skill's access was revoked
-  and HOLD sent), and the task time limit still applies. A planner timeout, late answers, and what the supervisor does during a slow LLM
-  call are open for Phase 3 (#14).
-- The hash names the planner type, not how an instance is set up: two LLM planners of one type
-  with different models or prompts would share a hash. Phase 3 needs a planner config in it.
+- In Phase 0 the rule planner answered within the drain, so the world kept stepping and
+  signals were recorded while it ran. Since #47 a call that waits on outside work stops the
+  world instead: the arm holds (the failed skill's access was revoked and HOLD sent), the mock's
+  sim clock stands still, and the call has a wall-time deadline; a late answer is cancelled and
+  never read (ADR 016).
+- The hash named only the planner type in Phase 0, so two LLM planners of one type with
+  different models or prompts would have shared a hash. Since #45 a planner that describes its
+  configuration has it hashed too.
 - Adding a new insert skill adds it to every insert step's options automatically; adding a
   planner to other steps needs a decision about their options.

@@ -1,7 +1,7 @@
 # 006: The Monitor decides failure classes and preempts the running skill
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -25,8 +25,8 @@ Force is tared: a sample carries the raw F/T reading and the offset published be
 rules read raw minus offset, as AIC's scorer does (`wrist_wrench` is not tared;
 `controller_state.fts_tare_offset` is the offset). Time over the force limit (20 N, the AIC's,
 not configurable) is a running sum over the task, never reset; it is part of the folded run
-state (`RunState.over_limit_s`, from every `signal_sampled`, also those logged while the planner
-runs and no skill does), and the Monitor and the metrics both read it, so the two cannot
+state (`RunState.over_limit_s`, from every `signal_sampled`, also those logged between skills;
+none are logged while the loop waits on a planner call, ADR 016), and the Monitor and the metrics both read it, so the two cannot
 disagree and `state_at(seq)` rebuilds it. Two bounded windows: the sensor window (validity) runs across skills
 and restarts after a dropout verdict; the insertion window covers the current skill only
 (`reset` on skill start). Timeouts are
@@ -176,8 +176,8 @@ exceeds 1 s (`ScoringTier2.cc:870-900`); the sum never goes back down.
 
 ## Decision
 
-<!-- DRAFT by Claude from the 2026-11-08 grilling session. Shaun rewrites Decision and Why in
-his own words, then sets Status to accepted. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
 
 - **Authority.** The Monitor decides failure classes. A skill reports ok / not ok. If a skill
   also returns a class, it is used only when the Monitor gave no verdict, and the event records
@@ -210,9 +210,6 @@ his own words, then sets Status to accepted. -->
   `sensor_wait`, ...), not by a name list inside the Monitor.
 
 ## Why
-
-<!-- DRAFT by Claude: Shaun rewrites this in his own words, as he would explain it in an
-interview. -->
 
 One component owns the question "why did this fail", for three reasons:
 

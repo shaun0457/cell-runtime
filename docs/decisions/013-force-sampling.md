@@ -1,7 +1,7 @@
 # 013: Force sampling at the F/T rate, summed the scorer's way
 
 Date: 2026-11-09
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -78,11 +78,35 @@ Current shape (since #26, the plan's defaults):
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Force comes from a direct subscription to the F/T broadcaster's wrench topic (50 Hz), with
+   the controller state topic for the latest tare (Option A). Phase 1 does not call
+   `get_observation`.
+2. Each reading is tared in the wrench callback with the newest tare seen then, per axis, then
+   reduced to its magnitude (Option A).
+3. A step's time over the limit is the scorer's sum over the readings drained in that step,
+   including the pair across the step boundary, recorded as `signal_sampled.force_over_limit_s`
+   (Option A).
+4. The buffer holds 256 readings (about 5 s); on overflow the oldest is dropped and the drop is
+   counted (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+FORCE_LIMIT and the unsafe metric claim to mirror the scorer, and the scorer sums real time
+between every wrench message. An `Observation` carries one wrench per camera frame, so a spike
+between frames would be invisible. The direct subscription sees every message, and the
+submission ACL allows it: its deny list covers Gazebo, the engine, the bridge and scoring.
+
+Taring each reading with the tare current at that moment is what the scorer does message by
+message. Summing the scorer's way, boundary pair included, makes our number comparable with the
+scorer's report, which #28 checks. Dropping the oldest on overflow keeps the ROS callback from
+ever blocking (callbacks only write to bounded buffers, ADR 011), and counting the drops makes
+the loss visible instead of silent.
+
+Weakness: cameras must still render, because the observation pipeline and the scorer setup
+depend on them, even though force no longer comes from observations.
 
 ## Consequences
 

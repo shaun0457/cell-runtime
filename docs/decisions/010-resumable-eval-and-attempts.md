@@ -1,9 +1,7 @@
 # 010: How the eval resumes after it is killed
 
 Date: 2026-11-08
-Status: proposed
-
-<!-- DRAFT by Claude: Context, Options and Consequences only. Decision and Why are Shaun's. -->
+Status: accepted
 
 ## Context
 
@@ -143,16 +141,46 @@ configures the model node only on its first trial).
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. A unit is complete when one of its attempts has `run_finished` and that attempt's
+   `config_hash` matches the current configuration, including fingerprints of the core source,
+   the adapter source and `uv.lock` (Option A; the last two since #20).
+2. If several attempts match, the first counts (Option A).
+3. An interrupted unit reruns from the start as a new attempt `aN` (Option A).
+4. After 3 interrupted attempts under one configuration, the unit is given up and reported on
+   stderr (Option A).
+5. The kill is tested with a test-only environment variable that exits after an exact number of
+   events (Option A).
+6. In the AIC cell, a unit is one goal of an engine run, `<session>/goal<N>/<task id>`, with
+   `CELLRT_SESSION` naming the engine config (Option A of question 6), until the Phase 2 runner
+   names scenarios itself (Option D).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+The failure that matters is silent: a table that mixes results from two versions of the
+Monitor, or of the adapter, or of a dependency. Hashing the parameters, the source and the lock
+file means a changed rule or an upgrade can never reuse old results, and it works on a dirty
+tree without git.
+
+Rerunning instead of resuming keeps one code path. Resuming from step N needs the world's state
+at step N, which the mock could rebuild but Gazebo cannot. The attempt cap protects a VM that
+restarts automatically from looping forever on a unit that crashes because of a bug, not a
+preemption. The environment-variable hook makes the crash test deterministic on Windows and
+Linux; a timer-based kill would be flaky on a loaded CI runner.
+
+In the cell the engine sends no trial id, and every sample trial's task is `task_1`; keyed by
+task id alone, three trials would collapse into three attempts of one unit. Counting goals per
+session is the smallest fix that needs nothing from upstream; its limits (a skipped trial shifts
+the later goals) end when the Phase 2 runner writes the engine configs and names each
+scenario.
 
 ## Consequences
 
 - In the AIC cell (Phase 1), Option A of question 6: a unit is one goal of an engine run: scenario
-  `<session>/goal<N>/<task id>`, setting A, seed 0. `CELLRT_SESSION` names the engine config, so
+  `<session>/goal<N>/<task id>`, the setting `CELLRT_SETTING` names (default A; only A before
+  #59), seed 0. `CELLRT_SESSION` names the engine config, so
   running it again gives new attempts of the same units. The engine sends no trial id, and in
   its sample config every trial's task is `task_1`; keyed by task id alone, the three trials
   would be three attempts of one unit. The cell never reruns a unit by itself. Two limits:

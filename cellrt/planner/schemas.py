@@ -28,11 +28,14 @@ MAX_INPUT_CHARS = 16_000
 MAX_JSON_DEPTH = 8
 # Names an error location may show; anything else (a key the planner made up) is "<extra>".
 # With duplicates dropped, this keeps the set of possible error codes small and fixed.
-_KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "abort"})
+_KNOWN_LOCS = frozenset({"kind", "skill", "reason", "switch_skill", "retry", "abort", "escalate"})
 # A printable reason: it ends up in the run's outcome and in replay lines. No C0 or C1 control
 # characters (a C1 byte can be a terminal escape) and no direction overrides.
 _NO_CONTROL_CHARS = f"^[^{UNSAFE_CHARS}]+$"
 MAX_REASON_CHARS = 200
+# A valid answer the runtime refused because the state changed during the call so that the
+# skill it chose can no longer start (ADR 020): stale, not invalid.
+PRECONDITIONS_NOT_MET = "skill: preconditions_not_met"
 
 
 class _Decision(BaseModel):
@@ -59,8 +62,46 @@ class Abort(_Decision):
     reason: str = Field(min_length=1, max_length=MAX_REASON_CHARS, pattern=_NO_CONTROL_CHARS)
 
 
-Decision = Annotated[SwitchSkill | Retry | Abort, Field(discriminator="kind")]
+# ADR 018. The docstring below is what the model reads in the tool's schema.
+class Escalate(_Decision):
+    """Hand the task to a person: nothing else runs, and the run ends aborted."""
+
+    kind: Literal["escalate"] = "escalate"
+    reason: str = Field(min_length=1, max_length=MAX_REASON_CHARS, pattern=_NO_CONTROL_CHARS)
+
+
+Decision = Annotated[SwitchSkill | Retry | Abort | Escalate, Field(discriminator="kind")]
 DECISION_ADAPTER: TypeAdapter[Decision] = TypeAdapter(Decision)
+_DECISION_TYPES: tuple[type[_Decision], ...] = (SwitchSkill, Retry, Abort, Escalate)
+
+
+def decision_json_schema() -> dict[str, object]:
+    """The decision union as one JSON schema object, for a model's tool or prompt.
+
+    It tells the model the shape; it does not replace validation. Each variant is inlined (no
+    `$ref`, which some providers reject), `kind` is required, and the reason's character
+    pattern is left out: it is written for Python's regex engine, and `validate_decision`
+    enforces it anyway.
+    """
+    variants: list[dict[str, object]] = []
+    for model in _DECISION_TYPES:
+        schema = model.model_json_schema()
+        properties: dict[str, object] = {
+            name: {k: v for k, v in prop.items() if k not in ("title", "default", "pattern")}
+            for name, prop in schema["properties"].items()
+        }
+        properties["kind"] = {"type": "string", "const": model.model_fields["kind"].default}
+        required = [r for r in schema.get("required", []) if r != "kind"]
+        variants.append(
+            {
+                "type": "object",
+                "description": (model.__doc__ or "").strip(),
+                "properties": properties,
+                "required": ["kind", *required],
+                "additionalProperties": False,
+            }
+        )
+    return {"type": "object", "oneOf": variants}
 
 
 @dataclass(frozen=True)
@@ -94,11 +135,16 @@ def validate_decision(
             return Rejection(shown, ("skill: same_as_failed_skill",))
         if decision.skill not in options:
             return Rejection(shown, ("skill: not_an_option_for_this_step",))
-    if isinstance(decision, Abort):
+    if isinstance(decision, Abort | Escalate):
         # The reason is stored and shown: scrub it like any text from outside.
         reason = scrub(decision.reason)[:MAX_REASON_CHARS]
         return decision.model_copy(update={"reason": reason})
     return decision
+
+
+def audit_text(raw: object) -> str:
+    """Planner output as text for the audit trail: scrubbed, bounded, never raises."""
+    return _shown(raw)
 
 
 def _json_depth(text: str) -> int:

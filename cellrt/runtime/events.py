@@ -15,10 +15,12 @@ Outcome = Literal["success", "failed", "aborted"]
 # is every run written before the field existed (`parse_stored` reads those as 1); 2 added the
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
-# `signal_sampled.wrench_dropped`. Bump it when a payload changes shape
-# (a test hashes every payload's schema per version), and keep older rows readable: new fields
-# get defaults.
-SCHEMA_VERSION = 6
+# `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
+# 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
+# and `task_plan_rejected`; 12 added `task_plan_responded`.
+# Bump it when a payload changes shape (a test hashes every payload's schema per version), and
+# keep older rows readable: new fields get defaults.
+SCHEMA_VERSION = 12
 
 
 class _Payload(BaseModel):
@@ -43,6 +45,47 @@ class RunStarted(_Payload):
     # Where skills got the plug and port poses: "ground_truth" is TF from the AIC sim (blocked in
     # the submission environment); None is the mock world, which has no poses.
     geometry_source: Literal["ground_truth"] | None = None
+
+
+class TaskPlanResponded(_Payload):
+    """A model task planner's answer as it came back, before it was parsed and checked: the
+    audit trail of the run's one plan call (ADR 023). Recorded just before `task_planned` or
+    `task_plan_rejected`, only for a task planner that reports a trace. Kept apart from
+    `planner_responded`, which is an UNKNOWN triage call. Scrubbed and cut like it
+    (`PlannerTrace.stored`)."""
+
+    type: Literal["task_plan_responded"] = "task_plan_responded"
+    planner: str
+    provider: str
+    model: str
+    prompt: str  # the messages sent, as JSON
+    response: str  # the tool call's arguments, or the text
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
+
+
+class TaskPlanned(_Payload):
+    """The task planner's plan passed the verifier (ADR 023): the tree runs these steps, each in
+    the setting's recovery. Recorded only when the tree is not the fixed one, so other runs keep
+    their shape."""
+
+    type: Literal["task_planned"] = "task_planned"
+    planner: str
+    steps: list[str]
+
+
+class TaskPlanRejected(_Payload):
+    """The task planner's plan failed the verifier, or the planner raised: no tree is built and
+    the run ends aborted before any motion (ADR 023)."""
+
+    type: Literal["task_plan_rejected"] = "task_plan_rejected"
+    planner: str
+    # As proposed, at most planner.task_plan.MAX_PLAN_STEPS + 1 names, each scrubbed and cut to
+    # MAX_STEP_CHARS; empty if the planner raised.
+    steps: list[str]
+    errors: list[str]  # codes ("step 2: needs_unmet"), never a planner's text
 
 
 class FaultInjected(_Payload):
@@ -141,7 +184,8 @@ class MonitorVerdict(_Payload):
 
 
 class RecoveryStarted(_Payload):
-    """The tree starts a recovery for a known failure class, within its budgets."""
+    """The tree starts a recovery, within its budgets: a known class's plan, a planner's
+    decision, or an approved promoted rule's plan (`action` `promoted:<NAME>:...`)."""
 
     type: Literal["recovery_started"] = "recovery_started"
     skill: str
@@ -163,16 +207,64 @@ class PlannerCalled(_Payload):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlannerResponded(_Payload):
+    """A model planner's answer as it came back, before validation: the audit trail of one call.
+
+    Recorded only for planners that report a trace (a model planner), so runs with the rule
+    planner keep their shape. The prompt is our own text; the response came from outside and is
+    scrubbed. Both are cut to fixed lengths (`planner.base`).
+    """
+
+    type: Literal["planner_responded"] = "planner_responded"
+    skill: str
+    provider: str
+    model: str
+    prompt: str  # the messages sent, as JSON
+    response: str  # the tool call's arguments, or the text
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
+
+
+class PlannerTimedOut(_Payload):
+    """The planner did not answer within its wall-time deadline: the call was cancelled, and
+    any later answer is never read. The step fails without running anything."""
+
+    type: Literal["planner_timed_out"] = "planner_timed_out"
+    skill: str
+    deadline_s: float = Field(gt=0, allow_inf_nan=False)
+    waited_s: float = Field(ge=0, allow_inf_nan=False)  # wall time, from when the loop waited
+
+
+class PlannerPreempted(_Payload):
+    """A Monitor verdict during a live wait (ADR 020) cut the call short: it was cancelled,
+    any answer is never read, and the step recovers as if its skill had failed with the
+    verdict's class. The verdict itself is the `monitor_verdict` just before."""
+
+    type: Literal["planner_preempted"] = "planner_preempted"
+    skill: str
+    failure_class: str
+    # wall time since the loop first held for the call (0 if it never did)
+    waited_s: float = Field(ge=0, allow_inf_nan=False)
+    waited_sim_s: float = Field(ge=0, allow_inf_nan=False)  # clock time since the call
+
+
 class PlannerDecided(_Payload):
     """The planner's output passed validation."""
 
     type: Literal["planner_decided"] = "planner_decided"
     skill: str
     decision: dict[str, Any]
+    # Clock time between the call and the answer being read: 0 for a call the loop waited on
+    # in `frozen` (and in rows from before schema 10), one period for an answer in the
+    # call's first step, which is read on the next tick.
+    waited_sim_s: float = Field(default=0.0, ge=0, allow_inf_nan=False)
 
 
 class PlannerOutputRejected(_Payload):
-    """The planner's output failed validation; nothing it asked for runs."""
+    """The planner's output failed validation, or a valid answer arrived too late to apply (the
+    code `skill: preconditions_not_met`, ADR 020); nothing it asked for runs."""
 
     type: Literal["planner_output_rejected"] = "planner_output_rejected"
     skill: str
@@ -208,6 +300,9 @@ class HoldChecked(_Payload):
 
 Payload = Annotated[
     RunStarted
+    | TaskPlanResponded
+    | TaskPlanned
+    | TaskPlanRejected
     | FaultInjected
     | FaultCleared
     | SignalSampled
@@ -220,6 +315,9 @@ Payload = Annotated[
     | MonitorVerdict
     | RecoveryStarted
     | PlannerCalled
+    | PlannerResponded
+    | PlannerTimedOut
+    | PlannerPreempted
     | PlannerDecided
     | PlannerOutputRejected
     | BtNodeChanged

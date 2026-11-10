@@ -15,15 +15,24 @@ from pathlib import Path
 
 from cellrt.eval.faults import materialize
 from cellrt.eval.scenarios import Scenario
-from cellrt.executor.behaviours import ExecEnv
+from cellrt.executor.behaviours import ExecEnv, PlannerWait
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.runner import run_task
-from cellrt.executor.trees import Setting, build_tree
+from cellrt.executor.trees import SKILL_SEQUENCE, Setting, build_tree
 from cellrt.monitor.classifier import MonitorConfig
-from cellrt.planner.base import Planner
+from cellrt.planner.base import Planner, planner_deadline
 from cellrt.planner.rule_planner import RulePlanner
+from cellrt.planner.task_plan import TaskPlanner, plan_task
 from cellrt.runtime.clock import SimClock
-from cellrt.runtime.events import SCHEMA_VERSION, Outcome, RunFinished, RunStarted
+from cellrt.runtime.events import (
+    SCHEMA_VERSION,
+    Outcome,
+    RunFinished,
+    RunStarted,
+    TaskPlanned,
+    TaskPlanRejected,
+    TaskPlanResponded,
+)
 from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.store import EventStore
 from cellrt.skills.base import Skill
@@ -40,6 +49,8 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 # in a checkout; an installed copy without them gets a fixed "absent" value instead.
 ADAPTERS_ROOT = PACKAGE_ROOT.parent / "adapters"
 LOCK_FILE = PACKAGE_ROOT.parent / "uv.lock"
+# `run_finished.reason` of a run whose task plan was rejected (ADR 023).
+PLAN_REJECTED = "task plan rejected"
 
 
 @dataclass(frozen=True)
@@ -65,6 +76,10 @@ class _UnitConfig:
     recovery: RecoveryConfig
     monitor: MonitorConfig
     planner: Planner | None
+    # The mock always runs `frozen` (ADR 020); the field keeps the hash and the run in step.
+    planner_wait: PlannerWait = "frozen"
+    # None: the fixed steps, with no plan recorded (ADR 023).
+    tree: TaskPlanner | None = None
 
     @classmethod
     def resolve(
@@ -75,15 +90,20 @@ class _UnitConfig:
         recovery: RecoveryConfig | None,
         monitor: MonitorConfig | None,
         planner: Planner | None,
+        tree: TaskPlanner | None = None,
     ) -> _UnitConfig:
         if planner is not None and setting != "C":
             raise ValueError(f"a planner is used only in setting C, not {setting!r}")
+        for asked in (planner, tree):
+            if asked is not None:
+                planner_deadline(asked)  # refuse a bad deadline before a run is recorded
         return cls(
             registry or mock_registry(),
             params or MockParams(),
             recovery or RecoveryConfig(),
             monitor or MonitorConfig(),
             (planner or RulePlanner()) if setting == "C" else None,
+            tree=tree,
         )
 
     def hash(self, scenario: Scenario, setting: Setting) -> str:
@@ -98,6 +118,8 @@ class _UnitConfig:
             self.monitor,
             self.registry,
             self.planner,
+            planner_wait=self.planner_wait,
+            tree=self.tree,
         )
 
 
@@ -112,10 +134,12 @@ def run_unit(
     recovery: RecoveryConfig | None = None,
     monitor: MonitorConfig | None = None,
     planner: Planner | None = None,
+    tree: TaskPlanner | None = None,
 ) -> RunResult:
     """Run one unit as its next attempt. Setting C asks `planner` (the rule planner by
-    default) about UNKNOWN."""
-    config = _UnitConfig.resolve(setting, registry, params, recovery, monitor, planner)
+    default) about UNKNOWN; `tree` plans the task's steps before the run moves (the fixed
+    steps by default)."""
+    config = _UnitConfig.resolve(setting, registry, params, recovery, monitor, planner, tree)
     attempt = store.next_attempt(scenario.id, setting, seed)
     return _run_attempt(scenario, setting, seed, attempt, store, config)
 
@@ -143,6 +167,7 @@ def run_eval(
     recovery: RecoveryConfig | None = None,
     monitor: MonitorConfig | None = None,
     planner: Planner | None = None,
+    tree: TaskPlanner | None = None,
 ) -> EvalRuns:
     """Every (scenario, setting, seed) for seeds 0..seeds-1, one after another, in that order.
 
@@ -171,7 +196,13 @@ def run_eval(
     for scenario in scenarios:
         for setting in dict.fromkeys(settings):
             config = _UnitConfig.resolve(
-                setting, registry, params, recovery, monitor, planner if setting == "C" else None
+                setting,
+                registry,
+                params,
+                recovery,
+                monitor,
+                planner if setting == "C" else None,
+                tree,
             )
             digest = config.hash(scenario, setting)
             for seed in range(seeds):
@@ -226,9 +257,50 @@ async def _run(
         fault_source=world,
         monitor_config=monitor,
         time_limit_s=scenario.task.time_limit,
+        planner_wait=config.planner_wait,
     )
-    root = build_tree(setting, registry, env, recovery, planner)
+    steps: tuple[str, ...] = SKILL_SEQUENCE
+    if config.tree is not None:
+        # Before the tree is built and before anything moves: a rejected plan ends the run here.
+        planned = await plan_task(config.tree, scenario.task, registry)
+        if (trace := planned.trace) is not None:  # a model call: its trace, whatever the verdict
+            recorder.emit(
+                TaskPlanResponded(
+                    planner=config.tree.name,
+                    provider=trace.provider,
+                    model=trace.model,
+                    prompt=trace.prompt,
+                    response=trace.response,
+                    prompt_tokens=trace.prompt_tokens,
+                    completion_tokens=trace.completion_tokens,
+                    finish_reason=trace.finish_reason,
+                    latency_s=trace.latency_s,
+                )
+            )
+        if planned.errors:
+            recorder.emit(
+                TaskPlanRejected(
+                    planner=config.tree.name,
+                    steps=list(planned.steps),
+                    errors=list(planned.errors),
+                )
+            )
+            return _finish(run_id, store, recorder, clock, "aborted", PLAN_REJECTED)
+        recorder.emit(TaskPlanned(planner=config.tree.name, steps=list(planned.steps)))
+        steps = planned.steps
+    root = build_tree(setting, registry, env, recovery, planner, steps)
     outcome, reason = await run_task(root, env, scenario.task)
+    return _finish(run_id, store, recorder, clock, outcome, reason)
+
+
+def _finish(
+    run_id: str,
+    store: EventStore,
+    recorder: Recorder,
+    clock: SimClock,
+    outcome: Outcome,
+    reason: str,
+) -> RunResult:
     recorder.emit(
         RunFinished(
             outcome=outcome,
@@ -249,39 +321,82 @@ def config_parts(
     monitor: MonitorConfig,
     registry: SkillRegistry,
     planner: Planner | None = None,
+    *,
+    planner_wait: PlannerWait = "frozen",
+    tree: TaskPlanner | None = None,
 ) -> dict[str, str]:
     """Everything that defines the run besides the seed, as one hash per part: a changed
     scenario is a different run, and two settings that share a part show the same hash for it.
 
     Recovery parameters count only for settings that recover; the Monitor runs in every setting;
     every skill counts with all its parameters, its Monitor profile included; setting C also
-    counts the planner's type and budget (not how an instance of that type is set up). The core
-    source, the adapter source and the lock file count too, so changed code or a dependency
-    upgrade never reuses an old result.
+    counts the planner's type, budget and wait mode (`frozen` or `live`, ADR 020), and the
+    configuration a planner describes (a model planner's model, prompt version, sampling, mode
+    and client); without a planner the wait mode changes nothing, so it does not count. A task
+    planner adds a `tree` part (its type, name, deadline and configuration); the fixed steps
+    add none, so runs without one keep their parts (ADR 023). The core source, the adapter
+    source and the lock file count too, so changed code or a dependency upgrade never reuses an
+    old result.
     """
     config = {
         "scenario": scenario.model_dump(mode="json"),
         "setting": setting,
-        "world": dataclasses.asdict(params),
         "recovery": None if setting == "A" else recovery.as_dict(),
-        "monitor": monitor.as_dict(),
-        "skills": {n: _skill_config(registry.get(n)) for n in sorted(registry.names())},
+        **monitor_inputs(params, monitor, registry),
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),
-        "planner": None
-        if planner is None
-        else {
-            "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
-            "budget": recovery.planner_budget,
-        },
+        "planner": None if planner is None else planner_config(planner, recovery, planner_wait),
     }
+    if tree is not None:
+        config["tree"] = {
+            "type": f"{type(tree).__module__}.{type(tree).__qualname__}",
+            "name": tree.name,
+            "deadline_s": planner_deadline(tree),
+            "config": dict(tree.describe()),
+        }
     return {name: _digest(value) for name, value in config.items()}
+
+
+def monitor_inputs(
+    params: MockParams, monitor: MonitorConfig, registry: SkillRegistry
+) -> dict[str, object]:
+    """The parts of a run's configuration its Monitor verdicts depend on: the world (its
+    period), the Monitor's thresholds, and the skills (the profile each declares). One source
+    for `config_parts` and for a Monitor replay that checks a run against them (ADR 022)."""
+    return {
+        "world": dataclasses.asdict(params),
+        "monitor": monitor.as_dict(),
+        "skills": {n: skill_config(registry.get(n)) for n in sorted(registry.names())},
+    }
+
+
+def planner_config(
+    planner: Planner, recovery: RecoveryConfig, planner_wait: PlannerWait
+) -> dict[str, object]:
+    """The planner's type, budget, deadline and wait mode, plus its own configuration if it
+    describes one (a model planner: model, prompt version, sampling)."""
+    config: dict[str, object] = {
+        "type": f"{type(planner).__module__}.{type(planner).__qualname__}",
+        "budget": recovery.planner_budget,
+        "deadline_s": planner_deadline(planner),
+        "wait": planner_wait,
+    }
+    describe = getattr(planner, "describe", None)
+    if callable(describe):
+        config["config"] = dict(describe())
+    return config
 
 
 def hash_parts(parts: dict[str, str]) -> str:
     """The run's config_hash: one hash over all its parts."""
     return _digest(parts)
+
+
+def part_digest(value: object) -> str:
+    """The hash of one part's value, as `config_parts` stores it: so a reader can check that a
+    configuration it holds is the one a run used (a Monitor replay, ADR 022)."""
+    return _digest(value)
 
 
 def _digest(value: object) -> str:
@@ -316,8 +431,12 @@ def lock_fingerprint(path: Path = LOCK_FILE) -> str:
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:16]
 
 
-def _skill_config(skill: Skill) -> dict[str, object]:
-    """A skill's identity and parameters: all fields of a dataclass skill, else its contract."""
+def skill_config(skill: Skill) -> dict[str, object]:
+    """A skill's identity and parameters: what it reports itself (`config()`, the AIC skills),
+    else all fields of a dataclass skill, else its contract."""
+    own = getattr(skill, "config", None)
+    if callable(own):
+        return dict(own())
     if dataclasses.is_dataclass(skill) and not isinstance(skill, type):
         return {"type": type(skill).__qualname__, **dataclasses.asdict(skill)}
     return {

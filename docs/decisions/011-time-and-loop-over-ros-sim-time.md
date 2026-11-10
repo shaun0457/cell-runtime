@@ -1,7 +1,7 @@
 # 011: Time and the main loop over ROS sim time
 
 Date: 2026-11-09
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -128,11 +128,41 @@ and the wrench is usable only after the first controller state has given a tare.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Skills get time from the core `SimClock`, advanced by the sim time each step reports
+   (Option A).
+2. One `asyncio.run` per goal, in aic_model's action thread (Option A).
+3. A step whose 50 ms of sim time does not pass within 10 s of wall time stops the run as
+   `sim_clock_stalled`; sim time going backwards stops it as `sim_time_reset` (Option A).
+4. The step period is 50 ms (Option A); the faster F/T stream reaches the Monitor through
+   `force_over_limit_s` (ADR 013).
+5. At a goal's start, wait in sim time for the ground-truth frames and a fresh tared wrench, up
+   to 10 s, polled every 50 ms (Option A). Missing frames end the run as
+   `ground_truth_unavailable`; a missing wrench is left to the Monitor as SENSOR_DROPOUT.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+One clock for everything is worth more than resolution below 50 ms. Fed by sim time, the same
+`SimClock` drives skills, Monitor windows and the force sum in the mock and in the cell, and the
+log records the clock everything used, so replay needs nothing new. A `RosClock` (option B)
+would resolve sleeps on ROS threads and break the single-threaded lockstep ADR 003 rests on.
+Wall-clock pacing (option C) is wrong whenever the real-time factor is not 1, and the scorer
+counts sim time.
+
+A loop per goal means nothing from a cancelled goal can leak into the next. The stall bound is
+needed because `Task.time_limit` counts sim time: a paused sim never reaches it, and without a
+bound the policy thread would block forever holding the arm's last command.
+
+50 ms is the camera rate and CheatCode's step; force fidelity comes from summing the 50 Hz
+stream, not from shorter steps. The readiness wait is as patient as CheatCode's own TF wait, so
+the policy is no less robust than the expert it is built from, while a broken F/T stream is
+still classified instead of hidden.
+
+Weakness: 10 s, 50 ms and the wait bound are CheatCode's numbers, not measured ones; #28
+measures the real-time factor, and the Monitor's windows still count samples at the nominal
+period.
 
 ## Consequences
 

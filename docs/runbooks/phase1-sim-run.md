@@ -228,7 +228,10 @@ For each of the 3 tasks of the first run, kept apart:
   penalty for the same trial, with the difference and its cause (ADR 013 lists the known ones);
 - every `monitor_verdict`, as a finding;
 - the real-time factor (sim time over wall time for one run);
-- the seated depth that `verify` reported, to set `VERIFY_MIN_DEPTH_MM` (a placeholder of 10).
+- the height that `verify` reported for each seated plug, against the seated band `SEATED`
+  (-3 to +1 mm around the port frame, within 2 mm of its axis; set from #28's seated plugs),
+  and whether `insert_scripted` ended on a plug that was still moving (the rest rule compares
+  one 50 ms step against `SEATED_STILL_MM`, 0.1 mm).
 
 Also to check against the sim, from the PRs' Might miss lists: the CheatCode tip-offset quirk,
 the Monitor's insertion rules near the end of the descent, the 10 s readiness wait, and the
@@ -240,3 +243,31 @@ Stop the policy (Ctrl-C), leave the container and stop it (`distrobox stop -r ai
 `sudo umount ~/results` and stop the VM. The results disk keeps its data while the VM is
 stopped, and when the VM is deleted only if the disk is not set to be deleted with it. An
 on-demand VM bills while it is running.
+
+## 10. Phase 3 runs: a setting, a planner and a fault (#61)
+
+The policy reads its configuration from the environment when aic_model loads it (README, "The
+AIC cell"). In the step 5 shell, before starting aic_model:
+
+```bash
+export CELLRT_SESSION=s61                     # one session name per family of runs
+export CELLRT_SETTING=C                       # A, B or C
+export CELLRT_PLANNER=llm                     # rule, fixed or llm; read in setting C only
+export NVIDIA_API_KEY="$(cat ~/.nvidia_key)"  # llm only; the file is mode 600
+export CELLRT_FAULT='{"kind": "command_dropout", "onset_height_mm": 20, "duration_s": 15}'
+```
+
+A bad `CELLRT_SETTING`, `CELLRT_PLANNER` or `CELLRT_FAULT` refuses every goal before the arm
+moves, with one fixed message in the aic_model log; without the key, setting C with `llm`
+refuses the same way. One engine run took 4 to 6 minutes of wall time on the L4 VM; the five
+faulted runs of #61, one after another, took 25 minutes.
+
+**Recording the cameras.** The engine's bags hold no camera topics, so #61 ran its own rclpy
+recorder beside the policy (`pixi run --frozen python rec61.py <dir>`): it subscribes to
+`/{left,center,right}_camera/image`, scales each frame to 768 px wide and writes JPEG files named
+`<receive wall ns>_<stamp ns>.jpg`, at most 20,000 per camera (about 80 MB per camera per engine
+run). A second script lines the frames up with the event log by wall time and composes the three
+cameras with a caption panel at 2x speed (ffmpeg, libx264, crf 27). Both run with the pixi
+environment's Python and are not in the repository yet.
+
+Results of #61: `docs/sim-results.md`.

@@ -1,3 +1,19 @@
+# Third-party code, modified for cell-runtime (rewritten as pure functions on tuples, without
+# numpy, ROS or transforms3d). Notices and full license texts: THIRD_PARTY_NOTICES.md.
+#
+# gripper_target, XYIntegrator, I_GAIN, MAX_INTEGRATOR_WINDUP: adapted from CheatCode's
+# calc_gripper_pose in AIC (https://github.com/intrinsic-dev/aic),
+# aic_example_policies/aic_example_policies/ros/CheatCode.py.
+#   Copyright (C) 2026 Intrinsic Innovation LLC
+#   Licensed under the Apache License, Version 2.0 (see LICENSE).
+#
+# quat_multiply, quat_slerp, _EPS: adapted from quaternion_multiply, quaternion_slerp and _EPS in
+# transforms3d (https://github.com/matthew-brett/transforms3d), transforms3d/_gohlketransforms.py.
+#   Copyright (c) 2006-2017, Christoph Gohlke
+#   Copyright (c) 2006-2017, The Regents of the University of California
+#   BSD license (conditions and disclaimer in THIRD_PARTY_NOTICES.md). Redistributing this file
+#   alone requires keeping this header and that BSD text with it.
+
 """CheatCode's pose computation as pure functions, without numpy or transforms3d.
 
 Ported from `aic_example_policies/ros/CheatCode.py:72-186` @ `3ab0653` (`calc_gripper_pose`)
@@ -72,7 +88,7 @@ def _unit(q: Quat) -> Quat:
 
 @dataclass(frozen=True)
 class XYIntegrator:
-    """CheatCode's accumulated XY tip error (metres), clipped to the windup limit."""
+    """CheatCode's accumulated XY tip error (metres), clipped to the windup limit when added."""
 
     x: float = 0.0
     y: float = 0.0
@@ -123,3 +139,24 @@ def gripper_target(
         f * target[2] + (1 - f) * gz,
     )
     return Pose(position=blend, orientation=q_slerp), acc
+
+
+def xy_integrator_at(port: Pose, plug: Pose, gripper: Pose) -> XYIntegrator:
+    """The integrator whose next `gripper_target` keeps the gripper where it is in XY: the
+    target is port + I_GAIN x (integrator + tip error), solved for the integrator before the
+    error is added. The sum is clipped when it is added, so a gripper further off the port than
+    the windup limit allows (7.5 mm) is sent back within it."""
+    gx, gy, _ = gripper.position
+    ex, ey = port.position[0] - plug.position[0], port.position[1] - plug.position[1]
+    return XYIntegrator(
+        x=(gx - port.position[0]) / I_GAIN - ex, y=(gy - port.position[1]) / I_GAIN - ey
+    )
+
+
+def z_offset_at(port: Pose, plug: Pose, gripper: Pose) -> float:
+    """The z_offset whose `gripper_target` is the gripper's own height: its target z,
+    port z + z_offset - (gripper z - plug z), solved for z_offset. Where the arm is, as a
+    z_offset: in free space the one last commanded; pressed on something, higher by the
+    force over the controller's stiffness."""
+    gz, pz = gripper.position[2], plug.position[2]
+    return gz - port.position[2] + (gz - pz)

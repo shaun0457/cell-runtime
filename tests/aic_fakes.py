@@ -4,6 +4,9 @@ Sim time moves only when the policy thread sleeps (wall time), by `sim_per_sleep
 a test sets it to 0 to stall the sim, or schedules a jump back with `reset_after_sleeps`. The
 arm tracks every position target exactly, and the plug hangs `PLUG_BELOW_TCP_M` under the TCP.
 Goal events (a cancel, an abort, deactivation) and failures are scripted by sleep count.
+`seat_height_m` stops the tip that far above the port frame (at the frame by default), as a
+real port stops a plug on its seat; None lets it go on down through the port.
+`plug_below_tcp_m` sets how far the tip hangs under the TCP.
 The F/T broadcaster publishes every `wrench_period_s` of sim time (50 Hz by default), from
 `wrench_age_s` before the goal's start (or `wrench_delay_s` after it), through a real
 `WrenchFeed`; `force_at` scripts the raw force per stamp, and `wrench_until_s` stops the stream.
@@ -64,9 +67,13 @@ class FakeNode:
     hide_frames_after_sleeps: int | None = None  # from then on no ground-truth frame is found
     stall_after_sleeps: int | None = None  # from then on sim time stops
     plug_xy_offset_m: tuple[float, float] = (0.0, 0.0)  # where the plug hangs off the TCP axis
+    plug_below_tcp_m: float = PLUG_BELOW_TCP_M
+    seat_height_m: float | None = 0.0  # the tip never goes below this height above the port
     # From this much sim time after the goal's start, the connector has sprung back out: the
-    # tip reads 2 mm above the port, whatever the arm does.
+    # tip reads `plug_pops_out_to_m` above the port, whatever the arm does.
     plug_pops_out_after_s: float | None = None
+    plug_pops_out_to_m: float = 0.002
+    plug_pops_out_xy_m: tuple[float, float] | None = None  # and this far off the port axis
     fail_feedback: bool = False
     feedback: list[tuple[float, str]] = field(default_factory=list)  # (sim time, message)
     start_sim_s: float = field(init=False)
@@ -177,8 +184,14 @@ class FakeNode:
     def plug(self) -> Pose:
         x, y, z = self.tcp.position
         dx, dy = self.plug_xy_offset_m
-        tip_z = z - PLUG_BELOW_TCP_M
+        tip_z = z - self.plug_below_tcp_m
+        if self.seat_height_m is not None:
+            tip_z = max(tip_z, self.port.position[2] + self.seat_height_m)
         popped = self.plug_pops_out_after_s
         if popped is not None and self.sim_s - self.start_sim_s >= popped - 1e-9:
-            tip_z = max(tip_z, self.port.position[2] + 0.002)
+            tip_z = max(tip_z, self.port.position[2] + self.plug_pops_out_to_m)
+            if self.plug_pops_out_xy_m is not None:
+                px, py, _ = self.port.position
+                ox, oy = self.plug_pops_out_xy_m
+                return Pose(position=(px + ox, py + oy, tip_z), orientation=self.tcp.orientation)
         return Pose(position=(x + dx, y + dy, tip_z), orientation=self.tcp.orientation)
