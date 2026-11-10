@@ -87,9 +87,12 @@ With 10 mm, `verify` fails every seated plug. The diagnostic showed it: task 1 w
   (diagnostic task 3).
 - **10 s readiness wait**: no problem seen. aic_model logs "lifecycle is not in the active state"
   once per engine run, before goal 1. That is the engine's first probe, and the goal then runs.
-- **Hold check (5 mm/s, 1.0 s)**: `hold_confirmed` in 11 of 12 runs (max 0.14–3.3 mm/s, 0.15 s).
-  The exception is diagnostic task 3: `hold_unconfirmed`, 33 mm/s over the full 1.0 s, after
-  align's TIMEOUT. The arm was still moving 1 s after HOLD. That path is worth a test.
+- **Hold check (5 mm/s, 1.0 s)**: `hold_confirmed` in every hold check but one (max 0.14–3.3
+  mm/s, 0.15 s). The exception is diagnostic task 3: `hold_unconfirmed`, 33 mm/s over the full
+  1.0 s, after align's TIMEOUT. The arm was still moving 1 s after HOLD. That path is worth a
+  test. (This line used to say "11 of 12 runs", which does not match the 10 RuntimePolicy goals
+  of the engine runs above. The store is on the VM's results disk and was not counted again, so no number
+  is given; #65 review F7.)
 
 ## 7. Cancel check
 
