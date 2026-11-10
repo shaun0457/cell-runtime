@@ -224,7 +224,7 @@ for a plan look different.
   that timed out or raised leaves no trace, though it may have been sent and still counts
   against the cap. The trace is not a field of `task_planned`, and it is not
   `planner_responded`, which the agent report counts as UNKNOWN triage calls. The agent report
-  does not count plan calls yet.
+  shows plan calls in their own columns (plan calls per run, p50 latency, tokens per call).
 - The task planner and the UNKNOWN planner share one cap per command. `cellrt eval` refuses to
   start when the plan calls (one per scenario and seed) plus the UNKNOWN calls the units of
   setting C can make exceed it, and prints the calls made.
@@ -256,11 +256,11 @@ for a plan look different.
   SC plug free) leaves that fault without a verdict, and the eval's confusion matrix counts it
   as missed: classification accuracy is not comparable between trees until the metrics tell a
   fault a skill cleared from one the Monitor missed.
-- A rejected run counts as an aborted task with no steps and no time in the eval table, so it
-  pulls the mean duration and steps down, and the table has no column for rejections.
-  `cellrt eval` with a task planner prints how many plans were rejected on stderr; the means
-  still include the rejected runs. Before a model planner's results are compared with the
-  table's, the means have to leave rejected runs out, or be read with that count.
+- A rejected run counts as an aborted task in the eval table's success rate, and the table has
+  no column for rejections; `cellrt eval` with a task planner prints how many plans were
+  rejected on stderr. The mean steps and duration leave rejected runs out, since nothing moved
+  in them (if every run of a setting was rejected, both are 0). The baseline file keeps its
+  fields.
 - The AIC adapter keeps the fixed tree; nothing in `adapters/` changes.
 - When skills get real preconditions (today every mock skill's `preconditions` returns True),
   the contract table and the runtime precondition check should be reconciled into one

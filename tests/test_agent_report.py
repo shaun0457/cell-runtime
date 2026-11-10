@@ -36,6 +36,8 @@ from cellrt.runtime.events import (
     RunStarted,
     SignalSampled,
     SkillStarted,
+    TaskPlanned,
+    TaskPlanResponded,
 )
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -354,6 +356,72 @@ def test_a_variant_row_aggregates_calls_and_costs() -> None:
     assert (row.errors, row.timeouts) == (0, 0)
     assert (row.latency_p50_s, row.latency_p95_s) == (2.0, 8.0)
     assert (row.prompt_tokens_per_call, row.completion_tokens_per_call) == (800.0, 400.0)
+
+
+def _plan_responded(latency_s: float, tokens: tuple[int | None, int | None]) -> TaskPlanResponded:
+    return TaskPlanResponded(
+        planner="llm",
+        provider="nim",
+        model="m",
+        prompt="[]",
+        response="{}",
+        prompt_tokens=tokens[0],
+        completion_tokens=tokens[1],
+        latency_s=latency_s,
+    )
+
+
+def _planned(seed: int, latency_s: float, tokens: tuple[int | None, int | None]) -> list[Event]:
+    steps = ["approach", "align", "insert_act", "verify"]
+    return _log(
+        (0.0, _plan_responded(latency_s, tokens)),
+        (0.0, TaskPlanned(planner="llm", steps=steps)),
+        (1.0, _called(1)),
+        (1.0, _responded(8.0, (1000, 500))),
+        (1.0, _decided("abort")),
+        _finish("aborted", 3, 1.0),
+        seed=seed,
+    )
+
+
+def test_plan_calls_are_counted_apart_from_the_unknown_calls() -> None:
+    summary = summarize_agent_run(_planned(0, 3.0, (800, 40)))
+
+    assert summary is not None
+    assert (summary.planner_calls, summary.latencies_s) == (1, (8.0,))  # UNKNOWN calls only
+    assert summary.plan_latencies_s == (3.0,)
+    assert (summary.plan_prompt_tokens, summary.plan_completion_tokens) == ((800,), (40,))
+
+
+def test_a_variant_row_shows_what_its_plan_calls_cost() -> None:
+    runs = [_planned(0, 2.0, (800, 40)), _planned(1, 4.0, (None, 60)), _ok(2)]
+
+    [row] = variant_rows([("C-llm", runs)])
+
+    assert row.plan_calls_per_run == pytest.approx(2 / 3)
+    assert (row.plan_latency_p50_s, row.plan_latency_p95_s) == (2.0, 4.0)
+    assert (row.plan_prompt_tokens_per_call, row.plan_completion_tokens_per_call) == (800.0, 50.0)
+    assert (row.latency_p50_s, row.prompt_tokens_per_call) == (8.0, 1000.0)  # not mixed in
+    header = render_agent_report([row])[0].split()
+    assert header[-5:] == ["plans/run", "plan_p50_s", "plan_p95_s", "plan_prompt", "plan_compl"]
+
+
+def test_a_variant_without_plan_calls_shows_dashes_for_them() -> None:
+    [row] = variant_rows([("B", [_ok(0, setting="B")])])
+
+    assert row.plan_calls_per_run == 0.0
+    assert (row.plan_latency_p50_s, row.plan_prompt_tokens_per_call) == (None, None)
+    assert render_agent_report([row])[1].split()[-5:] == ["0.00", "-", "-", "-", "-"]
+
+
+def test_repeats_of_a_variant_must_share_the_task_planner() -> None:
+    with pytest.raises(StoreRefused, match="different task planners"):
+        variant_rows(
+            [
+                ("C-llm#1", [_ok(0, config_parts={"tree": "t1"})]),
+                ("C-llm#2", [_ok(0, config_parts={"tree": "t2"})]),
+            ]
+        )
 
 
 def test_a_variant_without_planner_calls_shows_no_rates() -> None:

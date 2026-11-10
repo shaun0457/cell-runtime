@@ -20,6 +20,9 @@ Pure functions over event logs, like `metrics.py`, which this module leaves alon
   cap) is an error, and a call cut at its deadline a timeout; neither is output.
 - Latency and tokens come from the traces of model calls (`planner_responded`); the rule and
   fixed planners leave none, so their columns show `-`.
+- A model task planner's calls (`task_plan_responded`, ADR 023) are counted apart, in their
+  own columns: they plan the task before it moves, they do not triage an UNKNOWN. A plan an
+  eval reused from another run has no call of its own (#63 review F3).
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from cellrt.runtime.events import (
     RunFinished,
     RunStarted,
     SkillStarted,
+    TaskPlanResponded,
 )
 
 UNKNOWN = "UNKNOWN"
@@ -74,6 +78,7 @@ class AgentRunSummary:
     # store holds one hash per scenario. A run that recorded no parts falls back to its hash.
     config_key: str
     planner_part: str | None  # the planner's part of the configuration, if recorded
+    tree_part: str | None  # the task planner's part (ADR 023); None for the fixed steps
     outcome: str
     wasted_s: float | None  # None: the run succeeded, or had no UNKNOWN
     wasted_steps: int | None
@@ -87,6 +92,10 @@ class AgentRunSummary:
     latencies_s: tuple[float, ...]  # wall time of each traced call
     prompt_tokens: tuple[int, ...]  # of the traced calls that reported them
     completion_tokens: tuple[int, ...]
+    # The same for the task plan calls (ADR 023), apart from the UNKNOWN calls above.
+    plan_latencies_s: tuple[float, ...]
+    plan_prompt_tokens: tuple[int, ...]
+    plan_completion_tokens: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -110,6 +119,11 @@ class VariantRow:
     latency_p95_s: float | None
     prompt_tokens_per_call: float | None
     completion_tokens_per_call: float | None
+    plan_calls_per_run: float  # traced task plan calls
+    plan_latency_p50_s: float | None
+    plan_latency_p95_s: float | None
+    plan_prompt_tokens_per_call: float | None
+    plan_completion_tokens_per_call: float | None
 
 
 def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
@@ -127,8 +141,17 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
     latencies: list[float] = []
     prompt_tokens: list[int] = []
     completion_tokens: list[int] = []
+    plan_latencies: list[float] = []
+    plan_prompt: list[int] = []
+    plan_completion: list[int] = []
     for event in events:
         match event.payload:
+            case TaskPlanResponded() as plan:
+                plan_latencies.append(plan.latency_s)
+                if plan.prompt_tokens is not None:
+                    plan_prompt.append(plan.prompt_tokens)
+                if plan.completion_tokens is not None:
+                    plan_completion.append(plan.completion_tokens)
             case SkillStarted():
                 skills += 1
             case MonitorVerdict(failure_class=failure_class):
@@ -167,6 +190,7 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
         config_hash=started.config_hash,
         config_key=_config_key(started),
         planner_part=started.config_parts.get("planner"),
+        tree_part=started.config_parts.get("tree"),
         outcome=finished.outcome,
         wasted_s=round(events[-1].ts - unknown_at[0], 6) if wasted and unknown_at else None,
         wasted_steps=skills - unknown_at[1] if wasted and unknown_at else None,
@@ -180,6 +204,9 @@ def summarize_agent_run(events: Sequence[Event]) -> AgentRunSummary | None:
         latencies_s=tuple(latencies),
         prompt_tokens=tuple(prompt_tokens),
         completion_tokens=tuple(completion_tokens),
+        plan_latencies_s=tuple(plan_latencies),
+        plan_prompt_tokens=tuple(plan_prompt),
+        plan_completion_tokens=tuple(plan_completion),
     )
 
 
@@ -228,9 +255,11 @@ def variant_rows(stores: Sequence[tuple[str, Iterable[Sequence[Event]]]]) -> lis
     for name, repeats in grouped.items():
         if len({r[0].setting for r in repeats}) > 1:
             raise StoreRefused(f"{name}: its repeats ran in different settings")
-        # Repeats may differ in code (a later commit), never in the planner they ask.
+        # Repeats may differ in code (a later commit), never in the planners they ask.
         if len({r[0].planner_part for r in repeats}) > 1:
             raise StoreRefused(f"{name}: its repeats ran different planners")
+        if len({r[0].tree_part for r in repeats}) > 1:
+            raise StoreRefused(f"{name}: its repeats ran different task planners")
         rows.append(_row(name, repeats))
     return rows
 
@@ -262,6 +291,9 @@ def _row(name: str, repeats: list[list[AgentRunSummary]]) -> VariantRow:
     latencies = [x for s in runs for x in s.latencies_s]
     prompt = [x for s in runs for x in s.prompt_tokens]
     completion = [x for s in runs for x in s.completion_tokens]
+    plan_latencies = [x for s in runs for x in s.plan_latencies_s]
+    plan_prompt = [x for s in runs for x in s.plan_prompt_tokens]
+    plan_completion = [x for s in runs for x in s.plan_completion_tokens]
     return VariantRow(
         variant=name,
         setting=runs[0].setting,
@@ -284,6 +316,11 @@ def _row(name: str, repeats: list[list[AgentRunSummary]]) -> VariantRow:
         latency_p95_s=percentile(latencies, 95),
         prompt_tokens_per_call=fmean(prompt) if prompt else None,
         completion_tokens_per_call=fmean(completion) if completion else None,
+        plan_calls_per_run=len(plan_latencies) / len(runs),
+        plan_latency_p50_s=percentile(plan_latencies, 50),
+        plan_latency_p95_s=percentile(plan_latencies, 95),
+        plan_prompt_tokens_per_call=fmean(plan_prompt) if plan_prompt else None,
+        plan_completion_tokens_per_call=fmean(plan_completion) if plan_completion else None,
     )
 
 
@@ -294,7 +331,8 @@ def _success_rate(runs: Sequence[AgentRunSummary]) -> float:
 HEADER = (
     "variant", "setting", "runs", "success", "wasted_s", "wasted_steps", "calls/run",
     "invalid", "errors", "timeouts", "preempted", "stale", "p50_s", "p95_s",
-    "prompt/call", "compl/call",
+    "prompt/call", "compl/call", "plans/run", "plan_p50_s", "plan_p95_s", "plan_prompt",
+    "plan_compl",
 )  # fmt: skip
 NOTES = (
     "success: pooled over the repeats (name#N), with the min-max over repeats in brackets",
@@ -304,6 +342,9 @@ NOTES = (
     "timed-out and raised calls leave no trace, so p50/p95 leave them out: see those columns",
     "preempted: calls a Monitor verdict cut short while the world stepped on (live mode)",
     "stale: valid answers refused because the state changed during the call (live mode)",
+    "plans/run, plan_*: traced task plan calls (--tree llm), apart from the UNKNOWN calls;"
+    " a plan an eval reused has no call of its own",
+    "a plan call that timed out or raised leaves its unit unfinished, so it is not in the report",
 )
 
 
@@ -348,6 +389,11 @@ def _cells(r: VariantRow) -> list[str]:
         _num(r.latency_p95_s, "{:.2f}"),
         _num(r.prompt_tokens_per_call, "{:.0f}"),
         _num(r.completion_tokens_per_call, "{:.0f}"),
+        f"{r.plan_calls_per_run:.2f}",
+        _num(r.plan_latency_p50_s, "{:.2f}"),
+        _num(r.plan_latency_p95_s, "{:.2f}"),
+        _num(r.plan_prompt_tokens_per_call, "{:.0f}"),
+        _num(r.plan_completion_tokens_per_call, "{:.0f}"),
     ]
 
 

@@ -123,9 +123,10 @@ it without calling the model. The model is told the task's fields and the skills
 and contracts. It is not told which faults the mock injects, but the `insert_act` description
 says it frees a plug rotated against the port, which is the SC task's fault; the table's row
 (ours) encodes that knowledge directly. `eval` prints how many plans were rejected on stderr;
-the table's means still include those runs. A plan call that timed out or raised rejects
-nothing: the unit is left unfinished, out of the table, and the next eval runs it again. A plan
-call that meets the cap stops the eval. The first run with a real model as the task
+those runs count as failed tasks, but the mean steps and duration leave them out, since nothing
+moved. A plan call that timed out or raised rejects nothing: the unit is left unfinished, out
+of the table, and the next eval runs it again. A plan call that meets the cap stops the eval.
+The first run with a real model as the task
 planner, and what it did and did not show, is in
 [`docs/phase3-task-to-tree-results.md`](docs/phase3-task-to-tree-results.md): it added nothing
 over the table.

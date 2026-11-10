@@ -228,7 +228,7 @@ def eval_(
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
     if task_planner is not None:  # the table does not say how its tasks became trees
         typer.echo(f"tree: {_planner_name(tree, model)}", err=True)
-        # The table counts a rejected plan as an aborted task with no steps and no time.
+        # The table counts a rejected plan as an aborted task, left out of the step and time means.
         typer.echo(f"task plans rejected: {len(rejected)} of {len(runs.run_ids)} runs", err=True)
     if "C" in chosen:  # the table's C row does not say which planner it ran with
         typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)

@@ -72,8 +72,10 @@ run in them without the model.
 | llm | C | 100% | 0.40 | 4.4 | 9.5 | 10 | 0 of 10 |
 
 "Plans rejected" is what `cellrt eval` prints: the llm B row's 1 is the call cut at the 30 s
-deadline, not a plan the check refused. The means include rejected and failed runs (ADR 023):
-that run counts as 0 steps and 0 s.
+deadline, not a plan the check refused. When this ran, the means included rejected and failed
+runs (ADR 023), so that run counts as 0 steps and 0 s. Since the #63 review fixes, a plan call
+that timed out leaves its unit unfinished (rerun by the next eval), and the means leave
+rejected runs out; the numbers here are from before.
 
 ## What the model chose
 

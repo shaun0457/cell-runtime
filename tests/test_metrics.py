@@ -19,6 +19,7 @@ from cellrt.runtime.events import (
     RunStarted,
     SignalSampled,
     SkillStarted,
+    TaskPlanRejected,
 )
 from cellrt.runtime.task import Task
 
@@ -156,6 +157,32 @@ def test_each_setting_gets_a_row_with_rates_and_means_over_its_finished_runs() -
 
 def test_an_unfinished_run_has_no_summary() -> None:
     assert summarize_run(_log("s1", "A", 0, finished=False)) is None
+
+
+def _rejected_plan(seed: int) -> list[Event]:
+    rejected = TaskPlanRejected(planner="llm", steps=["verify"], errors=["step 1: needs_unmet"])
+    return _log("s1", "B", seed, (0.0, rejected), (0.0, _finish("aborted", steps=0, duration=0.0)))
+
+
+def test_a_run_whose_plan_was_rejected_counts_as_a_failed_task_but_not_in_the_means() -> None:
+    runs = [
+        _log("s1", "B", 0, (9.0, _finish("success", steps=6, duration=9.0))),
+        _log("s1", "B", 1, (5.0, _finish("failed", steps=2, duration=5.0))),
+        _rejected_plan(2),
+    ]
+
+    [row] = compute_metrics(runs, k=1).rows
+
+    assert summarize_run(runs[2]).plan_rejected  # type: ignore[union-attr]
+    assert not summarize_run(runs[0]).plan_rejected  # type: ignore[union-attr]
+    assert (row.runs, row.success_rate) == (3, pytest.approx(1 / 3))
+    assert (row.mean_steps, row.mean_duration_s) == (4.0, 7.0)  # the two runs that moved
+
+
+def test_when_every_plan_was_rejected_the_means_are_zero() -> None:
+    [row] = compute_metrics([_rejected_plan(0), _rejected_plan(1)], k=1).rows
+
+    assert (row.runs, row.success_rate, row.mean_steps, row.mean_duration_s) == (2, 0.0, 0.0, 0.0)
 
 
 def test_recovery_rate_counts_only_runs_where_the_monitor_saw_a_failure() -> None:
