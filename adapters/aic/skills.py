@@ -324,10 +324,17 @@ class AicInsertScripted(_AicSkill):
         self._geometry = geometry
         self._descent = descent
 
+    def preconditions(self, state: RunState) -> bool:
+        """Insertion starts only where align leaves the plug: on a valid wrench, within
+        ALIGN_XY_MM of the port axis. Further off, align is the skill that brings it back."""
+        last = state.last_signal
+        return last is not None and last.wrench_valid and last.xy_error_mm <= ALIGN_XY_MM
+
     @classmethod
     def _parameters(cls) -> dict[str, object]:
         return {
             "steps": INSERT_STEPS,
+            "start_xy_mm": ALIGN_XY_MM,  # the preconditions'
             "end_m": INSERT_END_M,
             "seated": SEATED,
             "still_mm": SEATED_STILL_MM,

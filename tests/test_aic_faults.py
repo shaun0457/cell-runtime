@@ -33,9 +33,11 @@ from cellrt.runtime.events import (
     HoldChecked,
     MonitorVerdict,
     PlannerCalled,
+    PlannerOutputRejected,
     RunFinished,
     RunStarted,
     SignalSampled,
+    SkillStarted,
 )
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -243,6 +245,42 @@ def test_a_retry_after_a_dropout_goes_on_down_from_where_the_arm_is(
     moves = _moves_after_the_answer(node, planner)
     assert len(moves) > 10
     assert max(at[2] - to[2] for at, to in moves) <= DESCENT_STEP_M + 1e-9
+
+
+@dataclass
+class _SlipsThenRetries(_RetriesAfter):
+    """While the model thinks, the plug slips `slip_m` off the TCP axis in the gripper; the
+    answer is still retry."""
+
+    slip_m: float = 0.0015
+
+    async def triage(self, ctx: FailureContext) -> object:
+        self.node.plug_xy_offset_m = (self.slip_m, 0.0)
+        return await super().triage(ctx)
+
+
+def test_a_retry_that_would_insert_off_the_port_axis_is_rejected_on_arrival(
+    store: EventStore,
+) -> None:
+    # insert_scripted runs only on a valid wrench with the plug within 1 mm of the port axis,
+    # where align leaves it. Here the plug slips 1.5 mm in the gripper while the model thinks:
+    # its retry would push the plug in off the axis, so it is rejected when it arrives, and
+    # insertion does not run again.
+    node = FakeNode(task=TASK)
+    planner = _SlipsThenRetries(node, 8.0)
+
+    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0))
+
+    assert ok is False
+    events = _events(store)
+    rejected = [e.payload for e in events if isinstance(e.payload, PlannerOutputRejected)]
+    assert rejected and rejected[0].errors == ["skill: preconditions_not_met"]
+    called = next(i for i, e in enumerate(events) if isinstance(e.payload, PlannerCalled))
+    assert not [
+        e
+        for e in events[called:]
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "insert_scripted"
+    ]
 
 
 def test_a_retry_after_a_dropout_does_not_throw_the_arm_sideways(store: EventStore) -> None:
