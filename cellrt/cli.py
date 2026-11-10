@@ -657,7 +657,7 @@ def _runs_of(label: str, path: Path) -> Iterator[list[Event]]:
     while its runs are read. A store that cannot be read is refused by the error's type, never
     its text, which can quote the database."""
     try:
-        with EventStore(path) as store:
+        with EventStore(path, read_only=True) as store:
             for run in store.runs():
                 yield store.events(run.run_id)
     except (sqlite3.Error, OSError, ValueError) as exc:  # pydantic's ValidationError included
@@ -704,8 +704,12 @@ def _run_events(run_id: str, db: Path) -> list[Event]:
     """Every event of `run_id`, or exit with a fixed message. A missing store is not created."""
     if not db.exists():
         _fail(f"no events for run {run_id} (no event store at {db})")
-    with EventStore(db) as store:
-        events = store.events(run_id)
+    try:
+        with EventStore(db, read_only=True) as store:
+            events = store.events(run_id)
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pydantic's ValidationError included
+        # By type only: the error's text can quote the database.
+        _fail(f"cannot read the event store at {db} ({type(exc).__name__})")
     if not events:
         _fail(f"no events for run {run_id}")
     return events

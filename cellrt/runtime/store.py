@@ -65,26 +65,52 @@ RUNS_SQL = (
 )
 
 
+class ReadOnlyStore(RuntimeError):
+    """An append to a store opened read-only."""
+
+    def __init__(self) -> None:
+        super().__init__("the event store is open read-only: nothing was appended")
+
+
 class EventStore:
     """Writes are buffered: a non-signal event, or a full buffer, flushes everything pending.
 
     So a crash loses at most `buffer_limit` signal samples, never a decision event.
+
+    `read_only` is for the commands that only read a store (replay, trace, agent-report,
+    promote): SQLite opens the file with `mode=ro`, so a missing file is not created, the
+    tables are not added to a database that is not a store, and the journal mode is left as it
+    is; reading a table that is not there raises `sqlite3.Error`. Reading a store in WAL mode
+    may still create its `-shm` and `-wal` files beside it, which SQLite needs to read one.
     """
 
-    def __init__(self, path: Path | str, *, buffer_limit: int = DEFAULT_BUFFER_LIMIT) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        buffer_limit: int = DEFAULT_BUFFER_LIMIT,
+        read_only: bool = False,
+    ) -> None:
         if buffer_limit < 1:
             raise ValueError("buffer_limit must be at least 1")
         self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
+        self._read_only = read_only
+        if read_only:
+            uri = f"{self._path.resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True)
+        else:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self._path)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.executescript(_SCHEMA)
         self._buffer: list[_Row] = []
         self._buffer_limit = buffer_limit
         self._crash_after = _crash_after_from_env()
         self._appended = 0
 
     def append(self, event: Event) -> None:
+        if self._read_only:
+            raise ReadOnlyStore()
         self._buffer.append(
             (
                 event.run_id,

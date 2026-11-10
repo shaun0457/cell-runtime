@@ -26,7 +26,10 @@ uv run cellrt replay baseline/A/0/a1                         # every step; add -
 uv run cellrt trace yaw_mismatch/C/0/a1 --out runs/yaw.json  # the run as a trace for Perfetto
 ```
 
-Events go to `runs/cellrt.sqlite` by default (`--db` to change).
+Events go to `runs/cellrt.sqlite` by default (`--db` to change). The commands that only read a
+store (`replay`, `trace`, `agent-report`, `promote`) open it read-only: they never create one,
+and refuse a database that is not one without changing it. SQLite may still create a store's
+`-shm` and `-wal` files beside it to read it.
 
 `cellrt trace` writes Chrome trace event JSON (stdout without `--out`); open it in
 <https://ui.perfetto.dev> or `chrome://tracing`. It has spans for the run, each skill run and

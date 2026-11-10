@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted, SignalSampled
-from cellrt.runtime.store import EventStore
+from cellrt.runtime.store import EventStore, ReadOnlyStore
 from cellrt.runtime.task import Task
 
 
@@ -134,6 +134,52 @@ def test_next_attempt_counts_started_runs_of_the_same_unit(store: EventStore) ->
     assert store.next_attempt("baseline", "A", 0) == 2
     assert store.next_attempt("baseline", "A", 1) == 2
     assert store.next_attempt("other", "A", 0) == 1
+
+
+def test_a_read_only_store_reads_what_was_written(tmp_path: Path) -> None:
+    path = tmp_path / "events.sqlite"
+    with EventStore(path) as store:
+        store.append(_started("r", "baseline", "A", 0, 1))
+
+    with EventStore(path, read_only=True) as store:
+        assert [r.run_id for r in store.runs()] == ["r"]
+        assert [e.seq for e in store.events("r")] == [1]
+
+
+def test_a_read_only_store_refuses_appends_and_leaves_the_log_as_it_was(tmp_path: Path) -> None:
+    path = tmp_path / "events.sqlite"
+    with EventStore(path) as store:
+        store.append(_started("r", "baseline", "A", 0, 1))
+
+    with EventStore(path, read_only=True) as store, pytest.raises(ReadOnlyStore):
+        store.append(_started("r2", "baseline", "A", 1, 1))
+
+    with EventStore(path) as store:
+        assert [r.run_id for r in store.runs()] == ["r"]
+
+
+def test_a_read_only_store_does_not_change_a_file_that_is_not_one(tmp_path: Path) -> None:
+    # Pointed at another program's database, a reader must neither add the event tables nor
+    # switch the journal to WAL: either would change a file that is not ours.
+    path = tmp_path / "other.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE notes (text TEXT)")
+    conn.close()
+    before = path.read_bytes()
+
+    with pytest.raises(sqlite3.Error), EventStore(path, read_only=True) as store:
+        store.runs()
+
+    assert path.read_bytes() == before
+
+
+def test_a_read_only_store_does_not_create_a_missing_one(tmp_path: Path) -> None:
+    path = tmp_path / "absent" / "events.sqlite"
+
+    with pytest.raises(sqlite3.Error):
+        EventStore(path, read_only=True)
+
+    assert not path.parent.exists()
 
 
 def test_buffer_limit_must_be_positive(tmp_path: Path) -> None:
