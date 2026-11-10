@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import pytest
 
 from cellrt.eval.metrics import summarize_run
-from cellrt.eval.runner import run_eval, run_unit
+from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.trees import SKILL_SEQUENCE
 from cellrt.planner.task_plan import (
@@ -244,16 +244,20 @@ def test_an_invalid_plan_ends_the_run_aborted_before_any_skill_starts(
     assert summarize_run(events) is not None
 
 
-def test_a_task_planner_that_raises_is_a_rejection_that_keeps_only_the_error_type(
+def test_a_task_planner_that_raises_leaves_the_unit_unfinished_keeping_only_the_error_type(
     store: EventStore, baseline: Scenario
 ) -> None:
+    # No answer is not a rejected plan: the unit has no result, so no metric counts it, and an
+    # eval runs it again (#63 review F2).
     done = run_unit(baseline, "B", 0, store, tree=Raising())
     events = store.events(done.run_id)
 
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
     rejected = events[1].payload
     assert isinstance(rejected, TaskPlanRejected)
     assert (rejected.errors, rejected.steps) == (["planner_error: RuntimeError"], [])
-    assert done.outcome == "aborted"
+    assert done.outcome is None
+    assert summarize_run(events) is None
     assert not any("sk-abc" in e.model_dump_json() for e in events)
 
 
@@ -308,7 +312,8 @@ def test_a_task_planner_that_never_answers_is_cancelled_at_its_deadline(
     rejected = events[1].payload
     assert isinstance(rejected, TaskPlanRejected) and rejected.errors == ["planner_timed_out"]
     assert tree.cancelled
-    assert [e.type for e in events][-1] == "run_finished" and done.outcome == "aborted"
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
+    assert done.outcome is None  # unfinished: an eval runs it again
 
 
 def test_a_timeout_raised_inside_the_planner_is_its_error_not_the_deadline(
@@ -319,6 +324,55 @@ def test_a_timeout_raised_inside_the_planner_is_its_error_not_the_deadline(
     rejected = store.events(done.run_id)[1].payload
     assert isinstance(rejected, TaskPlanRejected)
     assert rejected.errors == ["planner_error: TimeoutError"]
+
+
+@dataclass
+class Flaky:
+    """Raises on its first `failures` calls, then answers with the fixed steps."""
+
+    failures: int
+    name: str = "flaky"
+    calls: int = 0
+
+    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str]:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ConnectionError("upstream reset")
+        return SKILL_SEQUENCE
+
+    def describe(self) -> Mapping[str, object]:
+        return {}
+
+
+def test_an_eval_runs_a_unit_whose_plan_call_failed_again_when_resumed(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=1)
+
+    first = run_eval([baseline], ["A"], 1, store, tree=tree)
+    again = run_eval([baseline], ["A"], 1, store, tree=tree)
+
+    assert (first.run_ids, first.unfinished, first.ran, first.skipped) == (
+        [],
+        ["baseline/A/0"],
+        1,
+        0,
+    )
+    assert (again.ran, again.skipped, again.unfinished) == (1, 0, [])
+    [run_id] = again.run_ids
+    assert run_id.endswith("/a2") and summarize_run(store.events(run_id)) is not None
+
+
+def test_a_unit_whose_plan_call_keeps_failing_is_given_up_after_max_attempts(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=MAX_ATTEMPTS + 1)
+
+    evals = [run_eval([baseline], ["A"], 1, store, tree=tree) for _ in range(MAX_ATTEMPTS + 1)]
+
+    assert [e.unfinished for e in evals[:MAX_ATTEMPTS]] == [["baseline/A/0"]] * MAX_ATTEMPTS
+    assert (evals[-1].ran, evals[-1].gave_up) == (0, ["baseline/A/0"])
+    assert tree.calls == MAX_ATTEMPTS
 
 
 @pytest.mark.parametrize("deadline", [0, -1.0, 120.5, float("nan")])

@@ -13,7 +13,7 @@ from typing import ClassVar
 
 import pytest
 
-from cellrt.eval.runner import run_unit
+from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.planner.llm import ChatReply, ChatRequest, LlmPlannerConfig
 from cellrt.planner.llm_task import MAX_SKILL_DESCRIPTION_CHARS, TOOL_NAME, LlmTaskPlanner
@@ -258,17 +258,34 @@ def test_a_model_that_never_answers_is_cancelled_at_the_deadline_before_any_moti
     done = run_unit(_sc(), "B", 0, store, tree=_planner(client, deadline_s=0.05))
     events = store.events(done.run_id)
 
-    assert [e.type for e in events] == ["run_started", "task_plan_rejected", "run_finished"]
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
     [rejected] = _of(events, TaskPlanRejected)
     assert rejected.errors == ["planner_timed_out"] and client.cancelled
-    assert done.outcome == "aborted"
+    assert done.outcome is None  # no answer: the unit is not finished (#63 review F2)
 
 
-def test_a_call_past_the_cap_is_a_rejection(store: EventStore) -> None:
-    done = run_unit(_sc(), "B", 0, store, tree=_planner(ScriptedClient([ModelCallCapReached()])))
+def test_a_call_past_the_cap_stops_the_run_unfinished_and_says_why(store: EventStore) -> None:
+    tree = _planner(ScriptedClient([ModelCallCapReached()]))
 
-    [rejected] = _of(store.events(done.run_id), TaskPlanRejected)
+    with pytest.raises(ModelCallCapReached):
+        run_unit(_sc(), "B", 0, store, tree=tree)
+
+    [run] = store.runs()
+    events = store.events(run.run_id)
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
+    [rejected] = _of(events, TaskPlanRejected)
     assert rejected.errors == ["cap_reached"]
+
+
+def test_an_eval_stops_at_the_cap_and_keeps_the_units_it_finished(store: EventStore) -> None:
+    # Two answers and then the cap: the third unit stops the eval; nothing after it runs.
+    client = ScriptedClient([_reply(), _reply(), ModelCallCapReached()])
+
+    with pytest.raises(ModelCallCapReached):
+        run_eval([_sc()], ["A"], 4, store, tree=_planner(client))
+
+    finished = [r.finished for r in store.runs()]
+    assert finished == [True, True, False]
 
 
 def test_secrets_in_the_answer_or_an_error_never_reach_the_log(store: EventStore) -> None:

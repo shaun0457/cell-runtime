@@ -192,6 +192,12 @@ for a plan look different.
   timeout into `planner_timed_out` and an exception into `planner_error`), the
   `TaskPlanner` protocol and the `table` planner (plug type to insert skill, the non-model
   baseline). `--tree fixed`, the default, is no task planner at all.
+- A call that timed out or raised is no answer, so it is not a rejected plan: the run records
+  `task_plan_rejected` with that code but no `run_finished`. The unit is unfinished, is left
+  out of the table, and runs again on the next eval, like an interrupted unit (and is given up
+  after `MAX_ATTEMPTS`). A call that meets the model call cap stops the eval: the run records
+  `task_plan_rejected` with `cap_reached` and no `run_finished`, and the units after it do not
+  run. The UNKNOWN planner's timeouts are unchanged (ADR 016): there a step fails.
 - `cellrt/planner/llm_task.py`: the model task planner (`--tree llm`), one call per run through
   the `ChatClient` seam, answered through a `plan` tool whose steps are limited to the
   plannable skills (registered, with a contract). It is told the task's fields, the goal, the

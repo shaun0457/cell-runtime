@@ -21,8 +21,9 @@ from cellrt.executor.runner import run_task
 from cellrt.executor.trees import SKILL_SEQUENCE, Setting, build_tree
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import Planner, planner_deadline
+from cellrt.planner.nim import ModelCallCapReached
 from cellrt.planner.rule_planner import RulePlanner
-from cellrt.planner.task_plan import TaskPlanner, plan_task
+from cellrt.planner.task_plan import CAP_REACHED, TaskPlanner, plan_task
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
@@ -56,7 +57,9 @@ PLAN_REJECTED = "task plan rejected"
 @dataclass(frozen=True)
 class RunResult:
     run_id: str
-    outcome: Outcome
+    # None: unfinished. The task plan call gave no answer (it timed out or raised), so the run
+    # has no result; an eval runs the unit again, as it does an interrupted one.
+    outcome: Outcome | None
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,7 @@ class EvalRuns:
     ran: int  # units run now
     skipped: int  # units already finished under the same configuration
     gave_up: list[str]  # units ("scenario/setting/seed") interrupted MAX_ATTEMPTS times
+    unfinished: list[str]  # units run now whose task plan call gave no answer
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,10 @@ def run_eval(
     attempt, so one that was interrupted starts again from the beginning, unless it has been
     interrupted MAX_ATTEMPTS times under this configuration. Nothing is deleted from the log.
     A setting given twice runs once. Scenario ids must be unique: every run is keyed by them.
+
+    A unit whose task plan call gave no answer is left unfinished, like an interrupted one, and
+    runs again next time. A task plan call that meets the model call cap stops the eval:
+    `ModelCallCapReached` propagates, and the units after it do not run.
     """
     if len({s.id for s in scenarios}) != len(scenarios):
         raise ValueError("scenario ids must be unique")
@@ -192,7 +200,8 @@ def run_eval(
             interrupted[key] += 1
     run_ids: list[str] = []
     gave_up: list[str] = []
-    ran = 0
+    unfinished: list[str] = []
+    ran = skipped = 0
     for scenario in scenarios:
         for setting in dict.fromkeys(settings):
             config = _UnitConfig.resolve(
@@ -207,16 +216,23 @@ def run_eval(
             digest = config.hash(scenario, setting)
             for seed in range(seeds):
                 key = (scenario.id, setting, seed, digest)
+                unit = f"{scenario.id}/{setting}/{seed}"
                 if (done := finished.get(key)) is not None:
                     run_ids.append(done)
+                    skipped += 1
                 elif interrupted[key] >= MAX_ATTEMPTS:
-                    gave_up.append(f"{scenario.id}/{setting}/{seed}")
+                    gave_up.append(unit)
                 else:
                     attempt = attempts[(scenario.id, setting, seed)] + 1
                     result = _run_attempt(scenario, setting, seed, attempt, store, config)
-                    run_ids.append(result.run_id)
                     ran += 1
-    return EvalRuns(run_ids=run_ids, ran=ran, skipped=len(run_ids) - ran, gave_up=gave_up)
+                    if result.outcome is None:
+                        unfinished.append(unit)
+                    else:
+                        run_ids.append(result.run_id)
+    return EvalRuns(
+        run_ids=run_ids, ran=ran, skipped=skipped, gave_up=gave_up, unfinished=unfinished
+    )
 
 
 async def _run(
@@ -262,7 +278,16 @@ async def _run(
     steps: tuple[str, ...] = SKILL_SEQUENCE
     if config.tree is not None:
         # Before the tree is built and before anything moves: a rejected plan ends the run here.
-        planned = await plan_task(config.tree, scenario.task, registry)
+        try:
+            planned = await plan_task(config.tree, scenario.task, registry)
+        except ModelCallCapReached:
+            # The command's budget is spent: the log says why, the unit stays unfinished, and
+            # the eval stops (#63 review F2).
+            recorder.emit(
+                TaskPlanRejected(planner=config.tree.name, steps=[], errors=[CAP_REACHED])
+            )
+            store.flush()
+            raise
         if (trace := planned.trace) is not None:  # a model call: its trace, whatever the verdict
             recorder.emit(
                 TaskPlanResponded(
@@ -285,6 +310,9 @@ async def _run(
                     errors=list(planned.errors),
                 )
             )
+            if planned.unanswered:  # a failed call is no result: the unit runs again
+                store.flush()
+                return RunResult(run_id=run_id, outcome=None)
             return _finish(run_id, store, recorder, clock, "aborted", PLAN_REJECTED)
         recorder.emit(TaskPlanned(planner=config.tree.name, steps=list(planned.steps)))
         steps = planned.steps

@@ -43,6 +43,7 @@ from cellrt.planner.nim import (
     MAX_MODEL_CALLS_LIMIT,
     LlmSetupError,
     ModelCallCap,
+    ModelCallCapReached,
 )
 from cellrt.planner.smoke import run_smoke
 from cellrt.planner.task_plan import TablePlanner, TaskPlanner
@@ -81,6 +82,13 @@ BASELINE_SEEDS = 3
 BASELINE_K = 2
 # Validation errors shown for an invalid scenarios file (location and type only).
 MAX_SHOWN_ERRORS = 5
+# A task plan call that hit the model call cap stops the whole eval (or run).
+CAP_STOPPED = (
+    "the model call cap ({cap}) was reached on a task plan call; stopped. Units not finished"
+    " run again on the next eval: raise --max-model-calls to give them room"
+)
+# A unit whose task plan call timed out or raised: no run_finished, so a resume runs it again.
+UNANSWERED_NOTE = "the task plan call timed out or raised; nothing moved"
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
 promote_app = typer.Typer(
@@ -147,17 +155,24 @@ def run(
     )
     task_planner = _tree(tree, model=model, cap=cap)
     with EventStore(db) as store:
-        result = run_unit(
-            by_id[scenario],
-            setting,  # type: ignore[arg-type]
-            seed,
-            store,
-            recovery=recovery,
-            planner=chosen,
-            tree=task_planner,
-        )
+        try:
+            result = run_unit(
+                by_id[scenario],
+                setting,  # type: ignore[arg-type]
+                seed,
+                store,
+                recovery=recovery,
+                planner=chosen,
+                tree=task_planner,
+            )
+        except ModelCallCapReached:
+            _fail(CAP_STOPPED.format(cap=cap.max_calls))
     if _asks_a_model(planner, chosen, tree):
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
+    if result.outcome is None:
+        typer.echo(f"outcome: unfinished ({UNANSWERED_NOTE})")
+        typer.echo(result.run_id)
+        raise typer.Exit(code=1)
     typer.echo(f"outcome: {result.outcome}")
     typer.echo(result.run_id)
 
@@ -194,16 +209,19 @@ def eval_(
     )
     task_planner = _tree(tree, model=model, cap=cap)
     with EventStore(db) as store:
-        runs = run_eval(
-            loaded,
-            chosen,  # type: ignore[arg-type]
-            seeds,
-            store,
-            recovery=recovery,
-            monitor=monitor,
-            planner=chosen_planner,
-            tree=task_planner,
-        )
+        try:
+            runs = run_eval(
+                loaded,
+                chosen,  # type: ignore[arg-type]
+                seeds,
+                store,
+                recovery=recovery,
+                monitor=monitor,
+                planner=chosen_planner,
+                tree=task_planner,
+            )
+        except ModelCallCapReached:
+            _fail(CAP_STOPPED.format(cap=cap.max_calls))
         rejected: list[str] = []
         table = compute_metrics(_noting_rejected_plans(store, runs.run_ids, rejected), k)
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
@@ -216,6 +234,12 @@ def eval_(
         typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)
     if _asks_a_model(planner, chosen_planner, tree):
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
+    if runs.unfinished:
+        typer.echo(
+            f"{len(runs.unfinished)} units unfinished ({UNANSWERED_NOTE}; not in the table,"
+            f" the next eval runs them again): {', '.join(runs.unfinished)}",
+            err=True,
+        )
     if runs.gave_up:
         typer.echo(
             f"gave up on {len(runs.gave_up)} units interrupted {MAX_ATTEMPTS} times"
