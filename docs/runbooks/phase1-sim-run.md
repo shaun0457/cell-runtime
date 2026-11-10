@@ -217,8 +217,9 @@ report whether goal 2 started before goal 1's `run_finished`.
 
 ## 8. What #28's report records
 
-The report is `docs/phase1-run28-report.md`. It found that the placeholder below is wrong:
-`verify` needs the seated height, not a depth of 10 mm. A later run records the same list.
+The report is `docs/phase1-run28-report.md`. It found that `verify`'s first threshold (a seated
+depth of 10 mm) was wrong; #58 replaced it with the seated band below. A later run records the
+same list.
 
 For each of the 3 tasks of the first run, kept apart:
 

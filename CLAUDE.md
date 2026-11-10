@@ -238,8 +238,9 @@ cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
   and the SC plug jams at the port entrance. Since #58 judges seating by height, the two SFP
   tasks pass (scorer 75 each) in the clean runs of #61 and of its rerun; the SC jam is open
   (`docs/sim-results.md`).
-- [ ] Phase 2 — revised after #28 (#42): a cost-capped fault discovery, then a small A/B/C eval
-  in Gazebo reconciled with the AIC score; ACT as `insert_act` is optional
+- [ ] Phase 2 — to be revised after #28 (the draft is PR #42, not merged): a cost-capped fault
+  discovery, then a small A/B/C eval in Gazebo reconciled with the AIC score; ACT as
+  `insert_act` optional
 - [ ] Phase 3 — model planner (`docs/briefs/phase-3-unknown-promotion.md`). Done: UNKNOWN
   triage on the mock world and in the sim, with a live wait, Monitor preemption and traces
   (`docs/phase3-llm-results.md`, `docs/sim-results.md`); escalation; task-to-tree; UNKNOWN

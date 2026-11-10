@@ -111,7 +111,8 @@ With 10 mm, `verify` fails every seated plug. The diagnostic showed it: task 1 w
 - [x] Runbook followed once from a fresh VM. Its fixes are folded into
   `docs/runbooks/phase1-sim-run.md` (accelerator image + `libnvidia-gl-580-server`, pixi 0.67.2
   with `--frozen`, git bundle, L4 / zone sweep, gcloud from PowerShell on Windows, image digest)
-- [x] Roadmap revised after this run (#42); CLAUDE.md Status records this report
+- [x] CLAUDE.md Status records this report; the roadmap revision after this run is drafted in
+  PR #42 (not merged)
 
 ## 9. Where the data is
 
