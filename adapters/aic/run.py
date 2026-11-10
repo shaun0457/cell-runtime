@@ -13,10 +13,10 @@ F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop wh
 thinks, so the arm holds, the world keeps stepping and the Monitor keeps watching.
 
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
-(unless an injected command dropout is still active: the HOLD is lost too, and the arm stays at
-its last target, #60)
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
-sim time; the result is recorded as `hold_checked` just before `run_finished`. A run that stops
+sim time; the result is recorded as `hold_checked` just before `run_finished`. If an injected
+command dropout is still active, the HOLD is lost too and the arm stays at its last target
+(#60): the check does not wait and records `hold_unconfirmed`. A run that stops
 while the world is being built (which includes the wait for the cell to be ready, counted on
 the run's clock) has sent no command, so it neither holds nor checks.
 `run_finished.duration` is the run's time without the check, as for a mock run.
@@ -291,7 +291,9 @@ async def _run_goal(
             await _hold_after_crash(root, world, env)
         _record_last_faults(world, recorder)
         duration = clock.now()  # before the check, which only confirms the stop
-        recorder.emit(_confirm_hold(world, clock, wait=reason not in _CLOCK_STOPPED))
+        # A dropout still active lost the HOLD too: nothing the run sent stopped the arm.
+        held = reason not in _CLOCK_STOPPED and not world.commands_dropped()
+        recorder.emit(_confirm_hold(world, clock, wait=held))
     recorder.emit(
         RunFinished(outcome=outcome, reason=reason, steps=recorder.state.steps, duration=duration)
     )

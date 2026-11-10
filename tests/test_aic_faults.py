@@ -30,6 +30,7 @@ from cellrt.runtime.events import (
     Event,
     FaultCleared,
     FaultInjected,
+    HoldChecked,
     MonitorVerdict,
     PlannerCalled,
     RunFinished,
@@ -106,6 +107,9 @@ def test_a_dropout_loses_every_command_for_its_duration_then_lets_them_through(
     gaps = [b - a for a, b in zip(node.sent_at, node.sent_at[1:], strict=False) if a < cleared_at]
     assert max(gaps) == pytest.approx(3.0, abs=0.11)
     assert sum(a > cleared_at for a in node.sent_at) > 10
+    # The link was back when the run ended, so its HOLD reached the arm and is confirmed.
+    (hold,) = _payloads(store, HoldChecked)
+    assert hold.result == "hold_confirmed"
 
 
 def test_setting_a_ends_on_the_unknown_of_a_long_dropout(store: EventStore) -> None:
@@ -124,6 +128,21 @@ def test_setting_a_ends_on_the_unknown_of_a_long_dropout(store: EventStore) -> N
     )
     assert _end(store).reason == "insert_scripted failed: UNKNOWN"
     assert _payloads(store, FaultCleared) == []  # the run ended while the link was down
+
+
+def test_a_run_that_ends_while_the_link_is_down_does_not_confirm_a_hold(
+    store: EventStore,
+) -> None:
+    # The run's HOLD is lost with every other command, so the arm stays at its last target.
+    # It may well be still there, but nothing the run sent stopped it: the stop is not
+    # confirmed, and the check does not wait for one.
+    node = FakeNode(task=TASK)
+
+    assert run_goal(node, TASK, store, setting="A", fault=_dropout(30.0)) is False
+
+    assert _payloads(store, FaultCleared) == []
+    (hold,) = _payloads(store, HoldChecked)
+    assert (hold.result, hold.samples, hold.waited_s) == ("hold_unconfirmed", 0, 0.0)
 
 
 def test_setting_c_asks_the_planner_about_it(store: EventStore) -> None:
