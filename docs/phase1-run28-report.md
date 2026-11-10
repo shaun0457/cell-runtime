@@ -132,3 +132,8 @@ This report stays as it was measured. What changed because of it:
   followed a review fix (`docs/sim-results.md`).
 - **Still open:** the SC jam at the port entrance, the align/insert boundary, and acting on
   `hold_unconfirmed`. The 3/3 criterion above has not been met yet.
+- **A count that does not add up:** section 6's "11 of 12 runs" does not match the
+  RuntimePolicy goals of the engine runs above: 3 each in the main, cancel and diagnostic runs
+  (the cancel run's goal 1 cancelled on purpose) and `diag_nostuck`'s goal 1, stopped part-way,
+  so 10. The store is on the VM's results disk and was not counted again. Read it as every
+  hold check but one confirmed, with no number (#65 review F7).

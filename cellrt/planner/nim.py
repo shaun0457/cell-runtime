@@ -93,8 +93,10 @@ class SdkEnvConflict(LlmSetupError):
 
 
 class ModelCallCapReached(RuntimeError):
-    """The call after the cap. Raised before any request is made; a run records it as
-    `planner_raised ModelCallCapReached`."""
+    """The call after the cap. Raised before any request is made. An UNKNOWN planner's call
+    records it as `planner_output_rejected` with `planner_raised ModelCallCapReached`; a task
+    plan call records `task_plan_rejected` with `cap_reached` and stops the command (ADR 023);
+    `promote propose` records a proposal whose outcome is `cap_reached`."""
 
     def __init__(self) -> None:
         super().__init__(CAP_REACHED)
@@ -122,7 +124,7 @@ class Connect(Protocol):
 
 
 class ModelCallCap:
-    """The most model calls one eval (one process) may make, shared by every client given it.
+    """The most model calls one command (one process) may make, shared by every client given it.
 
     `take` is called before each request. Each eval unit runs its own event loop, one after the
     other, so a plain counter suffices.

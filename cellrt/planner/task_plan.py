@@ -67,7 +67,8 @@ STEP_CONTRACTS: Mapping[str, StepContract] = MappingProxyType(
 
 
 class TaskPlanner(Protocol):
-    """Turns a task into a plan, once per run, before the tree is built and before any motion.
+    """Turns a task into a plan before the tree is built and before any motion: once per
+    scenario and seed in an eval, whose settings share the plan, and once per `cellrt run`.
 
     `plan` may return any iterable of names; at most MAX_PLAN_STEPS + 1 are read, and anything
     that is not a string is refused. It is waited on for at most `deadline_s` of wall time if

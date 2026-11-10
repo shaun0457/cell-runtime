@@ -223,3 +223,53 @@ def test_a_written_file_gets_the_mode_a_plain_write_would_give(tmp_path: Path) -
     out.chmod(0o600)
     assert _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(out)).returncode == 0
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
+
+
+def test_a_write_over_a_read_only_file_leaves_no_temporary_file_beside_it(tmp_path: Path) -> None:
+    # On Windows a read-only file cannot be replaced, and the temporary file took its read-only
+    # mode before the replace, so it could not be removed either (#67 review F4).
+    db = tmp_path / "cli.sqlite"
+    out = tmp_path / "trace.json"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=1.0, payload=payload))
+    out.write_text("old\n", encoding="utf-8")
+    out.chmod(stat.S_IREAD)
+    try:
+        trace = _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(out))
+    finally:
+        out.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert list(tmp_path.glob(".trace.json.*.tmp")) == []
+    if os.name == "nt":  # Windows refuses to replace a read-only file
+        assert trace.returncode == 1
+        assert "cannot write trace file" in trace.stderr
+        assert out.read_text(encoding="utf-8") == "old\n"
+    else:  # a POSIX rename replaces it
+        assert trace.returncode == 0
+        assert json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_an_interrupted_write_leaves_no_temporary_file_beside_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from cellrt.cli import app
+
+    db = tmp_path / "cli.sqlite"
+    out = tmp_path / "trace.json"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=1.0, payload=payload))
+
+    def interrupted(src: object, dst: object) -> None:
+        raise KeyboardInterrupt  # Ctrl+C just before the temporary file takes the target's place
+
+    monkeypatch.setattr(os, "replace", interrupted)
+    result = CliRunner().invoke(app, ["trace", "r/A/0/a1", "--db", str(db), "--out", str(out)])
+
+    assert result.exit_code != 0  # typer's code for Ctrl+C depends on its version
+    assert "cannot write" not in result.output  # the interrupt went on, not a write failure
+    assert not out.exists()
+    assert list(tmp_path.glob(".trace.json.*.tmp")) == []
