@@ -19,6 +19,7 @@ from cellrt.runtime.events import (
     PlannerResponded,
     PlannerTimedOut,
     PreconditionFailed,
+    PromotedStopped,
     RecoveryStarted,
     RunFinished,
     RunStarted,
@@ -90,6 +91,8 @@ def describe(event: Event) -> str:
                 f"(class {p.count_for_class}, total {p.count_total})"
                 + (" [class from skill]" if p.source == "skill" else "")
             )
+        case PromotedStopped() as p:
+            return f"{p.skill} UNKNOWN -> promoted {p.rule}: {p.action}"
         case PlannerCalled() as p:
             return f"{p.skill} {p.failure_class} (call {p.call})"
         case PlannerResponded() as p:

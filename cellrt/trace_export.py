@@ -36,6 +36,7 @@ _COUNTERS = (("tared force", "N", "force_n"), ("depth", "mm", "depth_mm"))
 _LABELS = {
     "monitor_verdict": "failure_class",
     "recovery_started": "action",
+    "promoted_stopped": "action",
     "precondition_failed": "skill",
     "fault_injected": "fault_id",
     "fault_cleared": "fault_id",
@@ -135,7 +136,7 @@ class _Trace:
             self._samples.append((event, fields))
         elif kind == "monitor_verdict":
             self._instant("monitor", event, fields)
-        elif kind in ("recovery_started", "precondition_failed"):
+        elif kind in ("recovery_started", "promoted_stopped", "precondition_failed"):
             self._instant("skills", event, fields)
         elif kind not in _UNMARKED:
             self._instant("run", event, fields)

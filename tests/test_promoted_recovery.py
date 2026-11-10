@@ -14,15 +14,18 @@ from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
 from cellrt.monitor.promoted import PromotedPlan, PromotedRule
+from cellrt.replay import replay_lines
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
     PlannerCalled,
+    PromotedStopped,
     RecoveryStarted,
     RunFinished,
     SkillStarted,
 )
 from cellrt.runtime.store import EventStore
+from cellrt.trace_export import export_trace
 
 PHASE3 = Path(__file__).resolve().parents[1] / "eval" / "scenarios" / "phase3.yaml"
 SCENARIOS = {s.id: s for s in load_scenarios(PHASE3)}
@@ -129,6 +132,26 @@ def test_an_abort_or_escalate_plan_ends_the_run_at_once(tmp_path: Path, action: 
     )
     assert _of(events, PlannerCalled) == []
     assert _of(events, RecoveryStarted) == []
+    # Its own event, after the verdict that named the rule: the log says what stopped the run
+    # without parsing the reason.
+    [stopped] = _of(events, PromotedStopped)
+    assert (stopped.skill, stopped.rule, stopped.action) == (
+        "insert_scripted",
+        "PLUG_ROTATED",
+        action,
+    )
+    kinds = [e.type for e in events]
+    assert kinds.index("monitor_verdict") < kinds.index("promoted_stopped")
+    [line] = [ln for ln in replay_lines(events) if "promoted_stopped" in ln]
+    assert line.endswith(f"insert_scripted UNKNOWN -> promoted PLUG_ROTATED: {action}")
+    skills_track = next(
+        e["tid"]
+        for e in export_trace(events)["traceEvents"]
+        if e["ph"] == "M" and e["args"]["name"] == "skills"
+    )
+    [mark] = [e for e in export_trace(events)["traceEvents"] if e["name"].startswith("promoted_")]
+    assert (mark["ph"], mark["tid"]) == ("i", skills_track)
+    assert mark["name"] == f"promoted_stopped: {action}"
 
 
 def test_a_retry_plan_runs_within_the_unknown_budget(tmp_path: Path) -> None:

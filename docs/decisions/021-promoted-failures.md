@@ -166,8 +166,9 @@ samples it replayed, and those came from one skill.
 - Setting B gets the insert-skill alternatives it had no use for before, when a promoted plan
   switches skill, so a switch goes through the same option check as a planner's.
 - An `abort` or `escalate` plan ends the run as `aborted`, with the rule named in the reason; it
-  starts no recovery, so it spends no budget. The other plans emit `recovery_started` with the
-  action `promoted:<NAME>:<action>` and count against both budgets.
+  emits `promoted_stopped` (event schema 13) and starts no recovery, so it spends no budget.
+  The other plans emit `recovery_started` with the action `promoted:<NAME>:<action>` and count
+  against both budgets.
 - The log carries the rule on every verdict (`promoted:<NAME>`) and every promoted recovery. The
   eval reports do not yet group UNKNOWN by rule; that column is a follow-up.
 - A rule is removed by deleting its file under `eval/promoted/`; the runs made with it keep their

@@ -30,7 +30,7 @@ from cellrt.monitor.classifier import FailureClass
 from cellrt.monitor.promoted import NAME_PATTERN, PROMOTED_PREFIX, PromotedPlan
 from cellrt.planner.base import FailureContext, Planner
 from cellrt.planner.schemas import PRECONDITIONS_NOT_MET, Abort, Escalate, Retry, SwitchSkill
-from cellrt.runtime.events import RecoveryStarted
+from cellrt.runtime.events import PromotedStopped, RecoveryStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
 
@@ -270,7 +270,8 @@ class Recovering(py_trees.composites.Composite):
         step fails or the run stops."""
         skill = node.skill.name
         unknown = FailureClass.UNKNOWN.value
-        if plan.action in ("abort", "escalate"):
+        if plan.action == "abort" or plan.action == "escalate":
+            self._env.recorder.emit(PromotedStopped(skill=skill, rule=name, action=plan.action))
             self.aborted = True  # the run ends aborted, as a planner's abort or escalation does
             self.failure_reason = f"{skill} failed: UNKNOWN (promoted {name}: {plan.action})"
             return False

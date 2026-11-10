@@ -17,10 +17,10 @@ Outcome = Literal["success", "failed", "aborted"]
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
 # `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
 # 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
-# and `task_plan_rejected`; 12 added `task_plan_responded`.
+# and `task_plan_rejected`; 12 added `task_plan_responded`; 13 added `promoted_stopped`.
 # Bump it when a payload changes shape (a test hashes every payload's schema per version), and
 # keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class _Payload(BaseModel):
@@ -197,6 +197,17 @@ class RecoveryStarted(_Payload):
     source: Literal["monitor", "skill"] = "monitor"
 
 
+class PromotedStopped(_Payload):
+    """An approved promoted rule's plan (ADR 021) stopped the run instead of recovering: `abort`,
+    or `escalate` to a person. No recovery starts and no budget is spent; the run ends aborted,
+    as a planner's abort or escalation does. The verdict naming the rule comes before it."""
+
+    type: Literal["promoted_stopped"] = "promoted_stopped"
+    skill: str
+    rule: str  # the promoted rule's name, without the `promoted:` prefix
+    action: Literal["abort", "escalate"]
+
+
 class PlannerCalled(_Payload):
     """Setting C asks the planner about a failure (see `planner.base.FailureContext`)."""
 
@@ -314,6 +325,7 @@ Payload = Annotated[
     | CommandDropped
     | MonitorVerdict
     | RecoveryStarted
+    | PromotedStopped
     | PlannerCalled
     | PlannerResponded
     | PlannerTimedOut
