@@ -11,7 +11,7 @@ type: it chose `insert_act` for 2 of 9 SC tasks and for 4 of 10 SFP tasks, and i
 different plans to the same prompt at temperature 0. Every answer it gave was a valid plan; one
 call of 20 hit the 30 s deadline.
 
-Read this with three limits in mind:
+Read this with four limits in mind:
 
 - **The scenarios are ours.** `eval/scenarios/phase3-tasks.yaml` (ADR 023) holds an SFP task
   with no fault and an SC task whose plug, in the mock, wedges rotated on every attempt, after
@@ -23,6 +23,12 @@ Read this with three limits in mind:
 - **The world is the mock, and a model is a sample.** The mock's clock does not run during the
   plan call, so the sim-time columns do not include its latency. The llm rows are one eval of 20
   units: one SC run more or less moves setting B by 10 points.
+- **B and C of one (task, seed) may run different plans.** With `--tree llm` every unit asks
+  the model for its own plan, and the model does not repeat itself at temperature 0, so the llm
+  rows of B and C differ in the plans drawn as well as in the recovery (PR #63 review, F1). Here
+  the SC tasks drew `insert_act` once in B and once in C, with the deadline in B. The table and
+  fixed rows are deterministic and unaffected. Planning once per (task, seed) and sharing the
+  plan across settings would remove this; it is not done.
 
 ## Setup
 
