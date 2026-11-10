@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import TracebackType
 
 from cellrt.runtime.events import Event, parse_stored
@@ -65,6 +65,17 @@ RUNS_SQL = (
 )
 
 
+def read_only_uri(path: PurePath) -> str:
+    """The SQLite URI that opens the absolute `path` read-only. `as_uri()` escapes `?`, `#`
+    and `%`, so no part of a path becomes a URI parameter. It puts a UNC path's server in the
+    authority, which SQLite refuses; the form with an empty authority and the server in the
+    path (`file:////server/share/...`) names the same file."""
+    uri = path.as_uri()
+    if not uri.startswith("file:///"):
+        uri = "file:////" + uri.removeprefix("file://")
+    return f"{uri}?mode=ro"
+
+
 class ReadOnlyStore(RuntimeError):
     """An append to a store opened read-only."""
 
@@ -96,8 +107,11 @@ class EventStore:
         self._path = Path(path)
         self._read_only = read_only
         if read_only:
-            uri = f"{self._path.resolve().as_uri()}?mode=ro"
-            self._conn = sqlite3.connect(uri, uri=True)
+            self._conn = sqlite3.connect(read_only_uri(self._path.resolve()), uri=True)
+            # A file from elsewhere may hold views or triggers of its own: run none of their
+            # functions with side effects, and refuse any write at all.
+            self._conn.execute("PRAGMA trusted_schema=OFF")
+            self._conn.execute("PRAGMA query_only=ON")
         else:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(self._path)

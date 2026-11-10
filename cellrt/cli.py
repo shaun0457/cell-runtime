@@ -279,17 +279,35 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def _is_store_file(path: Path, db: Path) -> bool:
+    """`path` is the store or one of the files SQLite keeps beside a live one."""
+    siblings = (db.with_name(db.name + s) for s in ("-wal", "-shm", "-journal"))
+    return _same_file(path, db) or any(_same_file(path, s) for s in siblings)
+
+
 def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
-    write leaves the old file whole. A failure names `what` and the error type only."""
-    tmp = path.with_name(path.name + ".tmp")
+    write leaves the old file whole. The temporary file has a name no other file has, so the
+    write touches nothing but `path`. A failure names `what` and the error type only."""
+    tmp: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text, encoding="utf-8", newline="\n")
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp = Path(f.name)
+            f.write(text)
         os.replace(tmp, path)
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
         _fail(f"cannot write {what} {path} ({type(exc).__name__})")
 
 
@@ -508,9 +526,10 @@ def promote_validate(
     if not db.is_file():  # never create a store that is not there
         _fail(f"no event store at {db}")
     # Before the replay: the report would replace what it was made from, the store for good.
-    for name, source in (("event store", db), ("candidate", candidate)):
-        if out is not None and _same_file(out, source):
-            _fail(f"--out is the {name} itself; no report written")
+    if out is not None and _is_store_file(out, db):
+        _fail("--out is the event store itself; no report written")
+    if out is not None and _same_file(out, candidate):
+        _fail("--out is the candidate itself; no report written")
     try:
         with candidate.open(encoding="utf-8") as f:
             raw = f.read(MAX_CANDIDATE_CHARS + 1)  # the parser refuses anything longer
@@ -550,8 +569,11 @@ def promote_approve(
             raw = f.read(MAX_REPORT_CHARS + 1)  # approval refuses anything longer
     except (OSError, UnicodeDecodeError) as exc:
         _fail(f"cannot read the report at {report} ({type(exc).__name__})")
-    try:
+    try:  # a refusal here is about a file already there, not about this report
         approved = load_promoted(directory, mock_registry()).rules if directory.is_dir() else ()
+    except ApprovalRefused as exc:
+        _fail(f"approved rules in {directory}: {exc}")
+    try:
         adopted = approve(raw, by, mock_registry(), approved=approved)
         path = write_adopted(adopted, directory)
     except ApprovalRefused as exc:
@@ -595,7 +617,7 @@ def promote_propose(
     # the other would lose the record of the call.
     outputs = [("--out", out), *([("--candidate-out", candidate_out)] if candidate_out else [])]
     for i, (name, path) in enumerate(outputs):
-        if _same_file(path, db):
+        if _is_store_file(path, db):
             _fail(f"{name} is the event store itself; nothing sent")
         if any(_same_file(path, other) for _, other in outputs[:i]):
             _fail(f"{name} is the same file as --out; nothing sent")

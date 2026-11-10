@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
 from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted, SignalSampled
-from cellrt.runtime.store import EventStore, ReadOnlyStore
+from cellrt.runtime.store import EventStore, ReadOnlyStore, read_only_uri
 from cellrt.runtime.task import Task
 
 
@@ -180,6 +180,19 @@ def test_a_read_only_store_does_not_create_a_missing_one(tmp_path: Path) -> None
         EventStore(path, read_only=True)
 
     assert not path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("path", "uri"),
+    [
+        (r"C:\runs\a b#?.sqlite", "file:///C:/runs/a%20b%23%3F.sqlite?mode=ro"),
+        # `as_uri()` puts a UNC server in the authority, which SQLite refuses; an empty one
+        # and the server in the path is the form it reads.
+        (r"\\server\share\runs\x.sqlite", "file:////server/share/runs/x.sqlite?mode=ro"),
+    ],
+)
+def test_a_read_only_store_is_opened_by_a_uri_sqlite_accepts(path: str, uri: str) -> None:
+    assert read_only_uri(PureWindowsPath(path)) == uri
 
 
 def test_buffer_limit_must_be_positive(tmp_path: Path) -> None:

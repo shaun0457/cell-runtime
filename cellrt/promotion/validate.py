@@ -185,7 +185,8 @@ def validate(
     max_runs: int = MAX_SURVEY_RUNS,
 ) -> Report:
     """Gates 0-3 for `candidate` against the group labelled `group`, over every run in `runs`
-    (read once; each run is replayed without and with the candidate)."""
+    (read once). Each run is replayed without the candidate, and with it until gate 0 refuses a
+    run: after that no other gate runs, so no later run is replayed with the candidate."""
     surveyed: list[SurveyedRun] = []
     with_candidate: dict[str, RunReplay] = {}
     refused = False  # gate 0 has refused a run: no other gate runs

@@ -140,8 +140,9 @@ samples it replayed, and those came from one skill.
   writes `eval/promoted/<NAME>.json` (format version, rule, plan, candidate and report hashes,
   that configuration, the group size, approver) and never replaces an approved rule.
   `cellrt eval --promoted DIR` loads at most 16 such files and checks each again (format
-  version, file name, configuration, hash, registered skills) before the store is opened. A rule approved under other Monitor thresholds or mock parameters is
-  refused as `config_stale`: its gates vouched for a Monitor that no longer runs.
+  version, file name, configuration, hash, registered skills) before the store is opened.
+  A rule approved under other Monitor thresholds or mock parameters is refused as
+  `config_stale`: its gates vouched for a Monitor that no longer runs.
 - The name order is not a priority: it only makes the Monitor's hash the same on every
   platform. So no two promoted rules may fire on the same sample. Approval refuses a candidate
   that could (`rules_overlap`), and so does the load, for files approved before that check or

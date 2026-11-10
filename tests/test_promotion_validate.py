@@ -454,12 +454,27 @@ def test_the_report_is_never_written_over_what_it_was_made_from(
     assert out.read_bytes() == before
 
 
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_the_report_is_never_written_over_the_stores_own_files(
+    phase0_store: Path, tmp_path: Path, suffix: str
+) -> None:
+    # SQLite keeps part of a live store beside it: replacing that file loses the log too.
+    db = tmp_path / "copy.sqlite"
+    shutil.copyfile(phase0_store, db)
+    out = db.with_name(db.name + suffix)
+    done = _cli(str(_write(tmp_path, _candidate())), "--group", ROTATED, "--db", str(db),
+                "--out", str(out))  # fmt: skip
+    assert done.returncode == 1
+    assert "--out is the event store itself; no report written" in done.stderr
+    assert not out.exists()
+
+
 def test_a_report_that_cannot_be_written_leaves_the_old_one_whole(
     phase0_store: Path, tmp_path: Path
 ) -> None:
     out = tmp_path / "report.json"
-    out.write_text("old report\n", encoding="utf-8")
-    (tmp_path / "report.json.tmp").mkdir()  # the temporary file cannot be created
+    out.mkdir()  # a directory in its place: the report cannot replace it
+    (out / "kept.txt").write_text("old\n", encoding="utf-8")
     done = _cli(
         str(_write(tmp_path, _candidate())),
         "--group",
@@ -471,7 +486,23 @@ def test_a_report_that_cannot_be_written_leaves_the_old_one_whole(
     )
     assert done.returncode == 1
     assert "cannot write the report" in done.stderr
-    assert out.read_text(encoding="utf-8") == "old report\n"
+    assert (out / "kept.txt").read_text(encoding="utf-8") == "old\n"
+    # and no temporary file is left beside it
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["candidate.json", "report.json"]
+
+
+def test_a_file_beside_the_report_is_never_touched_by_its_write(
+    phase0_store: Path, tmp_path: Path
+) -> None:
+    # The temporary file has a name of its own, never `<out>.tmp`, which may be someone's file.
+    beside = tmp_path / "report.json.tmp"
+    beside.write_text("mine\n", encoding="utf-8")
+    out = tmp_path / "report.json"
+    done = _cli(str(_write(tmp_path, _candidate())), "--group", ROTATED,
+                "--db", str(phase0_store), "--out", str(out))  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert beside.read_text(encoding="utf-8") == "mine\n"
+    assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
 
 
 def test_a_failing_candidate_exits_1_with_its_cases(phase0_store: Path, tmp_path: Path) -> None:

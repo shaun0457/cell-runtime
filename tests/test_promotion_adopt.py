@@ -28,7 +28,7 @@ from cellrt.promotion.adopt import (
     with_promoted,
     write_adopted,
 )
-from cellrt.promotion.groups import DEFAULT_MIN_SIZE
+from cellrt.promotion.groups import DEFAULT_MIN_SIZE, MAX_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
 from cellrt.promotion.validate import REPORT_VERSION
 from cellrt.skills.mock import mock_registry
@@ -109,6 +109,7 @@ def test_a_report_checked_against_a_larger_group_is_approved() -> None:
         ({"report_version": True}, "report_version"),
         # Gate 1 passed for a group smaller than the default asks for.
         ({"min_size": DEFAULT_MIN_SIZE - 1}, "min_size"),
+        ({"min_size": MAX_MIN_SIZE + 1}, "min_size"),
         ({"min_size": float(DEFAULT_MIN_SIZE)}, "min_size"),
         ({"min_size": None}, "min_size"),
         ({"candidate": {"rule": {"name": "x"}, "plan": {}}}, "candidate_refused"),
@@ -286,6 +287,16 @@ def test_a_rule_approved_under_another_monitor_configuration_is_refused(tmp_path
     parts = {**ReplayConfig.mock().parts, "monitor": "0" * 16}
     _rewrite(tmp_path / "PLUG_ROTATED.json", config_parts=parts)
     with pytest.raises(ApprovalRefused, match="config_stale"):
+        load_promoted(tmp_path, mock_registry())
+
+
+@pytest.mark.parametrize("min_size", [DEFAULT_MIN_SIZE - 1, MAX_MIN_SIZE + 1])
+def test_a_file_whose_group_size_was_edited_out_of_range_is_refused(
+    tmp_path: Path, min_size: int
+) -> None:
+    _adopt(tmp_path)
+    _rewrite(tmp_path / "PLUG_ROTATED.json", min_size=min_size)
+    with pytest.raises(ApprovalRefused, match="adopted_invalid"):
         load_promoted(tmp_path, mock_registry())
 
 

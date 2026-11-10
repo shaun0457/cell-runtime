@@ -136,8 +136,10 @@ with a candidate rule (a JSON file: a rule in a small, bounded language and its 
 checks four gates: the replay
 reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
 other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
-passed under the Monitor configuration in use now, with the approver's name; it refuses a rule
-that could fire on the same sample as one already approved (`rules_overlap`). `eval --promoted
+passed under the Monitor configuration in use now, with the approver's name. It refuses a
+report validated with `--min-size` below the default 3 windows, a rule that could fire on the
+same sample as one already approved (`rules_overlap`), and any approval while a file already in
+`--dir` no longer loads (the message names the directory). `eval --promoted
 DIR` runs with the approved rules, whose plans run in B and C without the planner:
 
 ```sh
