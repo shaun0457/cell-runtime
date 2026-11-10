@@ -274,6 +274,18 @@ def test_each_skill_description_is_cut(store: EventStore) -> None:
     assert len(called.context["descriptions"]["insert_act"]) == MAX_DESCRIPTION_CHARS
 
 
+def test_a_lone_surrogate_in_the_answer_is_stored_replaced_and_the_run_ends(
+    store: EventStore,
+) -> None:
+    client = ScriptedClient([_tool_reply('{"kind": "retry"}' + chr(0xD800))])
+
+    events = _run(store, YAW, planner=_planner(client))
+
+    [trace] = _responded(events)
+    assert trace.response == '{"kind": "retry"}?'
+    assert events[-1].type == "run_finished"
+
+
 def test_the_stored_prompt_is_cut(store: EventStore) -> None:
     helpers = [_WordyRetract(name=f"helper_{i:02d}") for i in range(60)]
     standard = [Approach(), Align(), InsertScripted(), InsertAct(), Verify(), Retract()]

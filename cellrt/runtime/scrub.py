@@ -4,8 +4,8 @@ The event store is append-only: whatever reaches it stays. Text that did not com
 code is passed through `scrub` first, which redacts what looks like a credential, a token or an
 e-mail address and replaces characters that could rewrite what a reader of the log or of
 `cellrt replay` sees (control characters, line and paragraph separators, direction controls,
-invisible characters). It is a best-effort filter for an audit trail, not a guarantee: the safer
-rule stays "record error codes, not text".
+invisible characters) or that cannot be stored (lone surrogates). It is a best-effort filter
+for an audit trail, not a guarantee: the safer rule stays "record error codes, not text".
 """
 
 from __future__ import annotations
@@ -69,7 +69,10 @@ def scrub(text: str, *, max_chars: int = MAX_SCRUB_CHARS) -> str:
     for pattern in _PATTERNS:
         text = pattern.sub(REDACTED, text)
     text = _OPAQUE.sub(_opaque, text)
-    return _UNSAFE.sub("?", text)
+    # A lone surrogate (a JSON "\ud800" escape, decoded) cannot be written as UTF-8, so the
+    # store would refuse the event; it becomes "?" too. Not in UNSAFE_CHARS: pydantic's regex
+    # engine does not accept the surrogate range.
+    return _UNSAFE.sub("?", text).encode("utf-8", "replace").decode("utf-8")
 
 
 def _opaque(match: re.Match[str]) -> str:

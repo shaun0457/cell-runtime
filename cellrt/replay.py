@@ -27,6 +27,9 @@ from cellrt.runtime.events import (
     SkillFinished,
     SkillProgress,
     SkillStarted,
+    TaskPlanned,
+    TaskPlanRejected,
+    TaskPlanResponded,
 )
 
 
@@ -41,6 +44,16 @@ def describe(event: Event) -> str:
     match event.payload:
         case RunStarted() as p:
             return f"{p.scenario_id} setting={p.setting} seed={p.seed} attempt={p.attempt}"
+        case TaskPlanResponded() as p:
+            tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
+            return (
+                f"{p.planner} {p.provider}/{p.model} {p.latency_s:.2f}s tokens={tokens} "
+                f"finish={p.finish_reason or '?'}"
+            )
+        case TaskPlanned() as p:
+            return f"{p.planner}: {' -> '.join(p.steps)}"
+        case TaskPlanRejected() as p:
+            return f"{p.planner} rejected: {', '.join(p.errors)}"
         case SignalSampled() as p:
             # force is the tared magnitude; over20 is the step's time over 20 N where the world
             # reads the F/T stream faster than it samples (the AIC cell), absent in the mock.

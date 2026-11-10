@@ -91,6 +91,38 @@ uv run cellrt agent-report --db B=runs/b.sqlite --db C-rule=runs/rule.sqlite \
 The first run with a real model, and what it did and did not show, is in
 [`docs/phase3-llm-results.md`](docs/phase3-llm-results.md).
 
+`--tree` (on `eval` and `run`, ADR 023) chooses how a task becomes a tree. `fixed`, the
+default, runs approach, align, insert_scripted, verify for every task and records no plan.
+`table` picks the insert skill by the task's plug type (`sc` gets `insert_act`; the row is
+ours) and records the plan as `task_planned` before anything moves. A plan is checked against
+the registry and a step contract per skill (what each step needs and gives) before the tree is
+built; a plan that fails the check is recorded as `task_plan_rejected` with its codes, and the
+run ends `aborted` with no skill started. Each step still recovers as its setting says.
+`eval/scenarios/phase3-tasks.yaml` holds an SFP task and an SC task whose plug, in the mock,
+wedges rotated on every attempt (the rotated-plug fault, ours, after #28's SC jam; not
+measured in the sim): with the fixed steps B loses it and C needs a planner call; with `table`
+both seat it with no recovery, at insert_act's slower descent. The table's confusion matrix
+then lists the SC faults as missed: insert_act twists the plug free before the Monitor sees a
+stall, and the metrics do not yet tell a fault a skill cleared from one the Monitor missed:
+
+```sh
+uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
+```
+
+`--tree llm` asks the model on NIM for the plan instead: one call per run, through a `plan` tool
+limited to the plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the
+eval does not start if its plan calls plus its UNKNOWN calls could exceed it). The model's
+answer is parsed and checked like any plan; the call's prompt, answer (scrubbed and cut), tokens
+and latency are recorded as `task_plan_responded`, and `cellrt replay` prints a summary line for
+it without calling the model. The model is told the task's fields and the skills' descriptions
+and contracts. It is not told which faults the mock injects, but the `insert_act` description
+says it frees a plug rotated against the port, which is the SC task's fault; the table's row
+(ours) encodes that knowledge directly. `eval` prints how many plans were rejected on stderr;
+the table's means still include those runs. The first run with a real model as the task
+planner, and what it did and did not show, is in
+[`docs/phase3-task-to-tree-results.md`](docs/phase3-task-to-tree-results.md): it added nothing
+over the table.
+
 `cellrt promote` turns a recurring UNKNOWN into a Monitor rule with a recovery plan (ADR 021,
 ADR 022), in five steps. `group` replays the Monitor over a mock store and prints its UNKNOWN
 verdicts grouped by signature. `propose` asks the model on NIM, once, for a candidate for one

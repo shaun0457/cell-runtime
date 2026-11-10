@@ -61,5 +61,8 @@ What becomes easier, what becomes harder, what we will need to revisit.
   (#23) added `signal_sampled.force_over_limit_s`, version 4 (#24)
   `run_started.geometry_source`, version 5 (#25) `hold_checked`, version 6 (#26)
   `signal_sampled.wrench_dropped`, version 7 (#45) `planner_responded`, version 8 (#47)
-  `planner_timed_out`. A test hashes every payload's JSON schema and pins the hash per version,
+  `planner_timed_out`, version 9 (#56) `planner_preempted`, version 10 (#57)
+  `planner_decided.waited_sim_s`, version 11 (ADR 023) `task_planned` and
+  `task_plan_rejected`, version 12 (ADR 023) `task_plan_responded`. A test hashes every
+  payload's JSON schema and pins the hash per version,
   so a shape change without a bump fails.

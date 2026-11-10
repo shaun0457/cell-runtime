@@ -127,6 +127,10 @@ class _Trace:
             ending = {"result": kind, **_without(fields, "skill")}
             self._end(self._planner, event, fields, ending, "planner")
             self._planner = None
+        elif kind == "task_plan_responded":
+            # The plan call happens before any skill: an instant on the run track, its prompt
+            # left to `cellrt replay` and the log.
+            self._instant("run", event, _without(fields, "prompt"))
         elif kind == "signal_sampled":
             self._samples.append((event, fields))
         elif kind == "monitor_verdict":

@@ -26,8 +26,9 @@ from cellrt.executor.wall import wall_now
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.planner.base import (
-    MAX_STORED_PROMPT_CHARS,
-    MAX_STORED_RESPONSE_CHARS,
+    MAX_TRACE_NAME_CHARS as MAX_TRACE_NAME_CHARS,  # re-exported: it lived here before
+)
+from cellrt.planner.base import (
     FailureContext,
     Planner,
     PlannerTrace,
@@ -60,7 +61,6 @@ from cellrt.runtime.events import (
     SkillStarted,
 )
 from cellrt.runtime.recorder import Recorder
-from cellrt.runtime.scrub import scrub
 from cellrt.skills.base import Skill, SkillContext, SkillResult
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import HOLD, CommandLease, FaultSource, World, WorldView
@@ -598,25 +598,17 @@ def _result_of(task: asyncio.Task[SkillResult]) -> tuple[SkillResult, str | None
         return SkillResult(ok=False, detail={"error": error}), error
 
 
-# A trace's short fields (provider, model, finish reason) are cut to this length.
-MAX_TRACE_NAME_CHARS = 128
-
-
 def _responded(skill: str, trace: PlannerTrace) -> PlannerResponded:
-    """The trace as the log keeps it: every text scrubbed and cut. The prompt is our own text
-    but may be long; the response came from outside."""
-
-    def name(value: str | None) -> str | None:
-        return None if value is None else scrub(value)[:MAX_TRACE_NAME_CHARS]
-
+    """The trace as the log keeps it (`PlannerTrace.stored`)."""
+    kept = trace.stored()
     return PlannerResponded(
         skill=skill,
-        provider=name(trace.provider) or "unknown",
-        model=name(trace.model) or "unknown",
-        prompt=scrub(trace.prompt, max_chars=MAX_STORED_PROMPT_CHARS)[:MAX_STORED_PROMPT_CHARS],
-        response=scrub(trace.response)[:MAX_STORED_RESPONSE_CHARS],
-        prompt_tokens=trace.prompt_tokens,
-        completion_tokens=trace.completion_tokens,
-        finish_reason=name(trace.finish_reason),
-        latency_s=trace.latency_s,
+        provider=kept.provider,
+        model=kept.model,
+        prompt=kept.prompt,
+        response=kept.response,
+        prompt_tokens=kept.prompt_tokens,
+        completion_tokens=kept.completion_tokens,
+        finish_reason=kept.finish_reason,
+        latency_s=kept.latency_s,
     )

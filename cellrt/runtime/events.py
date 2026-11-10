@@ -16,10 +16,11 @@ Outcome = Literal["success", "failed", "aborted"]
 # field itself; 3 added `signal_sampled.force_over_limit_s`; 4 added
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
 # `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
-# 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`.
+# 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
+# and `task_plan_rejected`; 12 added `task_plan_responded`.
 # Bump it when a payload changes shape (a test hashes every payload's schema per version), and
 # keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 
 
 class _Payload(BaseModel):
@@ -44,6 +45,47 @@ class RunStarted(_Payload):
     # Where skills got the plug and port poses: "ground_truth" is TF from the AIC sim (blocked in
     # the submission environment); None is the mock world, which has no poses.
     geometry_source: Literal["ground_truth"] | None = None
+
+
+class TaskPlanResponded(_Payload):
+    """A model task planner's answer as it came back, before it was parsed and checked: the
+    audit trail of the run's one plan call (ADR 023). Recorded just before `task_planned` or
+    `task_plan_rejected`, only for a task planner that reports a trace. Kept apart from
+    `planner_responded`, which is an UNKNOWN triage call. Scrubbed and cut like it
+    (`PlannerTrace.stored`)."""
+
+    type: Literal["task_plan_responded"] = "task_plan_responded"
+    planner: str
+    provider: str
+    model: str
+    prompt: str  # the messages sent, as JSON
+    response: str  # the tool call's arguments, or the text
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    finish_reason: str | None = None
+    latency_s: float = Field(ge=0, allow_inf_nan=False)  # wall time the call took
+
+
+class TaskPlanned(_Payload):
+    """The task planner's plan passed the verifier (ADR 023): the tree runs these steps, each in
+    the setting's recovery. Recorded only when the tree is not the fixed one, so other runs keep
+    their shape."""
+
+    type: Literal["task_planned"] = "task_planned"
+    planner: str
+    steps: list[str]
+
+
+class TaskPlanRejected(_Payload):
+    """The task planner's plan failed the verifier, or the planner raised: no tree is built and
+    the run ends aborted before any motion (ADR 023)."""
+
+    type: Literal["task_plan_rejected"] = "task_plan_rejected"
+    planner: str
+    # As proposed, at most planner.task_plan.MAX_PLAN_STEPS + 1 names, each scrubbed and cut to
+    # MAX_STEP_CHARS; empty if the planner raised.
+    steps: list[str]
+    errors: list[str]  # codes ("step 2: needs_unmet"), never a planner's text
 
 
 class FaultInjected(_Payload):
@@ -258,6 +300,9 @@ class HoldChecked(_Payload):
 
 Payload = Annotated[
     RunStarted
+    | TaskPlanResponded
+    | TaskPlanned
+    | TaskPlanRejected
     | FaultInjected
     | FaultCleared
     | SignalSampled
