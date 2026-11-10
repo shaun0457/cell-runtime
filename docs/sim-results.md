@@ -56,8 +56,9 @@ What happened, by setting:
   - goal1 #2, goal3 #1 and #2: no answer it could read (`not_json`). Each stopped at all 1024
     completion tokens (`finish_reason` length) with no tool call; the likely cause, as for 17 of
     the 89 calls in #52, is that the model reasoned until the limit.
-- **goal3 (SC).** Fails in every setting, also without a fault: the SC plug jams at the port
-  entrance (#28). The dropout only changes which verdict ends it.
+- **goal3 (SC).** Fails in every setting of this run, also without a fault: the SC plug jams at
+  the port entrance (#28). The dropout only changes which verdict ends it. (In the rerun below,
+  without a fault, it seated in two of three C runs.)
 
 ## What this shows and what it does not
 
@@ -67,8 +68,8 @@ What happened, by setting:
 - **The model's one success depended on timing, and on a skill defect.** `retry` worked in
   goal1 #1 because the link had come back by the time the answer arrived, and the retried
   descent then jumped about 12 mm in 0.15 s instead of stepping down (see Force; fixed since,
-  not rerun). So it shows that the answer was validated and executed, not that a retry recovers
-  a dropout cleanly. In
+  and in the rerun below a retry steps down). So it shows that the answer was validated and
+  executed, not that a retry recovers a dropout cleanly. In
   goal3 the dropout began at about 19.5 s, so it was still active when the calls ended (29.6 s
   and 33.1 s): a retry would have stalled again. The model cannot know the link state; neither
   can the rule planner.
@@ -94,11 +95,46 @@ into the port, which is where the spike and the seat both came from. In this run
 re-anchored the descent on the measured pose; a retry did not. The Monitor's force rule did not
 fire, correctly: 0.02 s is far below its 0.5 s trigger.
 
-Fixed after this run (PR review, F1), not yet rerun in the sim: a descent run that starts after
+Fixed after this run (PR review, F1) and rerun (next section): a descent run that starts after
 a broken one (stopped by the Monitor, timed out, or after a retract) goes on from the measured
-pose, its z_offset and its XY integrator, so a retry steps down from where the arm is. A
-dropout that ends inside a run still lets that run's next target jump to where its descent has
-got to; only a world that reports lost commands would cover that.
+pose, its z_offset and its XY integrator, so a retry steps down from where the arm is. The
+chosen fix does not cover a jump when the link comes back inside a run, or after a run that ran
+to its end while its commands were lost (align, then insert_scripted). Covering it would take a
+world that reports lost commands, which hands the skills knowledge of the fault, or a check in
+the skills that the arm follows its targets at low force, which changes CheatCode's contact
+phase.
+
+## Rerun after the F1 fix
+
+`618ae75` on `phase3/sim`, on 2026-11-10, with the same VM, image and engine config: a clean
+setting A run, then C-LLM three times with #61's fault on the SFP goals only (`"goals": [1, 2]`;
+goal3 jammed at the SC entrance in every setting of #61, so a fault there would test nothing
+new). Six
+model calls, at most 2 per task. The scorer agrees with the runtime on all 12 tasks.
+
+| Goal | clean A | C-LLM #1 | C-LLM #2 | C-LLM #3 |
+|---|---|---|---|---|
+| goal1 SFP, dropout | success, 75 | not JSON, 0 | not JSON, 0 | not JSON, 0 |
+| goal2 SFP, dropout | success, 75 | not JSON, 0 | **retry, success, 75** | not JSON, 0 |
+| goal3 SC, no fault | INSERT_STUCK, 0 | INSERT_STUCK, 2 retract_realign, 0 | success, 75 | INSERT_STUCK, 1 retract_realign, success, 75 |
+
+- **The retry steps down.** goal2 #2: the model answered `retry` after 6.5 s of wall time (1.95 s
+  of sim time). The retried `insert_scripted` started at 27.40 s, 0.2 s before the link came back
+  at 27.60 s, so its first four targets were lost: the case the fix does not cover. The plug
+  held at 12.6 mm until then, then went down 0.11 to 0.60 mm per 50 ms sample and reached its
+  seat (-0.97 mm) 1.65 s after the retry started, at most 3.2 N in our samples; the scorer saw
+  no force over 20 N and gave 75. Before the fix (#61 goal1 #1, where the link was back before
+  the retry started) a retry took the plug from 12.3 mm to -1.0 mm in 0.21 s (0.69, 3.85, 6.93
+  and 1.86 mm per sample), 14.2 N in our samples and a spike of 86.4 N in the scorer's.
+- **The model answered one call in six.** The other five stopped at all 1024 completion tokens
+  without a tool call (`not_json`), as 3 of 6 did in #61 and 17 of 89 in #52: the token limit,
+  not the sim. So this rerun checks the fix, on one retry, not the model.
+- **Clean A is unchanged:** goal1 and goal2 seated (75 each), goal3 INSERT_STUCK at 13.3 N, as in
+  #61's clean run.
+- **goal3 ran setting C's tree without a fault**, so B's table handled it. The SC plug jammed
+  at its entrance in two runs: in C-LLM #3 one `retract_realign` then seated it (scorer 75), in
+  #1 two did not and the INSERT_STUCK budget of 2 ran out. In #2 it seated during align. One
+  recovery that worked is one case, not a rate.
 
 ## Media
 
@@ -111,15 +147,19 @@ reviewed:
 - `c_llm_goal1_full.mp4`, `a_goal1_full.mp4` (the same fault under A), `c_llm_goal2_escalate.mp4`.
 - `trace_c_llm_goal1_wall.json`, `trace_c_llm_goal1_sim.json`: `cellrt trace` of goal1 C-LLM #1;
   on the wall clock the planner call fills 10.65 s of the run.
+- The rerun's three C-LLM runs were recorded too; their frames are on the VM's disk, not
+  rendered yet.
 
 ## Reproduce
 
 The runbook's sections 4-6 and its section 10, with the policy settings from environment
 variables (README, "The AIC cell"): `CELLRT_SETTING`, `CELLRT_PLANNER`, `CELLRT_FAULT`, and for
 `llm` the key in `NVIDIA_API_KEY`. Session names were `s61clean` (clean), `s61` (A, B, C-rule) and
-`s61llm` (C-LLM, attempts a1 and a2). Inspect a run from a copy of the store:
+`s61llm` (C-LLM, attempts a1 and a2); in the rerun, `sf1clean` and `sf1llm` (attempts a1 to a3)
+in their own store. Inspect a run from a copy of the store:
 
 ```bash
 cellrt replay s61llm/goal1/task_1/C/0/a1 --db sim61-copy.sqlite
 cellrt trace s61llm/goal1/task_1/C/0/a1 --db sim61-copy.sqlite --out trace.json
+cellrt replay sf1llm/goal2/task_1/C/0/a2 --db simf1-copy.sqlite
 ```

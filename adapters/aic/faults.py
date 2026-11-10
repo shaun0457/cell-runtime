@@ -8,7 +8,8 @@ force, which no rule names, so it is UNKNOWN (`insert_stalled`) if the dropout o
 Monitor's stall window during insertion. The skills do not know a command was lost: a descent
 run that starts after a broken one (a retry, say) goes on from the measured pose
 (`skills.Descent`), but when the link comes back inside a run, that run's next target jumps to
-where its descent has got to.
+where its descent has got to; so does the first target of a run that follows one which ran to
+its end while its commands were lost (align, then insert_scripted).
 
 The onset is keyed to height, not to a skill: in the sim the plug seats during align (#28,
 CheatCode's tip-offset quirk), so a fault keyed to insert_scripted would never fire. With the

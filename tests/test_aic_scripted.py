@@ -16,7 +16,9 @@ from adapters.aic.geometry import XYIntegrator, gripper_target
 from adapters.aic.run import run_goal
 from adapters.aic.skills import (
     ALIGN_STEPS,
+    DESCENT_STEP_M,
     INSERT_STEPS,
+    RETRACT_M,
     AicAlign,
     AicApproach,
     AicInsertScripted,
@@ -367,6 +369,40 @@ def test_retract_raises_the_tcp_5_mm_straight_up_from_where_it_is(
 
     assert len(node.sent) == 10 + 1  # 10 steps of 0.5 mm, then HOLD where it ended
     assert node.tcp.position == pytest.approx((x, y, z + 0.005))
+
+
+def test_a_retract_after_a_finished_align_makes_the_next_align_step_down_from_the_arm(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A safety verdict can land on the tick a descent run finishes (FORCE_LIMIT: a retract,
+    # then the run again, slowed). That run ended by itself, so only the retract tells the next
+    # one to start from where the arm is. The skills come from the cell's own registry, so the
+    # retract shares the descent as the policy wires it. The plug hangs free, 2.1 mm under the
+    # TCP and 5.8 mm above the port when align ends: 5 mm up, the next align steps back down
+    # 0.5 mm at a time, instead of dropping 5 mm at once to align's last target.
+    def align_retract_align(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        names = ["approach", "align", "retract", "align"]
+        children = [SkillBehaviour(registry.get(name), env) for name in names]
+        return py_trees.composites.Sequence(name="align", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", align_retract_align)
+    node = FakeNode(task=TASK, plug_below_tcp_m=0.0021)
+
+    assert run_goal(node, TASK, store) is True
+
+    # (TCP z, target z) per motion. The second align's targets follow the retract's last step
+    # up; HOLDs, a target at the arm, are left out.
+    sent = zip(node.tcp_at_send, node.sent, strict=True)
+    moves = [(at.position[2], m.position_m[2]) for at, m in sent]
+    up = max(i for i, (at, to) in enumerate(moves) if to > at + 1e-12)
+    second = [(at, to) for at, to in moves[up + 1 :] if abs(to - at) > 1e-9]
+    top = moves[up][1]  # where the retract ended, 5 mm above where align did
+    assert len(second) == 10
+    assert all(at - to == pytest.approx(DESCENT_STEP_M) for at, to in second)
+    assert second[-1][1] == pytest.approx(top - RETRACT_M)
 
 
 # --- feedback --------------------------------------------------------------------------------
