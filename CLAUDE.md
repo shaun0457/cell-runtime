@@ -26,13 +26,19 @@ can explain and defend in an interview.
    class is known, the Behavior Tree handles it (retry, re-align, fall back to another skill).
    Only failures the Monitor cannot classify go to the LLM.
 2. **Everything is an event.** Every step writes an append-only event; runtime state is a fold
-   over events. Any run can be replayed, and a run can be forked from step N.
+   over events. Any run can be replayed, and the state at any step can be rebuilt (`state_at`).
+   Forking a run from step N is not built; `state_at` is its basis.
 3. **The core is ROS-free.** `cellrt/` (runtime, skills interface, executor, monitor, planner,
    eval) must import nothing from ROS. ROS and AIC live only in `adapters/`. This keeps Phase 0
    testable on any laptop and keeps the design honest.
 4. **LLM output is untrusted.** A tree or decision from the LLM is validated against a schema
    and the skill registry before it runs. Invalid output is an event, not a crash.
 5. **Deterministic eval.** Same scenario + same seed = same result in mock mode.
+6. **Ground truth has three roles** (ADR 015). Referee labels (the scorer's insertion events,
+   injected fault labels) are read only by the offline eval, never online. Oracle geometry (GT
+   poses standing in for perception) may be used in an oracle mode named as such. Measured
+   observations (wrench, TCP pose, joint states, images) are the runtime's own. A model's
+   judgement is a prediction scored against the referee. Every AIC run so far is in oracle mode.
 
 ## Architecture
 
@@ -141,7 +147,10 @@ you are reading before trusting a reference.
   (`RunACT.py:52-53`; downloaded in `docker/aic_model/Dockerfile:30`). Upstream points to the
   organisers' `grkw/aic_act_policy` instead. State 26-dim, action = Cartesian twist, velocity
   mode, ~4 Hz. Import torch/lerobot lazily, as `RunACT._LightPolicy` does (`RunACT.py:17-33`):
-  heavy module-level imports make `aic_model` miss its GetState timeout.
+  heavy module-level imports make `aic_model` miss its GetState timeout. ACT reads only the
+  `Observation`, no ground truth. The fork's own note (`CLAUDE.md:140`, a local image
+  `my-solution:v1`) records 107.96 / ~300 (trials 39.8, 42.8, 25.4); every trial is under 75,
+  which suggests no full insertion.
 - Scoring (per trial, per `docs/scoring.md`; max 100): full insertion 75, wrong port -12,
   partial 38–50, proximity 0–25; off-limit contact -24; plus smoothness, duration, path length.
 - **Force penalty (-12)**: the magnitude of the tared force (torque ignored) above 20 N,
@@ -150,9 +159,23 @@ you are reading before trusting a reference.
 - Scenario variation: engine config sets the task-board pose and per-rail translation.
   `task_board_limits` clamps **translation only** (`aic_engine.cpp:1798-1830`); rotations come
   from the scene config unclamped, so validate them ourselves.
-- Ground-truth TF is for local development only: the submission environment blocks those
-  topics with a Zenoh ACL (`docs/access_control.md`). Fine for this project; state it in the
-  README.
+- Ground-truth TF is for local development only. `ground_truth` defaults to false
+  (`aic_gz_bringup.launch.py:728-734`) and the official eval runs with `ground_truth:=false`
+  (`docker/docker-compose.yaml:9`), so the GT frames are never published there. A Zenoh access
+  list also denies the model the `/scoring/**` and simulator topics
+  (`docker/aic_eval/aic_zenoh_config.json5:293-321`, `docs/access_control.md`); it is off
+  locally unless `AIC_ENABLE_ACL` is set. The rules allow ground truth in training, not in evaluation
+  (`docs/challenge_rules.md:31`). Fine for this project; state it in the README.
+- From the first sim run (#28, `docs/phase1-run28-report.md`):
+  - When `insert_cable` returns False, the scorer marks the task not completed and scores
+    tiers 2 and 3 as 0 even if the plug is in. The insertion truth is the
+    `/scoring/insertion_event` topic in the trial's bag.
+  - A seated plug's tip is within about 1 mm of its port frame, not 10 mm under it as `verify`
+    first assumed: SFP height -0.98 mm, SC +0.07 mm.
+    The entrances are 45.8 mm (SFP) and 13.64 mm (SC) above the port frames.
+  - CheatCode's tip offset seats the SFP plug already at z_offset 0.01, i.e. during our align.
+  - Real-time factor about 0.43 on a g2-standard-8 + L4: a 32 s CheatCode task takes about
+    75 s of wall time. CheatCode scored 92.5 + 92.5 + 91.9 on the sample config.
 - Runtime: ROS 2 Kilted, Pixi, eval in Docker. The official compose file connects the model to
   the eval router via `AIC_ROUTER_ADDR=eval:7447` (`docker/docker-compose.yaml:26-28`). In
   Shaun's earlier setup that did not connect, and `--network container:aic-eval-1` was the
@@ -166,8 +189,11 @@ you are reading before trusting a reference.
   in the core path. `.gitattributes` forces LF line endings.
 - **CI**: GitHub Actions runs `ruff` + `pytest` for the core on `ubuntu-latest` and
   `windows-latest`. Adapter tests that need ROS/AIC are skipped when ROS is not importable.
-- **Phase 2: GCP Spot VM** (n1-standard-8 + 1x T4), cloned from GitHub. Results and the
-  SQLite store live on a persistent disk.
+- **Sim runs: a GCP VM**, cloned from GitHub (or from a git bundle). The plan was a Spot
+  n1-standard-8 + 1x T4, but T4s were out of stock in every zone tried during #28; the runs so
+  far used an on-demand g2-standard-8 + 1x L4 (`asia-northeast3-a`), whose accelerator image
+  needs the NVIDIA GL libraries added (`docs/runbooks/phase1-sim-run.md`, section 2). Results and
+  the SQLite store live on a separate persistent disk.
 - **Spot VMs can be preempted at any time, so the eval runner must be resumable.** The unit of
   work is one (scenario, setting, seed). A completed unit is recorded in the event store and
   skipped on restart. A unit interrupted mid-run is rerun from the start, never resumed
@@ -177,7 +203,9 @@ you are reading before trusting a reference.
 
 - Python >= 3.11 (Kilted on Ubuntu 24.04 ships 3.12). Type hints everywhere.
 - Dependencies: stdlib `sqlite3` + `asyncio`, `py_trees`, `pydantic` (schemas), `typer` (CLI),
-  `pytest`. Ask before adding anything else.
+  `pyyaml` (scenario files), `pytest`, and `openai` as the optional extra `[llm]` (NVIDIA NIM through its
+  OpenAI-compatible API; the key is read only from the environment variable
+  `NVIDIA_API_KEY`). Ask before adding anything else.
 - Format with `ruff format`, lint with `ruff check`. Tests with `pytest -q`.
 - Tests never call a real LLM; use a fake planner with scripted answers.
 - Seeded randomness only (`random.Random(seed)` passed in); no global RNG.
@@ -195,6 +223,9 @@ you are reading before trusting a reference.
   channels, the held-out split, metric definitions), so Shaun reviews it before merging.
 - Prefer small, reviewable commits per step. Explain what changed and why in the summary.
 - Do not build ahead of the current phase.
+- The project is measured against an Agentic Robotics Engineer role: agentic infrastructure
+  first (runtime, failure handling, model calls, tracing, eval); robotics only as deep as the
+  integration needs.
 
 ## Status
 
@@ -203,9 +234,22 @@ cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
 
 - [x] Phase 0 — ROS-free runtime core + mock world + eval CLI
 - [ ] Phase 1 — AIC adapter and scripted skills; the 3 sample-config tasks end to end with no
-  faults, recorded and replayable (`docs/briefs/phase-1-aic-adapter.md`)
-- [ ] Phase 2 — fault injection, ACT as `insert_act`, the A/B/C eval in Gazebo, reconciled with
-  the AIC score
-- [ ] Phase 3 — LLM planner: UNKNOWN triage, task-to-tree generation, escalation, and UNKNOWN
-  promotion validated by replay (`docs/briefs/phase-3-unknown-promotion.md`)
+  faults, recorded and replayable (`docs/briefs/phase-1-aic-adapter.md`). The first sim run
+  (#28, `docs/phase1-run28-report.md`) did not reach 3/3: two seated plugs were judged stuck,
+  and the SC plug jams at the port entrance. Since #58 judges seating by height, the two SFP
+  tasks pass (scorer 75 each) in the clean runs of #61 and of its rerun; the SC jam is open
+  (`docs/sim-results.md`).
+- [ ] Phase 2 — to be revised after #28 (the draft is PR #42, not merged): a cost-capped fault
+  discovery, then a small A/B/C eval in Gazebo reconciled with the AIC score; ACT as
+  `insert_act` optional
+- [ ] Phase 3 — model planner (`docs/briefs/phase-3-unknown-promotion.md`). Done: UNKNOWN
+  triage on the mock world and in the sim, with a live wait, Monitor preemption and traces
+  (`docs/phase3-llm-results.md`, `docs/sim-results.md`); escalation; task-to-tree; UNKNOWN
+  promotion, where replay checks a promoted rule on recorded inputs (not that a recovery
+  works). The UNKNOWNs are scenarios we designed: mock faults, and an injected command dropout
+  in the sim. Open: forking a run. A VLM check of "is the plug seated" is allowed as an
+  experiment (ADR 015) but not planned: perception and VLMs are out of scope
+  (`docs/roadmap.md`).
 - [ ] Phase 4 — eval report, README, demo video
+
+The re-plan after #28, and the review that shaped it: `docs/reviews/2026-11-09-plan-grill.md`.

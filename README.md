@@ -233,9 +233,12 @@ against a fake node (`tests/aic_fakes.py`); those two files run only where ROS 2
 installed, and their tests are skipped elsewhere.
 
 The skills read plug and port poses from the sim's ground-truth TF (launch the sim with
-`ground_truth:=true`; every run records `geometry_source: ground_truth`). That is for local
-development only: the AIC submission environment blocks those topics (`docs/access_control.md`
-in the AIC repository).
+`ground_truth:=true`; every run records `geometry_source: ground_truth`), so every sim result
+here is with oracle geometry: what the runtime reads about poses is perfect (ADR 015). That is
+for local development only. AIC's own evaluation launches the sim with `ground_truth:=false`,
+so those frames are never published there, and the challenge rules allow ground truth in
+training, not in evaluation (`docker/docker-compose.yaml:9` and `docs/challenge_rules.md:31` in
+the AIC repository).
 
 ## License
 
