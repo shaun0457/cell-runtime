@@ -150,10 +150,12 @@ def check_registry(candidate: Candidate, registry: SkillRegistry) -> None:
     """The rule watches a registered insertion skill, and a switch goes to another one. The
     refusal names the field and a code, never the value (it comes from a model)."""
 
+    insertion_skills = registry.insertion_skills()
+
     def insertion(name: str, where: str) -> None:
         if name not in registry:
             raise CandidateRefused(f"candidate refused: {where}: not_registered")
-        if registry.get(name).monitor_profile != "insertion":
+        if name not in insertion_skills:
             raise CandidateRefused(f"candidate refused: {where}: not_an_insertion_skill")
 
     insertion(candidate.rule.skill, "rule.skill")
@@ -163,6 +165,14 @@ def check_registry(candidate: Candidate, registry: SkillRegistry) -> None:
         insertion(plan.skill, "plan.skill")
         if plan.skill == candidate.rule.skill:
             raise CandidateRefused("candidate refused: plan.skill: same_as_rule_skill")
+
+
+def parse_checked(raw: str, registry: SkillRegistry) -> Candidate:
+    """A candidate from its JSON, checked by the parser and against `registry`. Raises
+    `CandidateRefused`; the message is a field and a code."""
+    candidate = Candidate.parse(raw)
+    check_registry(candidate, registry)
+    return candidate
 
 
 def validate(

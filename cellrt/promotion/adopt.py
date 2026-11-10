@@ -40,7 +40,7 @@ from cellrt.monitor.promoted import (
 )
 from cellrt.promotion.groups import DEFAULT_MIN_SIZE, MAX_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
-from cellrt.promotion.validate import REPORT_VERSION, check_registry
+from cellrt.promotion.validate import REPORT_VERSION, parse_checked
 from cellrt.skills.registry import SkillRegistry
 
 # The approved file's format. A file of another version is refused, never read as this one.
@@ -272,8 +272,6 @@ def _read_adopted(path: Path) -> Adopted:
 
 def _checked(raw: str, registry: SkillRegistry) -> Candidate:
     try:
-        candidate = Candidate.parse(raw)
-        check_registry(candidate, registry)
+        return parse_checked(raw, registry)
     except CandidateRefused:
         raise ApprovalRefused("candidate_refused") from None
-    return candidate

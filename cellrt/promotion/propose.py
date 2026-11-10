@@ -42,7 +42,7 @@ from cellrt.planner.base import MAX_STORED_PROMPT_CHARS, MAX_STORED_RESPONSE_CHA
 from cellrt.planner.llm import ChatClient, ChatReply, ChatRequest, LlmPlannerConfig
 from cellrt.planner.nim import ModelCallCapReached
 from cellrt.promotion.groups import Group
-from cellrt.promotion.validate import check_registry
+from cellrt.promotion.validate import parse_checked
 from cellrt.runtime.scrub import scrub
 from cellrt.skills.registry import SkillRegistry
 
@@ -171,7 +171,7 @@ def proposal_context(
             for g in others[:MAX_OTHER_GROUPS]
         ],
         "bounds": {f: list(b) for f, b in sorted(FIELD_BOUNDS.items())},
-        "insertion_skills": {n: _description(registry, n) for n in _insertion_skills(registry)},
+        "insertion_skills": {n: _description(registry, n) for n in registry.insertion_skills()},
     }
 
 
@@ -229,7 +229,7 @@ async def _propose(
     registry: SkillRegistry,
     timer: Callable[[], float],
 ) -> Proposal:
-    insertion = _insertion_skills(registry)
+    insertion = registry.insertion_skills()
     tool = {
         "type": "function",
         "function": {
@@ -315,8 +315,7 @@ def _checked(
     if not text:
         return None, ("candidate refused: empty",)
     try:
-        candidate = Candidate.parse(text)
-        check_registry(candidate, registry)
+        candidate = parse_checked(text, registry)
     except CandidateRefused as exc:
         return None, (str(exc),)
     if candidate.rule.skill != group.signature.skill:
@@ -376,10 +375,6 @@ def _ranges(readings: Sequence[Mapping[str, float]]) -> dict[str, list[float]]:
             median = round(statistics.median(values), READING_DIGITS)
             out[key] = [min(values), median, max(values)]
     return out
-
-
-def _insertion_skills(registry: SkillRegistry) -> list[str]:
-    return sorted(n for n in registry.names() if registry.get(n).monitor_profile == "insertion")
 
 
 def _description(registry: SkillRegistry, name: str) -> str:

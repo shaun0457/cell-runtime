@@ -487,11 +487,7 @@ def _planner_for(
     if registry.get(step).monitor_profile != "insertion" or (planner is None and not switches):
         return None, {}
     slow_scale = config.slow_speed_scale
-    others = [
-        n
-        for n in sorted(registry.names())
-        if n != step and registry.get(n).monitor_profile == "insertion"
-    ]
+    others = [n for n in registry.insertion_skills() if n != step]
     alternatives = {
         n: (
             SkillBehaviour(registry.get(n), env, name=f"{n}@{step}"),

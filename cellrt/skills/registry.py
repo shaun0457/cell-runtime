@@ -34,5 +34,10 @@ class SkillRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple(self._skills)
 
+    def insertion_skills(self) -> tuple[str, ...]:
+        """The skills whose Monitor profile is insertion, in name order: the ones a recovery
+        switch or a promoted rule may name."""
+        return tuple(sorted(n for n, s in self._skills.items() if s.monitor_profile == "insertion"))
+
     def __contains__(self, name: object) -> bool:
         return name in self._skills

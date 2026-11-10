@@ -65,7 +65,7 @@ from cellrt.promotion.groups import (
 )
 from cellrt.promotion.propose import PROPOSE_DEADLINE_S, PROPOSE_MAX_TOKENS, propose
 from cellrt.promotion.replay import ReplayConfig
-from cellrt.promotion.validate import GroupNotFound, check_registry, validate
+from cellrt.promotion.validate import GroupNotFound, parse_checked, validate
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
@@ -517,8 +517,7 @@ def promote_validate(
     except (OSError, UnicodeDecodeError) as exc:
         _fail(f"cannot read the candidate at {candidate} ({type(exc).__name__})")
     try:
-        parsed = Candidate.parse(raw)
-        check_registry(parsed, mock_registry())
+        parsed = parse_checked(raw, mock_registry())
         report = validate(
             _runs_of("store", db), parsed, group, ReplayConfig.mock(), min_size=min_size
         )
