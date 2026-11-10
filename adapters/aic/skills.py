@@ -121,8 +121,9 @@ VERIFY_SETTLE_S = 5.0  # CheatCode's wait for the connector to settle
 SEATED_MAX_HEIGHT_MM = 1.0
 SEATED_MIN_HEIGHT_MM = -3.0
 SEATED_MAX_XY_MM = 2.0
-# Insertion stops at the seat: in the band and no longer going down, by less than this since
-# the previous command (one commanded step is 0.5 mm). A plug still going down is pushed on.
+# Insertion stops at the seat: in the band and no longer moving, by less than this either way
+# since the previous command (one commanded step is 0.5 mm). A plug still going down, or
+# springing back up, is pushed on.
 SEATED_STILL_MM = 0.1
 SEATED = {
     "max_height_mm": SEATED_MAX_HEIGHT_MM,
@@ -183,7 +184,8 @@ class Descent:
 
     def __init__(self) -> None:
         self.integrator = XYIntegrator()
-        self.last_height_mm: float | None = None  # the tip's height at the last command
+        # The tip's height at the last descent command; None after a retract, which is not one.
+        self.last_height_mm: float | None = None
         self.z_offset_m: float | None = None  # the last z_offset commanded
         self._unbroken = True  # every descent run so far ran to its end, and no retract
 
@@ -198,8 +200,11 @@ class Descent:
         self._unbroken = True
 
     def interrupt(self) -> None:
-        """A retract moved the arm off the descent: the next run goes on from where it is."""
+        """A retract moved the arm off the descent: the next run goes on from where it is, and
+        judges whether the plug is still from its own first step, not from a height measured
+        before the retract."""
         self._unbroken = False
+        self.last_height_mm = None
 
     def command(self, ctx: SkillContext, g: Geometry, z_offset_m: float) -> None:
         self.last_height_mm, _ = plug_to_port_mm(g.port, g.plug)
@@ -322,7 +327,7 @@ class AicInsertScripted(_AicSkill):
             g = self._geometry()
             on_seat, height_mm = seated(g)
             before = self._descent.last_height_mm
-            if on_seat and before is not None and before - height_mm < SEATED_STILL_MM:
+            if on_seat and before is not None and abs(before - height_mm) < SEATED_STILL_MM:
                 self._descent.finished()
                 detail = {"height_mm": round(height_mm, 3), "seated": True}
                 return SkillResult(ok=True, detail=detail)

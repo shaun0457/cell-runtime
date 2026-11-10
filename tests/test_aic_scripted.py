@@ -168,6 +168,65 @@ def test_insertion_pushes_a_plug_on_until_it_rests_on_its_seat(store: EventStore
     assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
 
 
+@dataclass
+class _SpringsBack(FakeNode):
+    """While the tip would be 0-0.5 mm above the port frame, it reads `lift_m` higher: the
+    connector pushing back against the insertion for one step."""
+
+    lift_m: float = 0.00065
+
+    @property
+    def plug(self) -> Pose:
+        plug = super().plug
+        x, y, z = plug.position
+        if 0.0 < z - self.port.position[2] <= 0.0005:
+            return Pose(position=(x, y, z + self.lift_m), orientation=plug.orientation)
+        return plug
+
+
+def test_a_plug_that_rose_since_the_last_step_is_not_resting_on_its_seat(
+    store: EventStore,
+) -> None:
+    # As in the test above, the tip is in the seated band from step 10, at 0.8 mm. At step 11
+    # it would be at 0.3 mm but springs back to 0.95 mm: in the band, but 0.15 mm higher than
+    # a step ago, so still moving. Insertion goes on and ends on the seat as before.
+    node = _SpringsBack(task=TASK, plug_below_tcp_m=0.0021, seat_height_m=-0.00098)
+
+    assert run_goal(node, TASK, store) is True
+
+    started, finished = _skill(store, "insert_scripted")
+    assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
+    assert finished.ts - started.ts == pytest.approx(16 * 0.05)
+
+
+def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A retract is not a descent step: a height measured before it says nothing about whether
+    # the plug is still going down under insertion. The plug is pressed onto its seat far under
+    # the TCP, so it stays there while the arm rises 5 mm; the second insertion sends one step,
+    # sees the plug has not moved, and ends, recorded a tick later.
+    def insert_retract_insert(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        names = ["approach", "align", "insert_scripted", "retract", "insert_scripted"]
+        children = [SkillBehaviour(registry.get(name), env) for name in names]
+        return py_trees.composites.Sequence(name="insert", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", insert_retract_insert)
+    node = FakeNode(task=TASK)
+
+    assert run_goal(node, TASK, store) is True
+
+    events = _events(store)
+    started = [e for e in events if isinstance(e.payload, SkillStarted)][-1]
+    finished = [e for e in events if isinstance(e.payload, SkillFinished)][-1]
+    assert started.payload.skill == finished.payload.skill == "insert_scripted"
+    assert finished.payload.detail == {"height_mm": 0.0, "seated": True}
+    assert finished.ts - started.ts == pytest.approx(2 * 0.05)
+
+
 def test_a_plug_that_never_rests_on_a_seat_gets_the_whole_descent_and_fails_verify(
     store: EventStore,
 ) -> None:
