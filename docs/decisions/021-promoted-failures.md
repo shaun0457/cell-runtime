@@ -134,10 +134,11 @@ samples it replayed, and those came from one skill.
   `promoted: Mapping[str, PromotedPlan]`, keyed by rule name. Both enter their config's hash only
   when non-empty.
 - Approval is a file: `cellrt promote approve REPORT --by NAME` refuses a report unless all four
-  gates passed with no failing window, the report was made under the Monitor configuration in
-  use now, and its candidate still has the hash the report names. It writes
-  `eval/promoted/<NAME>.json` (rule, plan, candidate and report hashes, that configuration,
-  approver) and never replaces an approved rule. `cellrt eval --promoted DIR` loads at most 16
+  gates passed with no failing window, gate 1 asked the group for at least the default 3
+  windows (`validate --min-size 1` would let one window pass it), the report was made under the
+  Monitor configuration in use now, and its candidate still has the hash the report names. It
+  writes `eval/promoted/<NAME>.json` (rule, plan, candidate and report hashes, that
+  configuration, the group size, approver) and never replaces an approved rule. `cellrt eval --promoted DIR` loads at most 16
   such files and checks each again (file name, configuration, hash, registered skills) before
   the store is opened. A rule approved under other Monitor thresholds or mock parameters is
   refused as `config_stale`: its gates vouched for a Monitor that no longer runs.

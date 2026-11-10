@@ -27,7 +27,9 @@ from cellrt.promotion.adopt import (
     with_promoted,
     write_adopted,
 )
+from cellrt.promotion.groups import DEFAULT_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
+from cellrt.promotion.validate import REPORT_VERSION
 from cellrt.skills.mock import mock_registry
 
 RULE: dict[str, Any] = {
@@ -57,11 +59,12 @@ def _report(validated: Candidate | None = None, **over: Any) -> str:
     """A report as `cellrt promote validate --out` writes it (the fields approval reads)."""
     validated = validated or _candidate()
     data: dict[str, Any] = {
-        "report_version": 1,
+        "report_version": REPORT_VERSION,
         "candidate": validated.model_dump(mode="json"),
         "candidate_hash": validated.digest(),
         "group": "insert_scripted/insert_stalled force <10 N torque >=0.1 Nm",
         "config_parts": dict(ReplayConfig.mock().parts),
+        "min_size": DEFAULT_MIN_SIZE,
         "gates": GATES,
         "passed": True,
     }
@@ -77,6 +80,11 @@ def test_a_passed_report_is_approved_by_a_named_person() -> None:
     assert adopted.approved_by == "Shaun Chen"
     assert adopted.candidate_hash == _candidate().digest()
     assert len(adopted.report_hash) == 16
+    assert adopted.min_size == DEFAULT_MIN_SIZE
+
+
+def test_a_report_checked_against_a_larger_group_is_approved() -> None:
+    assert approve(_report(min_size=10), "Shaun", mock_registry()).min_size == 10
 
 
 @pytest.mark.parametrize(
@@ -96,8 +104,12 @@ def test_a_passed_report_is_approved_by_a_named_person() -> None:
         ({"gates": {"0": True}}, "gates_invalid"),
         ({"gates": [*GATES[:3], [3, True]]}, "gates_invalid"),
         ({"candidate_hash": "0" * 16}, "candidate_hash_mismatch"),
-        ({"report_version": 2}, "report_version"),
+        ({"report_version": 1}, "report_version"),  # before reports recorded their min size
         ({"report_version": True}, "report_version"),
+        # Gate 1 passed for a group smaller than the default asks for.
+        ({"min_size": DEFAULT_MIN_SIZE - 1}, "min_size"),
+        ({"min_size": float(DEFAULT_MIN_SIZE)}, "min_size"),
+        ({"min_size": None}, "min_size"),
         ({"candidate": {"rule": {"name": "x"}, "plan": {}}}, "candidate_refused"),
         ({"config_parts": {**ReplayConfig.mock().parts, "monitor": "0" * 16}}, "config_stale"),
         ({"config_parts": None}, "config_stale"),

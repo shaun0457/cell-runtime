@@ -192,6 +192,11 @@ def test_a_group_under_the_minimum_size_fails_gate_1(phase0_runs: Runs) -> None:
     assert gate.summary == f"the group has {3 * SEEDS} windows, under {3 * SEEDS + 1}"
 
 
+def test_the_report_records_the_group_size_gate_1_asked_for(phase0_runs: Runs) -> None:
+    # Approval refuses a report checked against fewer windows than the default.
+    assert _validate(phase0_runs, _candidate(), min_size=5).as_dict()["min_size"] == 5
+
+
 def test_a_validation_stops_at_its_run_limit(phase0_runs: Runs) -> None:
     with pytest.raises(SurveyTooLarge):
         _validate(phase0_runs[:3], _candidate(), max_runs=2)

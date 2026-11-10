@@ -1,10 +1,11 @@
 """Approve a validated candidate, and load approved rules into an eval (ADR 021, ticket T3).
 
 `approve` reads a report `cellrt promote validate --out` wrote. It refuses a report unless all
-four gates passed with no failing window, the report was made under the Monitor configuration
-in use now, and the candidate in it still has the hash the report names. The approved file
-`eval/promoted/<NAME>.json` holds the rule, its plan, both hashes, that configuration and who
-approved it. An eval loads only these files: a promoted plan runs in settings B and C without
+four gates passed with no failing window, gate 1 asked the group for at least the default
+number of windows, the report was made under the Monitor configuration in use now, and the
+candidate in it still has the hash the report names. The approved file
+`eval/promoted/<NAME>.json` holds the rule, its plan, both hashes, that configuration, the group
+size and who approved it. An eval loads only these files: a promoted plan runs in settings B and C without
 the planner, and counts against the UNKNOWN class budget and the task budget.
 
 Trust: the hashes catch a candidate edited after its report, or a configuration changed since,
@@ -36,6 +37,7 @@ from cellrt.monitor.promoted import (
     PromotedRule,
     rules_overlap,
 )
+from cellrt.promotion.groups import DEFAULT_MIN_SIZE, MAX_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
 from cellrt.promotion.validate import REPORT_VERSION, check_registry
 from cellrt.skills.registry import SkillRegistry
@@ -78,6 +80,8 @@ class Adopted(BaseModel):
     group: str = Field(min_length=1, max_length=MAX_GROUP_CHARS)
     # The replay configuration (Monitor inputs) the gates were checked under.
     config_parts: dict[str, str] = Field(max_length=MAX_CONFIG_PARTS)
+    # The windows gate 1 asked the group for: never fewer than the default.
+    min_size: int = Field(ge=DEFAULT_MIN_SIZE, le=MAX_MIN_SIZE)
     approved_by: str = Field(pattern=f"^{APPROVER.pattern}$")
 
     def candidate(self) -> Candidate:
@@ -124,6 +128,10 @@ def approve(
     _check_gates(data.get("gates"))
     if data.get("config_parts") != expected:
         raise ApprovalRefused("config_stale")
+    # `--min-size 1` lets gate 1 pass on one window: a rule needs the evidence the default asks.
+    min_size = data.get("min_size")
+    if type(min_size) is not int or not DEFAULT_MIN_SIZE <= min_size <= MAX_MIN_SIZE:
+        raise ApprovalRefused("min_size")
     candidate = _checked(json.dumps(data.get("candidate")), registry)
     if candidate.digest() != data.get("candidate_hash"):
         raise ApprovalRefused("candidate_hash_mismatch")
@@ -140,6 +148,7 @@ def approve(
         report_hash=hashlib.sha256(report.encode("utf-8")).hexdigest()[:16],
         group=group,
         config_parts=expected,
+        min_size=min_size,
         approved_by=by,
     )
 

@@ -44,7 +44,7 @@ from cellrt.runtime.events import Event
 from cellrt.skills.registry import SkillRegistry
 
 MAX_CASES = 5  # failing windows kept per gate
-REPORT_VERSION = 1
+REPORT_VERSION = 2  # 2: the report records the group size gate 1 asked for
 NOT_CHECKED = (
     "replay checks the rule, not the plan: the recorded runs never ran the plan, so only a new "
     "eval run with the rule adopted shows whether it works"
@@ -100,6 +100,7 @@ class Report:
     skipped: Mapping[str, int]  # runs not replayed, by status
     replayed: tuple[str, ...]  # gate 0's lines: what was replayed
     gates: tuple[Gate, ...]
+    min_size: int = DEFAULT_MIN_SIZE  # the windows gate 1 asked the group for
 
     @property
     def passed(self) -> bool:
@@ -125,6 +126,7 @@ class Report:
             "candidate_hash": self.candidate.digest(),
             "group": self.group,
             "config_parts": dict(self.parts),
+            "min_size": self.min_size,
             "runs": list(self.runs),
             "skipped": dict(self.skipped),
             "gates": [
@@ -195,6 +197,7 @@ def validate(
             skipped={s: n for s, n in sorted(statuses.items()) if s != "ok"},
             replayed=tuple(replayed),
             gates=gates,
+            min_size=min_size,
         )
 
     if not passed:
