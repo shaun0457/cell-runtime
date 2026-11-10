@@ -17,7 +17,7 @@ from aic_fakes import FakeNode
 from nim_fakes import FAKE_KEY, FakeCreate, completion
 
 from adapters.aic.convert import MotionCommand, Pose
-from adapters.aic.geometry import gripper_target, z_offset_at
+from adapters.aic.geometry import gripper_target, xy_integrator_at, z_offset_at
 from adapters.aic.run import PolicySetupError, policy_setup, run_goal
 from adapters.aic.skills import (
     ALIGN_HEIGHT_M,
@@ -184,6 +184,21 @@ def test_the_z_offset_at_a_pose_commands_that_pose() -> None:
     # CheatCode's target is port z + z_offset - (gripper z - plug z): 0.05 + 0.17 - 0.05.
     assert z_offset == pytest.approx(0.17)
     assert target.position[2] == pytest.approx(gripper.position[2])
+
+
+def test_the_xy_integrator_at_a_pose_commands_that_pose_within_the_windup_limit() -> None:
+    port = Pose(position=(0.4, 0.1, 0.05))
+    plug = Pose(position=(0.401, 0.099, 0.12))
+
+    def target_xy(gripper: Pose) -> tuple[float, ...]:
+        integrator = xy_integrator_at(port, plug, gripper)
+        target, _ = gripper_target(port, plug, gripper, z_offset_m=0.1, integrator=integrator)
+        return target.position[:2]
+
+    # 3 mm and 1 mm off the port, a correction under way: the next target keeps the arm there.
+    assert target_xy(Pose(position=(0.403, 0.099, 0.17))) == pytest.approx((0.403, 0.099))
+    # 10 mm off is more than the integrator can hold (0.15 x 0.05 m = 7.5 mm): back within it.
+    assert target_xy(Pose(position=(0.41, 0.1, 0.17))) == pytest.approx((0.4075, 0.1))
 
 
 @dataclass

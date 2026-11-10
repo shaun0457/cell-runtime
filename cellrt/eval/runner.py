@@ -341,10 +341,8 @@ def config_parts(
     config = {
         "scenario": scenario.model_dump(mode="json"),
         "setting": setting,
-        "world": dataclasses.asdict(params),
         "recovery": None if setting == "A" else recovery.as_dict(),
-        "monitor": monitor.as_dict(),
-        "skills": {n: skill_config(registry.get(n)) for n in sorted(registry.names())},
+        **monitor_inputs(params, monitor, registry),
         "code": code_fingerprint(),
         "adapters": adapters_fingerprint(),
         "lock": lock_fingerprint(),
@@ -358,6 +356,19 @@ def config_parts(
             "config": dict(tree.describe()),
         }
     return {name: _digest(value) for name, value in config.items()}
+
+
+def monitor_inputs(
+    params: MockParams, monitor: MonitorConfig, registry: SkillRegistry
+) -> dict[str, object]:
+    """The parts of a run's configuration its Monitor verdicts depend on: the world (its
+    period), the Monitor's thresholds, and the skills (the profile each declares). One source
+    for `config_parts` and for a Monitor replay that checks a run against them (ADR 022)."""
+    return {
+        "world": dataclasses.asdict(params),
+        "monitor": monitor.as_dict(),
+        "skills": {n: skill_config(registry.get(n)) for n in sorted(registry.names())},
+    }
 
 
 def planner_config(
@@ -380,6 +391,12 @@ def planner_config(
 def hash_parts(parts: dict[str, str]) -> str:
     """The run's config_hash: one hash over all its parts."""
     return _digest(parts)
+
+
+def part_digest(value: object) -> str:
+    """The hash of one part's value, as `config_parts` stores it: so a reader can check that a
+    configuration it holds is the one a run used (a Monitor replay, ADR 022)."""
+    return _digest(value)
 
 
 def _digest(value: object) -> str:

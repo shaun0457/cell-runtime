@@ -5,7 +5,11 @@
 lost (the executor's HOLD too), so the arm stays at its last target and the plug hangs where it
 was. Nothing reaches the Monitor but what the cell measures: a plug that stops going down at low
 force, which no rule names, so it is UNKNOWN (`insert_stalled`) if the dropout outlasts the
-Monitor's stall window during insertion.
+Monitor's stall window during insertion. The skills do not know a command was lost: a descent
+run that starts after a broken one (a retry, say) goes on from the measured pose
+(`skills.Descent`), but when the link comes back inside a run, that run's next target jumps to
+where its descent has got to; so does the first target of a run that follows one which ran to
+its end while its commands were lost (align, then insert_scripted).
 
 The onset is keyed to height, not to a skill: in the sim the plug seats during align (#28,
 CheatCode's tip-offset quirk), so a fault keyed to insert_scripted would never fire. With the
@@ -33,9 +37,13 @@ from cellrt.world.base import FaultTransition
 FAULT_ENV = "CELLRT_FAULT"
 MAX_SPEC_CHARS = 1000
 MAX_GOALS = 100
+# A retry after the dropout steps down from where the plug hangs, at most this high: a slow
+# insert_scripted (0.25 mm per 50 ms step) covers 50 mm within its 10 s timeout, and 40 mm
+# leaves room for a seat below the port frame and the steps before the stall is called.
+MAX_ONSET_HEIGHT_MM = 40.0
 SPEC_REFUSED = (
     f"{FAULT_ENV} must be a JSON object: kind command_dropout, duration_s 0.05-120, optional"
-    f" onset_height_mm 1-200 and goals (1-{MAX_GOALS} goal numbers from 1)"
+    f" onset_height_mm 1-{MAX_ONSET_HEIGHT_MM:g} and goals (1-{MAX_GOALS} goal numbers from 1)"
 )
 
 
@@ -73,7 +81,9 @@ class FaultSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     kind: Literal["command_dropout"]
-    onset_height_mm: float = Field(default=20.0, ge=1.0, le=200.0, allow_inf_nan=False)
+    onset_height_mm: float = Field(
+        default=20.0, ge=1.0, le=MAX_ONSET_HEIGHT_MM, allow_inf_nan=False
+    )
     duration_s: float = Field(ge=0.05, le=120.0, allow_inf_nan=False)
     goals: tuple[PositiveInt, ...] | None = Field(default=None, min_length=1, max_length=MAX_GOALS)
 

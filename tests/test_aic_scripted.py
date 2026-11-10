@@ -4,18 +4,21 @@ and the full setting A tree on a fake cell whose arm follows the commanded targe
 from __future__ import annotations
 
 import itertools
+from dataclasses import dataclass
 
 import py_trees
 import pytest
-from aic_fakes import FakeNode
+from aic_fakes import PLUG_BELOW_TCP_M, PORT, FakeNode
 
 from adapters.aic import run as aic_run
-from adapters.aic.convert import Pose
+from adapters.aic.convert import MotionCommand, Pose
 from adapters.aic.geometry import XYIntegrator, gripper_target
 from adapters.aic.run import run_goal
 from adapters.aic.skills import (
     ALIGN_STEPS,
+    DESCENT_STEP_M,
     INSERT_STEPS,
+    RETRACT_M,
     AicAlign,
     AicApproach,
     AicInsertScripted,
@@ -182,6 +185,42 @@ def test_a_plug_that_never_rests_on_a_seat_gets_the_whole_descent_and_fails_veri
     assert _end(store).duration == pytest.approx(5.0 + 430 * 0.05 + 5.0, abs=0.2)
 
 
+@dataclass
+class _FallsShort(FakeNode):
+    """The arm stops `short_m` above every position target, as the sim's arm does when
+    something holds it back: what was sent and where the arm is part by that much."""
+
+    short_m: float = 0.001
+
+    def send(self, motion: MotionCommand) -> None:
+        super().send(motion)
+        if motion.mode == "position":
+            x, y, z = motion.position_m
+            self.tcp = Pose(position=(x, y, z + self.short_m), orientation=motion.orientation)
+
+
+@pytest.mark.parametrize("short_m", [0.0, 0.001], ids=["arm-on-target", "arm-1mm-short"])
+def test_a_descent_nothing_interrupts_sends_cheatcodes_targets_unchanged(
+    store: EventStore, short_m: float
+) -> None:
+    # Only a run after a broken descent goes on from the measured pose (F1): with no seat to
+    # stop the plug, align and insert_scripted send CheatCode's 430 targets, each its z_offset
+    # above the port less the TCP-to-tip offset, even when the arm does not reach them (a run
+    # that started from the measured pose would start 1 mm higher). HOLDs, a target at the
+    # measured pose, are left out.
+    node = _FallsShort(task=TASK, seat_height_m=None, short_m=short_m)
+
+    assert run_goal(node, TASK, store) is False
+
+    sent = zip(node.tcp_at_send, node.sent, strict=True)
+    z = [m.position_m[2] for at, m in sent if m.mode == "position" and m.position_m != at.position]
+    moved = [b for a, b in itertools.pairwise([None, *z]) if b != a]
+    align, insert = descent_offsets()
+    expected = [PORT.position[2] + off - PLUG_BELOW_TCP_M for off in [*align, *insert]]
+    start = next(i for i, v in enumerate(moved) if abs(v - expected[0]) < 1e-9)
+    assert moved[start : start + len(expected)] == pytest.approx(expected, abs=1e-9)
+
+
 def test_a_plug_jammed_at_the_sc_entrance_during_insertion_is_still_insert_stuck(
     store: EventStore,
 ) -> None:
@@ -330,6 +369,40 @@ def test_retract_raises_the_tcp_5_mm_straight_up_from_where_it_is(
 
     assert len(node.sent) == 10 + 1  # 10 steps of 0.5 mm, then HOLD where it ended
     assert node.tcp.position == pytest.approx((x, y, z + 0.005))
+
+
+def test_a_retract_after_a_finished_align_makes_the_next_align_step_down_from_the_arm(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A safety verdict can land on the tick a descent run finishes (FORCE_LIMIT: a retract,
+    # then the run again, slowed). That run ended by itself, so only the retract tells the next
+    # one to start from where the arm is. The skills come from the cell's own registry, so the
+    # retract shares the descent as the policy wires it. The plug hangs free, 2.1 mm under the
+    # TCP and 5.8 mm above the port when align ends: 5 mm up, the next align steps back down
+    # 0.5 mm at a time, instead of dropping 5 mm at once to align's last target.
+    def align_retract_align(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        names = ["approach", "align", "retract", "align"]
+        children = [SkillBehaviour(registry.get(name), env) for name in names]
+        return py_trees.composites.Sequence(name="align", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", align_retract_align)
+    node = FakeNode(task=TASK, plug_below_tcp_m=0.0021)
+
+    assert run_goal(node, TASK, store) is True
+
+    # (TCP z, target z) per motion. The second align's targets follow the retract's last step
+    # up; HOLDs, a target at the arm, are left out.
+    sent = zip(node.tcp_at_send, node.sent, strict=True)
+    moves = [(at.position[2], m.position_m[2]) for at, m in sent]
+    up = max(i for i, (at, to) in enumerate(moves) if to > at + 1e-12)
+    second = [(at, to) for at, to in moves[up + 1 :] if abs(to - at) > 1e-9]
+    top = moves[up][1]  # where the retract ended, 5 mm above where align did
+    assert len(second) == 10
+    assert all(at - to == pytest.approx(DESCENT_STEP_M) for at, to in second)
+    assert second[-1][1] == pytest.approx(top - RETRACT_M)
 
 
 # --- feedback --------------------------------------------------------------------------------

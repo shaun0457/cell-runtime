@@ -19,8 +19,9 @@ def completion(
     usage: tuple[int, int] | None = (812, 37),
     finish_reason: str | None = "tool_calls",
     model: str | None = NIM_MODEL,
+    name: str = "decide",
 ) -> SimpleNamespace:
-    """A response shaped like the SDK's `ChatCompletion`."""
+    """A response shaped like the SDK's `ChatCompletion`: a call to the tool `name`."""
     tool_calls = (
         None
         if arguments is None
@@ -28,7 +29,7 @@ def completion(
             SimpleNamespace(
                 id="call_0",
                 type="function",
-                function=SimpleNamespace(name="decide", arguments=arguments),
+                function=SimpleNamespace(name=name, arguments=arguments),
             )
         ]
     )

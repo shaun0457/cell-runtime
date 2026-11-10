@@ -72,7 +72,7 @@ def _unit(q: Quat) -> Quat:
 
 @dataclass(frozen=True)
 class XYIntegrator:
-    """CheatCode's accumulated XY tip error (metres), clipped to the windup limit."""
+    """CheatCode's accumulated XY tip error (metres), clipped to the windup limit when added."""
 
     x: float = 0.0
     y: float = 0.0
@@ -123,6 +123,18 @@ def gripper_target(
         f * target[2] + (1 - f) * gz,
     )
     return Pose(position=blend, orientation=q_slerp), acc
+
+
+def xy_integrator_at(port: Pose, plug: Pose, gripper: Pose) -> XYIntegrator:
+    """The integrator whose next `gripper_target` keeps the gripper where it is in XY: the
+    target is port + I_GAIN x (integrator + tip error), solved for the integrator before the
+    error is added. The sum is clipped when it is added, so a gripper further off the port than
+    the windup limit allows (7.5 mm) is sent back within it."""
+    gx, gy, _ = gripper.position
+    ex, ey = port.position[0] - plug.position[0], port.position[1] - plug.position[1]
+    return XYIntegrator(
+        x=(gx - port.position[0]) / I_GAIN - ex, y=(gy - port.position[1]) / I_GAIN - ey
+    )
 
 
 def z_offset_at(port: Pose, plug: Pose, gripper: Pose) -> float:

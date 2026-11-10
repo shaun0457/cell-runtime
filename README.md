@@ -123,6 +123,36 @@ planner, and what it did and did not show, is in
 [`docs/phase3-task-to-tree-results.md`](docs/phase3-task-to-tree-results.md): it added nothing
 over the table.
 
+`cellrt promote` turns a recurring UNKNOWN into a Monitor rule with a recovery plan (ADR 021,
+ADR 022), in five steps. `group` replays the Monitor over a mock store and prints its UNKNOWN
+verdicts grouped by signature. `propose` asks the model on NIM, once, for a candidate for one
+group: it sees the group's readings and the rule language, never run ids or fault labels, and
+its answer is kept as a record (prompt and answer scrubbed) and, when it parses, as a
+candidate file. A candidate can also be written by hand. `validate` replays every run again
+with a candidate rule (a JSON file: a rule in a small, bounded language and its plan) and
+checks four gates: the replay
+reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
+other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
+passed under the Monitor configuration in use now, with the approver's name. `eval --promoted
+DIR` runs with the approved rules, whose plans run in B and C without the planner:
+
+```sh
+uv run cellrt promote group --db runs/phase3.sqlite
+# optional, one model call: the llm extra and NVIDIA_API_KEY, as for --planner llm
+uv run cellrt promote propose --group "<label from group>" --db runs/phase3.sqlite \
+  --out proposal.json --candidate-out rule.json
+uv run cellrt promote validate rule.json --group "<label from group>" --db runs/phase3.sqlite \
+  --out report.json
+uv run cellrt promote approve report.json --by "Your Name"
+uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --promoted eval/promoted
+```
+
+Replay checks the rule, not its plan; the eval is where the plan runs first. The hashes in an
+approved file catch an accidental edit or a changed Monitor, not tampering: write access to
+`eval/promoted/` is what the eval trusts. Two rules for the
+phase 3 faults, before and after, are in
+[`docs/phase3-promotion-results.md`](docs/phase3-promotion-results.md).
+
 `eval` can be killed at any point (a preempted VM) and run again with the same command: a unit
 (scenario, setting, seed) that already finished under the same configuration is skipped, and
 one that was interrupted runs again from the start as its next attempt (`.../a2`). Interrupted
@@ -172,10 +202,10 @@ the plug tip actually ends depends on CheatCode's tip-offset quirk
 starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
 `CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
 wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
-at half speed. After a retract, align and insert go on down from the retracted pose, taken from
-where the arm is measured, not where it was last sent: a plug pressed on something holds the
-TCP far above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the retract left the
-descent below z_offset 0.01, align first comes back up to it. `retract`
+at half speed. After a retract or a broken descent run, align and insert go on down from where
+the arm is measured, not where it was last sent: a plug pressed on something holds the TCP far
+above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the arm is then below
+z_offset 0.01, align first comes back up to it. `retract`
 always rises 5 mm: the mock's retract height above the port does not carry over, since the
 port frame sits at a different depth for each port type. Setting C asks the planner
 `CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
@@ -186,9 +216,15 @@ while a planner thinks, so the arm holds, the world steps and the Monitor keeps 
 every motion command for 15 s of sim time from when the plug tip first comes within 20 mm of
 the port (the default), in goal 2 only (every goal without `goals`). The arm stays at its last
 target and the plug hangs; if that lasts past the Monitor's stall window in insert_scripted,
-the verdict is UNKNOWN. The onset is keyed to height, not to a skill, because the plug seats
-during align in the sim. The fault is recorded as `fault_injected` and `fault_cleared` and is
-part of the run's configuration hash. A bad value in any of these variables refuses every
+the verdict is UNKNOWN. A descent run that starts after a broken one (stopped, timed out, or
+after a retract), such as a retry, goes on from where the arm is measured to be, so it does not
+jump to the targets lost in the dropout. The next target still jumps when the link comes back
+inside a run, or after a run that ran to its end while its commands were lost (align, then
+insert_scripted). `onset_height_mm` is at most 40, so a slow retry from where the plug hangs
+fits in insert_scripted's timeout. The onset
+is keyed to height, not to a skill, because the plug seats during align in the sim. The fault
+is recorded as `fault_injected` and `fault_cleared` and is part of the run's configuration
+hash. A bad value in any of these variables refuses every
 goal, before the arm moves.
 Before the tree starts, a goal waits up to 10 s of sim time for the ground-truth frames and a
 fresh wrench, as CheatCode waits for TF (ADR 011).

@@ -184,7 +184,8 @@ class MonitorVerdict(_Payload):
 
 
 class RecoveryStarted(_Payload):
-    """The tree starts a recovery for a known failure class, within its budgets."""
+    """The tree starts a recovery, within its budgets: a known class's plan, a planner's
+    decision, or an approved promoted rule's plan (`action` `promoted:<NAME>:...`)."""
 
     type: Literal["recovery_started"] = "recovery_started"
     skill: str

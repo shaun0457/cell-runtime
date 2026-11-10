@@ -1,4 +1,4 @@
-"""`cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report`."""
+"""`cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report | promote`."""
 
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.executor.trees import SETTINGS
-from cellrt.planner.base import Planner
+from cellrt.monitor.classifier import MonitorConfig
+from cellrt.monitor.promoted import MAX_CANDIDATE_CHARS, Candidate, CandidateRefused
+from cellrt.planner.base import MAX_PLANNER_DEADLINE_S, Planner
 from cellrt.planner.factory import (
     DEFAULT_MAX_MODEL_CALLS,
     PLANNER_KINDS,
@@ -34,6 +36,7 @@ from cellrt.planner.factory import (
     llm_client_and_config,
     model_call_cap,
 )
+from cellrt.planner.llm import MAX_TOKENS_LIMIT
 from cellrt.planner.nim import (
     DEFAULT_MODEL,
     KEY_ENV,
@@ -43,13 +46,35 @@ from cellrt.planner.nim import (
 )
 from cellrt.planner.smoke import run_smoke
 from cellrt.planner.task_plan import TablePlanner, TaskPlanner
+from cellrt.promotion.adopt import (
+    MAX_REPORT_CHARS,
+    ApprovalRefused,
+    approve,
+    load_promoted,
+    with_promoted,
+    write_adopted,
+)
+from cellrt.promotion.groups import (
+    DEFAULT_MIN_SIZE,
+    MAX_MIN_SIZE,
+    SurveyTooLarge,
+    gate_0,
+    group_unknowns,
+    render_survey,
+    survey,
+)
+from cellrt.promotion.propose import PROPOSE_DEADLINE_S, PROPOSE_MAX_TOKENS, propose
+from cellrt.promotion.replay import ReplayConfig
+from cellrt.promotion.validate import GroupNotFound, check_registry, validate
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
+from cellrt.skills.mock import mock_registry
 from cellrt.trace_export import export_trace
 
 DEFAULT_DB = Path("runs") / "cellrt.sqlite"
 DEFAULT_SCENARIOS = Path("eval") / "scenarios" / "phase0.yaml"
+DEFAULT_PROMOTED = Path("eval") / "promoted"
 MAX_SEEDS = 1000
 # `cellrt baseline --write` defaults: the config of eval/baselines/phase0-small.json.
 BASELINE_SEEDS = 3
@@ -58,6 +83,12 @@ BASELINE_K = 2
 MAX_SHOWN_ERRORS = 5
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
+promote_app = typer.Typer(
+    no_args_is_help=True,
+    help="UNKNOWN promotion: group recurring UNKNOWNs, propose a candidate rule, check it by"
+    " replay and approve it (ADR 021, ADR 022).",
+)
+app.add_typer(promote_app, name="promote")
 
 DbOption = Annotated[Path, typer.Option(help="SQLite event store")]
 # The planners setting C can ask, by the name `--planner` takes (`build_planner`, ADR 019). One
@@ -142,13 +173,18 @@ def eval_(
     model: ModelOption = DEFAULT_MODEL,
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
     tree: TreeOption = "fixed",
+    promoted: Annotated[
+        Path | None,
+        typer.Option(help="directory of approved promoted rules (`cellrt promote approve`)"),
+    ] = None,
 ) -> None:
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
     _check_tree(tree)
     loaded = _load(scenarios)
     cap = _cap(max_model_calls)
-    recovery = RecoveryConfig()  # one config for the call pre-check and the eval
+    # One config for the call pre-check and the eval; checked before the store is opened.
+    monitor, recovery = _with_promoted(promoted)
     # Every unit of setting C may ask the planner, and a model task planner plans every unit,
     # finished ones included: an upper bound.
     units_with_planner = len(loaded) * seeds if "C" in chosen else 0
@@ -164,6 +200,7 @@ def eval_(
             seeds,
             store,
             recovery=recovery,
+            monitor=monitor,
             planner=chosen_planner,
             tree=task_planner,
         )
@@ -230,6 +267,16 @@ def baseline(
     if differences:
         _fail("\n  ".join([f"the eval no longer matches {path}:", *differences]))
     typer.echo(f"matches {path}")
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """`a` and `b` name one file: the same path once resolved, or a link to the same file."""
+    try:
+        if a.resolve() == b.resolve():
+            return True
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _write_whole(path: Path, text: str, *, what: str) -> None:
@@ -339,6 +386,20 @@ def _planner_name(name: str, model: str) -> str:
     return f"{name} ({model})" if name == "llm" else name
 
 
+def _with_promoted(directory: Path | None) -> tuple[MonitorConfig, RecoveryConfig]:
+    """The Monitor and recovery configs, with the approved rules in `directory` if given."""
+    monitor, recovery = MonitorConfig(), RecoveryConfig()
+    if directory is None:
+        return monitor, recovery
+    try:
+        loaded = load_promoted(directory, mock_registry())
+    except ApprovalRefused as exc:
+        _fail(str(exc))
+    names = ", ".join(r.name for r in loaded.rules) or "none"
+    typer.echo(f"promoted rules: {names}", err=True)  # the table does not say
+    return with_promoted(loaded, monitor, recovery)
+
+
 def _cap(max_model_calls: int) -> ModelCallCap:
     """One cap for every model call the command makes."""
     try:
@@ -404,6 +465,177 @@ def agent_report(
         _fail(str(exc))
     for line in render_agent_report(rows):
         typer.echo(line)
+
+
+@promote_app.command(name="group")
+def promote_group(
+    db: DbOption = DEFAULT_DB,
+    min_size: Annotated[
+        int,
+        typer.Option(min=1, max=MAX_MIN_SIZE, help="verdicts a group needs to be a candidate"),
+    ] = DEFAULT_MIN_SIZE,
+) -> None:
+    """Replay the Monitor over every run in a mock store, check that it reproduces each
+    recorded verdict (gate 0, ADR 022), and print the UNKNOWN verdicts grouped by signature."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    try:
+        runs = survey(_runs_of("store", db), ReplayConfig.mock())
+    except (StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    lines, passed = render_survey(runs, group_unknowns(runs), min_size)
+    for line in lines:
+        typer.echo(line)
+    if not passed:
+        raise typer.Exit(code=1)
+
+
+@promote_app.command(name="validate")
+def promote_validate(
+    candidate: Annotated[Path, typer.Argument(help="candidate JSON: a rule and its plan")],
+    group: Annotated[
+        str, typer.Option(help="the group's label, as `cellrt promote group` prints it")
+    ],
+    db: DbOption = DEFAULT_DB,
+    out: Annotated[Path | None, typer.Option(help="write the report as JSON to this file")] = None,
+    min_size: Annotated[
+        int,
+        typer.Option(min=1, max=MAX_MIN_SIZE, help="windows the group needs (gate 1)"),
+    ] = DEFAULT_MIN_SIZE,
+) -> None:
+    """Check a candidate rule by replay against a mock store (gates 0-3, ADR 022). Replay checks
+    the rule, not its plan; the report says so. Exits 1 unless every gate passes."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    try:
+        with candidate.open(encoding="utf-8") as f:
+            raw = f.read(MAX_CANDIDATE_CHARS + 1)  # the parser refuses anything longer
+    except (OSError, UnicodeDecodeError) as exc:
+        _fail(f"cannot read the candidate at {candidate} ({type(exc).__name__})")
+    try:
+        parsed = Candidate.parse(raw)
+        check_registry(parsed, mock_registry())
+        report = validate(
+            _runs_of("store", db), parsed, group, ReplayConfig.mock(), min_size=min_size
+        )
+    except (CandidateRefused, GroupNotFound, StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    for line in report.lines():
+        typer.echo(line)
+    if out is not None:
+        try:
+            out.write_text(json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot write the report at {out} ({type(exc).__name__})")
+    if not report.passed:
+        raise typer.Exit(code=1)
+
+
+@promote_app.command(name="approve")
+def promote_approve(
+    report: Annotated[
+        Path, typer.Argument(help="report JSON written by `cellrt promote validate --out`")
+    ],
+    by: Annotated[str, typer.Option(help="who approves the rule: a plain name")],
+    directory: Annotated[
+        Path, typer.Option("--dir", help="directory of approved rules")
+    ] = DEFAULT_PROMOTED,
+) -> None:
+    """Approve the candidate of a report whose gates all passed: write `<dir>/<NAME>.json`.
+    Refuses a report with a failed gate or whose candidate no longer has the hash it names,
+    and never replaces an approved rule (ADR 021)."""
+    try:
+        with report.open(encoding="utf-8") as f:
+            raw = f.read(MAX_REPORT_CHARS + 1)  # approval refuses anything longer
+    except (OSError, UnicodeDecodeError) as exc:
+        _fail(f"cannot read the report at {report} ({type(exc).__name__})")
+    try:
+        adopted = approve(raw, by, mock_registry())
+        path = write_adopted(adopted, directory)
+    except ApprovalRefused as exc:
+        _fail(str(exc))
+    except OSError as exc:
+        _fail(f"cannot write the approved rule in {directory} ({type(exc).__name__})")
+    typer.echo(f"approved {adopted.rule.name} ({adopted.candidate_hash}) by {adopted.approved_by}")
+    typer.echo(str(path))
+
+
+@promote_app.command(name="propose")
+def promote_propose(
+    group: Annotated[
+        str, typer.Option(help="the group's label, as `cellrt promote group` prints it")
+    ],
+    out: Annotated[Path, typer.Option(help="write the proposal record (JSON) to this file")],
+    candidate_out: Annotated[
+        Path | None,
+        typer.Option(
+            help="write the candidate here when the answer is valid; a file left there by an"
+            " earlier run is removed when it is not"
+        ),
+    ] = None,
+    db: DbOption = DEFAULT_DB,
+    model: ModelOption = DEFAULT_MODEL,
+    max_tokens: Annotated[
+        int, typer.Option(min=1, max=MAX_TOKENS_LIMIT, help="the model's answer budget")
+    ] = PROPOSE_MAX_TOKENS,
+    deadline_s: Annotated[
+        float,
+        typer.Option(min=0.001, max=MAX_PLANNER_DEADLINE_S, help="wall time for the one call"),
+    ] = PROPOSE_DEADLINE_S,
+) -> None:
+    """Ask the model on NVIDIA NIM, once, for a candidate rule for one UNKNOWN group of a mock
+    store (ADR 021). The record keeps the prompt and the answer, scrubbed. A valid candidate
+    still has to pass `cellrt promote validate` and an approval. Exits 1 unless the answer is
+    a valid candidate."""
+    if not db.is_file():  # never create a store that is not there
+        _fail(f"no event store at {db}")
+    # Before the one call: replacing the store would lose its log for good, and one output on
+    # the other would lose the record of the call.
+    outputs = [("--out", out), *([("--candidate-out", candidate_out)] if candidate_out else [])]
+    for i, (name, path) in enumerate(outputs):
+        if _same_file(path, db):
+            _fail(f"{name} is the event store itself; nothing sent")
+        if any(_same_file(path, other) for _, other in outputs[:i]):
+            _fail(f"{name} is the same file as --out; nothing sent")
+    try:  # before the store is read: without a key nothing else happens
+        client, config = llm_client_and_config(
+            model=model, max_tokens=max_tokens, deadline_s=deadline_s, cap=model_call_cap(1)
+        )
+    except LlmSetupError as exc:
+        _fail(str(exc))
+    try:
+        runs = survey(_runs_of("store", db), ReplayConfig.mock())
+    except (StoreRefused, SurveyTooLarge) as exc:
+        _fail(str(exc))
+    lines, passed = gate_0(runs)
+    if not passed:  # groups from a store the replay cannot reproduce mean nothing
+        _fail("\n".join(lines))
+    groups = group_unknowns(runs)
+    target = next((g for g in groups if g.signature.label() == group), None)
+    if target is None:
+        _fail("no UNKNOWN group with that label in the store")
+    others = [g for g in groups if g is not target]
+    proposal = propose(client, config, target, others, mock_registry())
+    _write_whole(out, json.dumps(proposal.as_dict(), indent=2) + "\n", what="the proposal")
+    if proposal.candidate is not None and candidate_out is not None:
+        candidate = Candidate.parse(json.dumps(proposal.candidate))
+        _write_whole(candidate_out, candidate.canonical() + "\n", what="the candidate")
+    elif candidate_out is not None:
+        # An older candidate there would be validated as if this call had produced it.
+        try:
+            candidate_out.unlink(missing_ok=True)
+        except OSError as exc:
+            _fail(f"cannot remove the earlier candidate {candidate_out} ({type(exc).__name__})")
+    typer.echo(f"outcome: {proposal.outcome}")
+    for line in (*proposal.errors, *([proposal.error] if proposal.error else [])):
+        typer.echo(f"  {line}")
+    if proposal.candidate is not None:
+        typer.echo(f"candidate {proposal.candidate['rule']['name']} ({proposal.candidate_hash})")
+    tokens = f"{proposal.prompt_tokens} prompt, {proposal.completion_tokens} completion tokens"
+    latency = "-" if proposal.latency_s is None else f"{proposal.latency_s:.1f} s"
+    typer.echo(f"{tokens}, {latency}")
+    if proposal.outcome != "candidate":
+        raise typer.Exit(code=1)
 
 
 @app.command()
