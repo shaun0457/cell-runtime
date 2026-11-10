@@ -225,6 +225,14 @@ def connect_openai(*, base_url: str, api_key: str, timeout_s: float) -> CreateFn
             if not answer.done():  # a cancelled call's answer is dropped
                 outcome(value)
 
+        given_back = threading.Lock()
+
+        def give_back() -> None:
+            """Return the call's slot once: a start that fails after the thread began (Ctrl+C
+            while `start` waits) would return it twice, which BoundedSemaphore raises on."""
+            if given_back.acquire(blocking=False):
+                live.release()
+
         def request() -> None:
             # One SDK client per call, closed on every exit path: the request's thread owns it.
             reply: Any = None
@@ -241,7 +249,7 @@ def connect_openai(*, base_url: str, api_key: str, timeout_s: float) -> CreateFn
             except BaseException:  # nobody above a thread to hand it to: the caller is told
                 pass
             finally:
-                live.release()
+                give_back()
                 with contextlib.suppress(RuntimeError):  # the loop is closed: nobody waits
                     loop.call_soon_threadsafe(deliver, *result)
 
@@ -250,7 +258,7 @@ def connect_openai(*, base_url: str, api_key: str, timeout_s: float) -> CreateFn
         try:
             threading.Thread(target=request, name=REQUEST_THREAD, daemon=True).start()
         except BaseException:
-            live.release()
+            give_back()
             raise
         return await answer
 

@@ -741,6 +741,30 @@ def test_a_request_that_ends_its_thread_still_ends_the_call(
     assert thread_errors == []  # nothing printed from the thread
 
 
+def test_a_start_cut_short_after_the_thread_began_returns_its_slot_once(
+    fake_openai: type[_FakeOpenAI],
+    thread_errors: list[BaseException | None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ctrl+C while `Thread.start` waits for the new thread: the call fails, and the thread
+    # runs on and ends. Both give the slot back; only the first may.
+    start = threading.Thread.start
+
+    def start_then_interrupted(self: threading.Thread) -> None:
+        start(self)
+        if self.name == REQUEST_THREAD:
+            raise _ThreadKilled()
+
+    monkeypatch.setattr(threading.Thread, "start", start_then_interrupted)
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+
+    with pytest.raises(_ThreadKilled):
+        asyncio.run(create(model=NIM_MODEL, messages=[]))
+    _join_requests()
+
+    assert thread_errors == []  # no "semaphore released too many times" from the thread
+
+
 def test_requests_still_running_are_bounded(fake_openai: type[_FakeOpenAI]) -> None:
     # A cancelled call's request runs on, and the SDK's timeout is per network phase: a host
     # that sends a byte now and then keeps it alive. Past MAX_LIVE_REQUESTS such requests, a
