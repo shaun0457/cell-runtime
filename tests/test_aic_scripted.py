@@ -349,23 +349,33 @@ def test_a_plug_on_its_seat_height_but_off_the_port_axis_fails_verify(
 # --- timeouts --------------------------------------------------------------------------------
 
 
+def _unread_geometry() -> Geometry:
+    raise AssertionError("not read for a timeout")
+
+
 @pytest.mark.parametrize(
-    ("skill", "nominal_s", "slowest"),
+    ("name", "full_speed_s", "half_speed_s"),
     [
-        (AicApproach, 100 * 0.05, 0.5),
-        (AicAlign, 380 * 0.05, 0.5),
-        (AicInsertScripted, 50 * 0.05, 0.5),
-        (AicVerify, 5.0, 1.0),
-        (AicRetract, 10 * 0.05, 1.0),
+        ("approach", 10.0, 20.0),
+        ("align", 38.0, 76.0),
+        ("insert_scripted", 5.0, 10.0),
+        ("verify", 10.0, 10.0),
+        ("retract", 1.0, 1.0),
     ],
 )
-def test_each_skills_timeout_is_twice_its_nominal_duration_at_its_slowest(
-    skill: type, nominal_s: float, slowest: float
+def test_each_skills_timeout_is_twice_its_nominal_duration_at_the_speed_it_runs(
+    name: str, full_speed_s: float, half_speed_s: float
 ) -> None:
-    # A recovery may run approach, align and insert at half speed (#59); verify only waits,
-    # and retract never runs slowed.
-    assert skill.timeout_s == pytest.approx(2 * nominal_s / slowest)
+    # At full speed approach takes 5 s, align 19 s and insertion 2.5 s, as CheatCode; a
+    # recovery may run them at half speed (#59), which takes twice as long. Verify only waits,
+    # and retract never runs slowed. A full-speed run does not wait out the slow timeout.
+    skill = aic_run.aic_registry(_unread_geometry).get(name)
+
+    assert skill.timeout_s == pytest.approx(full_speed_s)
+    assert skill.timeout_for({}) == pytest.approx(full_speed_s)
+    assert skill.timeout_for({"speed_scale": 0.5}) == pytest.approx(half_speed_s)
     assert skill.config()["timeout_s"] == skill.timeout_s
+    assert skill.config()["timeout_scales_with_speed"] is (half_speed_s != full_speed_s)
 
 
 def test_insertion_runs_under_the_monitors_insertion_rules() -> None:
@@ -408,6 +418,36 @@ def test_align_that_never_gets_within_1_mm_times_out(store: EventStore) -> None:
         if isinstance(e.payload, SkillStarted) and e.payload.skill == "align"
     ]
     assert end.duration - align.ts == pytest.approx(AicAlign.timeout_s, abs=0.1)
+
+
+def test_a_slowed_align_gets_twice_the_time_before_it_times_out(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same plug that never comes within 1 mm, under an align a recovery slowed to half
+    # speed: it times out at 76 s, not at the full-speed 38 s.
+    def slow_align(world: AicWorld, env: ExecEnv, goal: object) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        children = [
+            SkillBehaviour(registry.get("approach"), env),
+            SkillBehaviour(registry.get("align"), env, params={"speed_scale": 0.5}),
+        ]
+        return py_trees.composites.Sequence(name="slow", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", slow_align)
+    node = FakeNode(task=TASK, plug_xy_offset_m=(0.02, 0.0))
+
+    assert run_goal(node, TASK, store) is False
+
+    end = _end(store)
+    assert (end.outcome, end.reason) == ("failed", "align failed: TIMEOUT")
+    (verdict,) = [e.payload for e in _events(store) if isinstance(e.payload, MonitorVerdict)]
+    assert verdict.evidence["timeout_s"] == pytest.approx(76.0)
+    (align,) = [
+        e
+        for e in _events(store)
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "align"
+    ]
+    assert end.duration - align.ts == pytest.approx(76.0, abs=0.1)
 
 
 # --- retract ---------------------------------------------------------------------------------

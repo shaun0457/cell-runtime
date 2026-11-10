@@ -36,6 +36,9 @@ class Skill(Protocol):
 
     It may block only on the clock (one sleep at a time) and must not start tasks of its own:
     the main loop's lockstep relies on both (see `TaskTracker`).
+
+    A skill whose run time depends on its params (a recovery may slow it down) may also define
+    `timeout_for(params) -> float`; the executor then uses it in place of `timeout_s`.
     """
 
     @property

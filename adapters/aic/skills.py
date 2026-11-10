@@ -25,7 +25,7 @@ what CheatCode does.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import ClassVar
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
@@ -41,20 +41,64 @@ from cellrt.skills.base import SkillContext, SkillResult
 APPROACH_STEPS = 100
 APPROACH_HEIGHT_M = 0.2
 # The slowest a recovery may run a skill (`RecoveryConfig.slow_speed_scale`, 0.5 by default).
-# A skill that moves gets twice its duration at this speed as its timeout.
+# A skill's timeout is twice its duration at the speed it runs (`_AicSkill.timeout_for`).
 SLOWEST_SCALE = 0.5
 
 
 def speed_scale(ctx: SkillContext) -> float:
-    """The `speed_scale` a recovery's slow variant passes (1.0 otherwise). Slower than
-    SLOWEST_SCALE the skill would run into its timeout, so that is refused."""
-    scale = float(ctx.params.get("speed_scale", 1.0))
+    """The `speed_scale` a recovery's slow variant passes (1.0 otherwise)."""
+    return _scale_of(ctx.params)
+
+
+def _scale_of(params: Mapping[str, object]) -> float:
+    """The `speed_scale` in `params`, 1.0 without one. Anything but a number from
+    SLOWEST_SCALE to 1 raises ValueError: the same bound `run_goal` checks a recovery's slow
+    speed against before anything runs."""
+    raw = params.get("speed_scale", 1.0)
+    scale = float(raw) if isinstance(raw, int | float | str) else math.nan
     if not SLOWEST_SCALE <= scale <= 1.0:
         raise ValueError("speed_scale out of range")
     return scale
 
 
-class AicApproach:
+class _AicSkill:
+    name: str
+    monitor_profile: MonitorProfile
+    timeout_s: float  # twice the skill's duration at full speed
+    # Whether a recovery may slow the skill down (`speed_scale`), so its time grows with it.
+    scales_with_speed: ClassVar[bool] = False
+
+    def preconditions(self, state: RunState) -> bool:
+        return True
+
+    def timeout_for(self, params: Mapping[str, object]) -> float:
+        """The timeout of a run with these params: twice its duration at the speed it runs,
+        so `timeout_s` over `speed_scale` for a skill that slows down. A scale the run itself
+        refuses (`speed_scale`) keeps `timeout_s`."""
+        if not self.scales_with_speed:
+            return self.timeout_s
+        try:
+            return self.timeout_s / _scale_of(params)
+        except ValueError:
+            return self.timeout_s
+
+    @classmethod
+    def config(cls) -> dict[str, object]:
+        """What defines the skill's behaviour, for the run's config hash."""
+        return {
+            "type": cls.__qualname__,
+            "timeout_s": cls.timeout_s,
+            "timeout_scales_with_speed": cls.scales_with_speed,
+            "monitor_profile": cls.monitor_profile,
+            **cls._parameters(),
+        }
+
+    @classmethod
+    def _parameters(cls) -> dict[str, object]:
+        return {}
+
+
+class AicApproach(_AicSkill):
     """Move to CheatCode's approach pose above the port (z_offset 0.2), aligned with it."""
 
     description: ClassVar[str] = (
@@ -62,24 +106,15 @@ class AicApproach:
     )
     name = "approach"
     monitor_profile: MonitorProfile = "motion"
-    timeout_s = 2 * 5.0 / SLOWEST_SCALE  # twice CheatCode's 5 s, at the slowest speed
+    timeout_s = 2 * 5.0  # twice CheatCode's 5 s
+    scales_with_speed = True
 
     def __init__(self, geometry: Callable[[], Geometry]) -> None:
         self._geometry = geometry
 
     @classmethod
-    def config(cls) -> dict[str, object]:
-        """What defines the skill's behaviour, for the run's config hash."""
-        return {
-            "type": cls.__qualname__,
-            "steps": APPROACH_STEPS,
-            "height_m": APPROACH_HEIGHT_M,
-            "timeout_s": cls.timeout_s,
-            "monitor_profile": cls.monitor_profile,
-        }
-
-    def preconditions(self, state: RunState) -> bool:
-        return True
+    def _parameters(cls) -> dict[str, object]:
+        return {"steps": APPROACH_STEPS, "height_m": APPROACH_HEIGHT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         steps = round(APPROACH_STEPS / speed_scale(ctx))
@@ -235,29 +270,6 @@ def seated(g: Geometry) -> tuple[bool, float]:
     return in_band and math.hypot(dx, dy) <= SEATED_MAX_XY_MM, height_mm
 
 
-class _AicSkill:
-    name: str
-    monitor_profile: MonitorProfile
-    timeout_s: float
-
-    def preconditions(self, state: RunState) -> bool:
-        return True
-
-    @classmethod
-    def config(cls) -> dict[str, object]:
-        """What defines the skill's behaviour, for the run's config hash."""
-        return {
-            "type": cls.__qualname__,
-            "timeout_s": cls.timeout_s,
-            "monitor_profile": cls.monitor_profile,
-            **cls._parameters(),
-        }
-
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
-        return {}
-
-
 class AicAlign(_AicSkill):
     """Descend to 10 mm above the port (z_offset 0.01) with CheatCode's XY correction, then
     keep correcting there until the plug is within 1 mm of the port axis."""
@@ -268,7 +280,8 @@ class AicAlign(_AicSkill):
     )
     name = "align"
     monitor_profile: MonitorProfile = "motion"
-    timeout_s = 2 * ALIGN_STEPS * STEP_S / SLOWEST_SCALE
+    timeout_s = 2 * ALIGN_STEPS * STEP_S
+    scales_with_speed = True
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry
@@ -304,7 +317,8 @@ class AicInsertScripted(_AicSkill):
     )
     name = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
-    timeout_s = 2 * INSERT_STEPS * STEP_S / SLOWEST_SCALE
+    timeout_s = 2 * INSERT_STEPS * STEP_S
+    scales_with_speed = True
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry

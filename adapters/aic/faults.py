@@ -37,9 +37,10 @@ from cellrt.world.base import FaultTransition
 FAULT_ENV = "CELLRT_FAULT"
 MAX_SPEC_CHARS = 1000
 MAX_GOALS = 100
-# A retry after the dropout steps down from where the plug hangs, at most this high: a slow
-# insert_scripted (0.25 mm per 50 ms step) covers 50 mm within its 10 s timeout, and 40 mm
-# leaves room for a seat below the port frame and the steps before the stall is called.
+# A retry after the dropout steps down from where the plug hangs, at most this high: at any
+# speed insert_scripted covers 50 mm within its timeout, twice its nominal 25 mm (0.5 mm per
+# 50 ms step in 5 s at full speed, 0.25 mm in 10 s at half speed), and 40 mm leaves room for
+# a seat below the port frame and the steps before the stall is called.
 MAX_ONSET_HEIGHT_MM = 40.0
 SPEC_REFUSED = (
     f"{FAULT_ENV} must be a JSON object: kind command_dropout, duration_s 0.05-120, optional"
