@@ -93,8 +93,10 @@ Each plannable skill needs one fact and gives one: `approach` gives `at_port`; `
 given by an earlier step, no fact is given twice, and `verified` is given.
 - Pros: the usual precondition/effect check, on four facts; each refusal has a code that names
   the step by position, never by the planner's text (`empty`, `too_long`, `not_a_name`,
-  `unregistered`, `no_contract`, `needs_unmet`, `repeated`, `goal_not_reached`;
-  `planner_timed_out`, and `planner_error` with the exception type for a planner that raised).
+  `unregistered`, `no_contract`, `needs_unmet`, `repeated`, `goal_not_reached`; `not_a_name`
+  and `not_a_list` for an answer that is not a list of names, `answer: too_large` and parse
+  codes for a model's answer, `trace_invalid`; `planner_timed_out`, and `planner_error` with
+  the exception type for a planner that raised).
 - Cons: the facts are ours and coarse; they say a plan is in a sensible order, not that it
   will work.
 

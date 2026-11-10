@@ -12,7 +12,9 @@ insertion takes, not whether a plan will work.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from itertools import islice
 from types import MappingProxyType
@@ -156,6 +158,10 @@ async def plan_task(tree: TaskPlanner, task: Task, registry: SkillRegistry) -> P
                 if not isinstance(answer.trace, PlannerTrace):  # planner code: never echo it
                     return PlanResult((), ("trace_invalid",))
                 trace, proposed = answer.trace.stored(), parse_plan(answer.raw)
+            elif isinstance(answer, str | bytes | Mapping | AbstractSet):
+                # Iterable, but not a list of names: a string would be read letter by letter,
+                # and a set in an order that changes from one process to the next.
+                return PlanResult((), ("not_a_list",))
             else:
                 proposed = tuple(islice(answer, MAX_PLAN_STEPS + 1))
     except TimeoutError:
@@ -185,13 +191,16 @@ class ParseRefused:
 def parse_plan(raw: object) -> tuple[str, ...] | ParseRefused:
     """A model's answer as steps, or the codes that refuse it: where (a field of `TaskPlan`, a
     list index, or `<key>` for a key the model made up, so its text never reaches a code) and
-    the error type. JSON text over MAX_ANSWER_CHARS is refused unread."""
+    the error type. JSON text over MAX_ANSWER_CHARS is refused unread; so is a structure a
+    client already parsed whose JSON text would be."""
     try:
         if isinstance(raw, str):
             if len(raw) > MAX_ANSWER_CHARS:
                 return ParseRefused(("answer: too_large",))
             plan = TaskPlan.model_validate_json(raw)
         else:
+            if _json_chars(raw) > MAX_ANSWER_CHARS:
+                return ParseRefused(("answer: too_large",))
             plan = TaskPlan.model_validate(raw)
     except ValidationError as exc:
         found = exc.errors(include_url=False, include_input=False, include_context=False)
@@ -199,6 +208,15 @@ def parse_plan(raw: object) -> tuple[str, ...] | ParseRefused:
             tuple(f"{_where(e['loc'])}: {e['type']}" for e in found[:MAX_PARSE_CODES])
         )
     return tuple(plan.steps)
+
+
+def _json_chars(raw: object) -> int:
+    """The length of `raw` as JSON text; past the limit when it is not JSON at all (a structure
+    nested too deep, or holding something JSON has no form for)."""
+    try:
+        return len(json.dumps(raw, ensure_ascii=False))  # characters, as for JSON text
+    except (TypeError, ValueError, RecursionError):
+        return MAX_ANSWER_CHARS + 1
 
 
 def _where(loc: tuple[int | str, ...]) -> str:

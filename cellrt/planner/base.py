@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Protocol
 
 from cellrt.runtime.scrub import scrub
@@ -23,6 +23,9 @@ MAX_STORED_PROMPT_CHARS = 16_000
 MAX_STORED_RESPONSE_CHARS = 4_000
 # A trace's short fields (provider, model, finish reason) are cut to this length.
 MAX_TRACE_NAME_CHARS = 128
+# A skill's description, as every planner call (and the log) carries it, is cut to this: the
+# UNKNOWN planner's context, a promotion proposal and the task planner's prompt.
+MAX_DESCRIPTION_CHARS = 300
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,12 @@ class PlannerTrace:
             finish_reason=name(self.finish_reason),
             latency_s=self.latency_s,
         )
+
+    def event_fields(self) -> dict[str, Any]:
+        """The fields `planner_responded` and `task_plan_responded` take from a trace, by name:
+        one place, so a field added here and not to the events fails at once (the payloads
+        forbid unknown keys). Give it the `stored()` trace."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
 @dataclass(frozen=True)

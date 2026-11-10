@@ -23,7 +23,9 @@ from cellrt.planner.task_plan import (
     MAX_ANSWER_CHARS,
     MAX_PARSE_CODES,
     MAX_PLAN_STEPS,
+    ParseRefused,
     TracedPlan,
+    parse_plan,
 )
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import (
@@ -248,6 +250,17 @@ def test_an_answer_too_large_to_parse_is_refused_unread(store: EventStore) -> No
     assert rejected.errors == ["answer: too_large"]
     [responded] = _of(events, TaskPlanResponded)
     assert len(responded.response) <= 4_000
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"steps": ["a" * (MAX_ANSWER_CHARS + 1)]},  # its JSON text is over the bound
+        {"steps": [object()]},  # no JSON form at all
+    ],
+)
+def test_a_structured_answer_is_bounded_like_json_text(raw: object) -> None:
+    assert parse_plan(raw) == ParseRefused(("answer: too_large",))
 
 
 def test_a_model_that_never_answers_is_cancelled_at_the_deadline_before_any_motion(

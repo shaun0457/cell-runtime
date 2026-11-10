@@ -395,6 +395,22 @@ def test_an_endless_answer_is_read_only_up_to_one_step_past_the_limit(
     assert rejected.steps == ["approach"] * (MAX_PLAN_STEPS + 1)
 
 
+@pytest.mark.parametrize(
+    "answer",
+    ["approach", b"approach", {"approach": 1, "verify": 2}, frozenset(SKILL_SEQUENCE)],
+)
+def test_an_answer_that_is_not_a_list_of_names_is_refused_whole(
+    store: EventStore, baseline: Scenario, answer: object
+) -> None:
+    # A string, a mapping or a set is iterable, but read as one it would be letters, keys, or
+    # names in hash order.
+    done = run_unit(baseline, "A", 0, store, tree=Scripted(answer))  # type: ignore[arg-type]
+
+    rejected = store.events(done.run_id)[1].payload
+    assert isinstance(rejected, TaskPlanRejected)
+    assert (rejected.errors, rejected.steps) == (["not_a_list"], [])
+
+
 def test_cancelling_the_run_while_it_plans_is_not_turned_into_a_rejection() -> None:
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(plan_task(Cancelling(), Task(), mock_registry()))

@@ -371,20 +371,8 @@ async def _ask(
         recorder.emit(TaskPlanRejected(planner=tree.name, steps=[], errors=[CAP_REACHED]))
         store.flush()
         raise
-    if (trace := planned.trace) is not None:  # a model call
-        recorder.emit(
-            TaskPlanResponded(
-                planner=tree.name,
-                provider=trace.provider,
-                model=trace.model,
-                prompt=trace.prompt,
-                response=trace.response,
-                prompt_tokens=trace.prompt_tokens,
-                completion_tokens=trace.completion_tokens,
-                finish_reason=trace.finish_reason,
-                latency_s=trace.latency_s,
-            )
-        )
+    if (trace := planned.trace) is not None:  # a model call, already stored (`plan_task`)
+        recorder.emit(TaskPlanResponded(planner=tree.name, **trace.event_fields()))
     return planned
 
 
