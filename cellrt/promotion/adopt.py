@@ -4,9 +4,10 @@
 four gates passed with no failing window, gate 1 asked the group for at least the default
 number of windows, the report was made under the Monitor configuration in use now, and the
 candidate in it still has the hash the report names. The approved file
-`eval/promoted/<NAME>.json` holds the rule, its plan, both hashes, that configuration, the group
-size and who approved it. An eval loads only these files: a promoted plan runs in settings B
-and C without the planner, and counts against the UNKNOWN class budget and the task budget.
+`eval/promoted/<NAME>.json` holds its format version, the rule, its plan, both hashes, that
+configuration, the group size and who approved it. An eval loads only these files: a promoted
+plan runs in settings B and C without the planner, and counts against the UNKNOWN class budget
+and the task budget.
 
 Trust: the hashes catch a candidate edited after its report, or a configuration changed since,
 by accident. They are not signatures: anyone who can write the report or the approval directory
@@ -42,6 +43,8 @@ from cellrt.promotion.replay import ReplayConfig
 from cellrt.promotion.validate import REPORT_VERSION, check_registry
 from cellrt.skills.registry import SkillRegistry
 
+# The approved file's format. A file of another version is refused, never read as this one.
+ADOPTED_VERSION = 1
 APPROVER = re.compile(r"[A-Za-z][A-Za-z0-9 ._-]{0,63}")
 MAX_REPORT_CHARS = 3_000_000  # a report lists every run it replayed (20,000 at most)
 MAX_ADOPTED_CHARS = 20_000
@@ -73,6 +76,7 @@ class Adopted(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    adopted_version: int = Field(ge=ADOPTED_VERSION, le=ADOPTED_VERSION)
     rule: PromotedRule
     plan: PromotedPlan
     candidate_hash: str = Field(pattern=_HASH)
@@ -142,6 +146,7 @@ def approve(
     if any(r.name != rule.name and rules_overlap(r, rule) for r in approved):
         raise ApprovalRefused("rules_overlap")
     return Adopted(
+        adopted_version=ADOPTED_VERSION,
         rule=candidate.rule,
         plan=candidate.plan,
         candidate_hash=candidate.digest(),
@@ -256,7 +261,12 @@ def _read_adopted(path: Path) -> Adopted:
         raise ApprovalRefused("adopted_too_long")
     try:
         return Adopted.model_validate_json(raw)
-    except (ValidationError, ValueError, RecursionError):
+    except ValidationError as e:
+        # Missing (written before the version existed) or another one: not read as this one.
+        if any(err["loc"][:1] == ("adopted_version",) for err in e.errors()):
+            raise ApprovalRefused("adopted_version") from None
+        raise ApprovalRefused("adopted_invalid") from None
+    except (ValueError, RecursionError):
         raise ApprovalRefused("adopted_invalid") from None
 
 

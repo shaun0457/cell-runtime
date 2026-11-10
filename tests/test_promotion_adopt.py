@@ -15,6 +15,7 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
 from cellrt.monitor.promoted import Candidate
 from cellrt.promotion.adopt import (
+    ADOPTED_VERSION,
     MAX_ADOPTED_CHARS,
     MAX_GROUP_CHARS,
     MAX_PROMOTED_RULES,
@@ -295,6 +296,27 @@ def test_a_consistent_file_naming_an_unregistered_skill_is_refused(tmp_path: Pat
     edited = Candidate.parse(json.dumps({"rule": RULE, "plan": plan}))
     _rewrite(tmp_path / "PLUG_ROTATED.json", plan=plan, candidate_hash=edited.digest())
     with pytest.raises(ApprovalRefused, match="candidate_refused"):
+        load_promoted(tmp_path, mock_registry())
+
+
+def test_an_approved_file_records_its_format_version(tmp_path: Path) -> None:
+    _adopt(tmp_path)
+    data = json.loads((tmp_path / "PLUG_ROTATED.json").read_text(encoding="utf-8"))
+    assert data["adopted_version"] == ADOPTED_VERSION
+
+
+@pytest.mark.parametrize("version", [None, ADOPTED_VERSION + 1, True, float(ADOPTED_VERSION)])
+def test_an_approved_file_of_another_format_is_refused(tmp_path: Path, version: Any) -> None:
+    # Written before the file had a version (None: no field), or by a newer cellrt. The code
+    # says which, instead of `adopted_invalid`.
+    _adopt(tmp_path)
+    path = tmp_path / "PLUG_ROTATED.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("adopted_version", None)
+    if version is not None:
+        data["adopted_version"] = version
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ApprovalRefused, match="adopted_version"):
         load_promoted(tmp_path, mock_registry())
 
 
