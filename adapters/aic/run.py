@@ -295,9 +295,10 @@ async def _run_goal(
         # A fault change decided at the run's last sample took effect, but no step reported it.
         record_fault_transitions(recorder, world.final_fault_transitions())
         duration = clock.now()  # before the check, which only confirms the stop
-        # A dropout still active lost the HOLD too: nothing the run sent stopped the arm.
-        held = reason not in _CLOCK_STOPPED and not world.commands_dropped()
-        recorder.emit(_confirm_hold(world, clock, wait=held))
+        # Wait for the arm to stop only when the clock moves and the HOLD reached the arm: a
+        # dropout still active lost the HOLD too, so nothing the run sent stopped the arm.
+        confirmable = reason not in _CLOCK_STOPPED and not world.commands_dropped()
+        recorder.emit(_confirm_hold(world, clock, wait=confirmable))
     recorder.emit(
         RunFinished(outcome=outcome, reason=reason, steps=recorder.state.steps, duration=duration)
     )

@@ -221,8 +221,8 @@ the verdict is UNKNOWN. A descent run that starts after a broken one (stopped, t
 after a retract), such as a retry, goes on from where the arm is measured to be, so it does not
 jump to the targets lost in the dropout. The next target still jumps when the link comes back
 inside a run, or after a run that ran to its end while its commands were lost (align, then
-insert_scripted). `onset_height_mm` is at most 40, so a slow retry from where the plug hangs
-fits in insert_scripted's timeout. The onset
+insert_scripted). `onset_height_mm` is at most 30, so a retry from where the plug hangs fits in
+insert_scripted's timeout, also on sim steps longer than 50 ms. The onset
 is keyed to height, not to a skill, because the plug seats during align in the sim. The fault
 is recorded as `fault_injected` and `fault_cleared` and is part of the run's configuration
 hash. A bad value in any of these variables refuses every

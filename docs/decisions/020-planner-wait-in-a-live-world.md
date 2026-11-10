@@ -195,6 +195,13 @@ shortest.
   refused stale answer is a `planner_output_rejected` with the code
   `skill: preconditions_not_met`; the agent report counts it as stale, not invalid, and the
   run ends "planner answer no longer applies". Like a rejection, it spends no recovery.
+- No registered skill has a precondition yet, so the recheck rejects nothing today (#64 review
+  F2). A precondition that fails ends the step with no failure class, so recovery has nothing to
+  act on, while a plug off the axis or a stale wrench is a Monitor verdict with a plan. A
+  precondition on AIC insertion (within 1 mm of the axis) would refuse the reruns that skip
+  align: after a FORCE_LIMIT retract, a sensor wait, a TIMEOUT retry. A like condition in the
+  mock took B's success from 0.619 to 0.571, so it was not kept. The recheck is for a skill whose
+  start needs a state the Monitor does not classify.
 - ADR 016's "Open: AIC" is closed by this ADR, and ADR 016 still holds for the mock. Of its
   three to-dos: a cancel is now seen within a step; the time limit ends a run during a call, but
   the call's deadline is not yet set below the time left; hold behaviour during a long call is

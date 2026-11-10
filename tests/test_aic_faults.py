@@ -24,7 +24,7 @@ from adapters.aic.faults import (
     FaultSpec,
 )
 from adapters.aic.run import PolicySetupError, fault_setup, run_goal
-from adapters.aic.skills import DESCENT_STEP_M
+from adapters.aic.skills import DESCENT_STEP_M, AicInsertScripted
 from cellrt.planner.base import FailureContext
 from cellrt.runtime.events import (
     Event,
@@ -37,6 +37,7 @@ from cellrt.runtime.events import (
     RunFinished,
     RunStarted,
     SignalSampled,
+    SkillFinished,
     SkillStarted,
 )
 from cellrt.runtime.store import EventStore
@@ -247,6 +248,30 @@ def test_a_retry_after_a_dropout_goes_on_down_from_where_the_arm_is(
     assert max(at[2] - to[2] for at, to in moves) <= DESCENT_STEP_M + 1e-9
 
 
+def test_a_retry_from_the_highest_onset_fits_its_timeout_on_longer_steps(
+    store: EventStore,
+) -> None:
+    # A sim step is at least 50 ms, and longer when a camera frame is late. With every step
+    # 20% longer (60 ms), the full-speed retry from the highest onset seats the plug with a
+    # fifth of insert_scripted's timeout to spare (3.7 s of 5 s; from 40 mm it took 4.9 s).
+    node = FakeNode(task=TASK, sim_per_sleep_s=0.03)
+    planner = _RetriesAfter(node, 8.0)
+
+    fault = _dropout(15.0, MAX_ONSET_HEIGHT_MM)
+    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=fault)
+
+    assert ok is True
+    assert [v.failure_class for v in _payloads(store, MonitorVerdict)] == ["UNKNOWN"]
+    events = _events(store)
+    retry = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "insert_scripted"
+    ][-1]
+    done = next(e for e in events[retry:] if isinstance(e.payload, SkillFinished))
+    assert done.ts - events[retry].ts <= 0.8 * AicInsertScripted.timeout_s
+
+
 @dataclass
 class _SlipsThenRetries(_RetriesAfter):
     """While the model thinks, the plug slips `slip_m` off the TCP axis in the gripper; the
@@ -259,24 +284,20 @@ class _SlipsThenRetries(_RetriesAfter):
         return await super().triage(ctx)
 
 
-def test_a_retry_that_would_insert_off_the_port_axis_is_rejected_on_arrival(
-    store: EventStore,
-) -> None:
-    # insert_scripted runs only on a valid wrench with the plug within 1 mm of the port axis,
-    # where align leaves it. Here the plug slips 1.5 mm in the gripper while the model thinks:
-    # its retry would push the plug in off the axis, so it is rejected when it arrives, and
-    # insertion does not run again.
+def test_a_retry_whose_plug_slipped_off_the_axis_still_runs(store: EventStore) -> None:
+    # The plug slips 1.5 mm in the gripper while the model thinks. Insertion has no
+    # precondition on the axis: a refused start would end the step with no failure class, and
+    # the reruns that skip align (after a FORCE_LIMIT retract, a sensor wait, a TIMEOUT) need it
+    # to start. So the retry is accepted on arrival and insertion runs again.
     node = FakeNode(task=TASK)
     planner = _SlipsThenRetries(node, 8.0)
 
-    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0))
+    run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0))
 
-    assert ok is False
     events = _events(store)
-    rejected = [e.payload for e in events if isinstance(e.payload, PlannerOutputRejected)]
-    assert rejected and rejected[0].errors == ["skill: preconditions_not_met"]
+    assert not [e for e in events if isinstance(e.payload, PlannerOutputRejected)]
     called = next(i for i, e in enumerate(events) if isinstance(e.payload, PlannerCalled))
-    assert not [
+    assert [
         e
         for e in events[called:]
         if isinstance(e.payload, SkillStarted) and e.payload.skill == "insert_scripted"
@@ -371,7 +392,7 @@ def test_without_goals_every_goal_gets_the_fault() -> None:
         '{"kind": "command_dropout", "duration_s": 0.04}',
         '{"kind": "command_dropout", "duration_s": 120.01}',
         '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 0.99}',
-        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 40.01}',
+        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 30.01}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": [0]}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": ' + str(list(range(1, 102))) + "}",
         '{"kind": "command_dropout", "duration_s": 1, "extra": "sk-not-a-key"}',
@@ -398,7 +419,7 @@ def test_a_bad_fault_is_refused_with_a_fixed_message(raw: str) -> None:
     "fields",
     [
         {"duration_s": 0.05, "onset_height_mm": 1.0},
-        {"duration_s": 120.0, "onset_height_mm": 40.0, "goals": list(range(1, 101))},
+        {"duration_s": 120.0, "onset_height_mm": 30.0, "goals": list(range(1, 101))},
     ],
 )
 def test_a_fault_at_its_bounds_is_taken(fields: dict[str, object]) -> None:

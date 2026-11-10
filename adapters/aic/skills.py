@@ -69,6 +69,14 @@ class _AicSkill:
     scales_with_speed: ClassVar[bool] = False
 
     def preconditions(self, state: RunState) -> bool:
+        """Every AIC skill can start in any state a run reaches. A precondition that fails ends
+        the step with no failure class, so recovery has nothing to act on; a plug off the axis or
+        a stale wrench is the Monitor's to classify (POSE_ERROR, SENSOR_DROPOUT, after their
+        0.2 s), and recovery has a plan for each. The slow rerun after a FORCE_LIMIT retract, the
+        rerun after a sensor wait and a TIMEOUT retry start insertion without align, and its
+        descent corrects XY on the way down. (#64 review F2 tried insertion within 1 mm of the
+        axis: it would refuse those reruns, and in the mock a like condition, with align's
+        0.3 mm, took B's success from 0.619 to 0.571.)"""
         return True
 
     def timeout_for(self, params: Mapping[str, object]) -> float:
@@ -324,17 +332,10 @@ class AicInsertScripted(_AicSkill):
         self._geometry = geometry
         self._descent = descent
 
-    def preconditions(self, state: RunState) -> bool:
-        """Insertion starts only where align leaves the plug: on a valid wrench, within
-        ALIGN_XY_MM of the port axis. Further off, align is the skill that brings it back."""
-        last = state.last_signal
-        return last is not None and last.wrench_valid and last.xy_error_mm <= ALIGN_XY_MM
-
     @classmethod
     def _parameters(cls) -> dict[str, object]:
         return {
             "steps": INSERT_STEPS,
-            "start_xy_mm": ALIGN_XY_MM,  # the preconditions'
             "end_m": INSERT_END_M,
             "seated": SEATED,
             "still_mm": SEATED_STILL_MM,

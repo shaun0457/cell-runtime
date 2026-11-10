@@ -39,9 +39,11 @@ MAX_SPEC_CHARS = 1000
 MAX_GOALS = 100
 # A retry after the dropout steps down from where the plug hangs, at most this high: at any
 # speed insert_scripted covers 50 mm within its timeout, twice its nominal 25 mm (0.5 mm per
-# 50 ms step in 5 s at full speed, 0.25 mm in 10 s at half speed), and 40 mm leaves room for
-# a seat below the port frame and the steps before the stall is called.
-MAX_ONSET_HEIGHT_MM = 40.0
+# 50 ms step in 5 s at full speed, 0.25 mm in 10 s at half speed). A sim step is 50 ms or
+# longer, when a camera frame is late. In the fakes the full-speed retry from 30 mm took 3.1 s
+# on 50 ms steps and 3.7 s on 60 ms steps, so its step count fits 75 ms steps; from 40 mm it
+# took 4.9 s of the 5 s on 60 ms steps.
+MAX_ONSET_HEIGHT_MM = 30.0
 SPEC_REFUSED = (
     f"{FAULT_ENV} must be a JSON object: kind command_dropout, duration_s 0.05-120, optional"
     f" onset_height_mm 1-{MAX_ONSET_HEIGHT_MM:g} and goals (1-{MAX_GOALS} goal numbers from 1)"
