@@ -147,8 +147,10 @@ reviewed:
 - `c_llm_goal1_full.mp4`, `a_goal1_full.mp4` (the same fault under A), `c_llm_goal2_escalate.mp4`.
 - `trace_c_llm_goal1_wall.json`, `trace_c_llm_goal1_sim.json`: `cellrt trace` of goal1 C-LLM #1;
   on the wall clock the planner call fills 10.65 s of the run.
-- The rerun's three C-LLM runs were recorded too; their frames are on the VM's disk, not
-  rendered yet.
+- `c_llm_goal2_retry_hero.mp4` (12 s, 324 KB), `c_llm_goal2_retry_full.mp4` (48 s, 1.3 MB) and
+  a poster frame: the rerun's goal2 C-LLM #2, whose retry steps the plug down to its seat. The
+  rerun's other two C-LLM runs were recorded too; their frames are on the VM's disk, not
+  rendered.
 
 ## Reproduce
 

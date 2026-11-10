@@ -50,20 +50,33 @@ Runtime          event log (SQLite), state = fold(events), tracing   (all layers
 Eval harness     scenarios + fault injection -> metrics table          (reads the event log)
 ```
 
-### Package layout (target)
+### Package layout
+
+As built through Phase 3; a later phase adds to it.
 
 ```
 cellrt/
-  runtime/     events.py (event types), store.py (SQLite append-only), state.py (fold), clock.py
-  skills/      base.py (Skill contract), registry.py, mock/ (Phase 0 skills)
-  monitor/     signals.py, classifier.py (FailureClass)
-  executor/    behaviours.py (py_trees <-> async skills), trees.py (tree builders per setting)
-  planner/     base.py (Planner protocol), rule_planner.py, llm_planner.py (Phase 3), schemas.py
-  world/       base.py (World protocol), mock_world.py
-  eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py, agent_report.py
-  cli.py       `cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report`
+  runtime/     events.py (event types), store.py (SQLite append-only), state.py (fold),
+               recorder.py, clock.py, task.py, scrub.py (provider text kept out of the log)
+  skills/      base.py (Skill contract), registry.py, mock/skills.py (the mock world's skills)
+  monitor/     classifier.py (FailureClass), profiles.py, promoted.py (promoted rules)
+  executor/    behaviours.py (py_trees <-> async skills), trees.py (tree builders per setting),
+               runner.py (the lockstep loop), recovery.py, samples.py, wall.py
+  planner/     base.py (Planner protocol), rule_planner.py, fixed_planner.py, llm.py (model
+               triage), task_plan.py + llm_task.py (task-to-tree), nim.py (NIM client),
+               factory.py, schemas.py, smoke.py
+  promotion/   groups.py, propose.py, replay.py, validate.py, adopt.py (UNKNOWN promotion)
+  world/       base.py (World protocol, Signals), mock_world.py, faults.py
+  eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py, agent_report.py,
+               baseline.py
+  replay.py, trace_export.py
+  cli.py       `cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report |
+               promote group | validate | approve | propose`
 adapters/
-  aic/         RuntimePolicy (an aic_model Policy plugin), AicWorld, skills on top of move_robot
+  aic/         RuntimePolicy.py (an aic_model Policy plugin), run.py (one goal, one run),
+               world.py (AicWorld), skills.py (CheatCode's phases), faults.py (#60), node.py,
+               convert.py, geometry.py, force.py, feedback.py; ROS is imported only in
+               RuntimePolicy.py and ros_port.py
 eval/scenarios/   *.yaml
 docs/decisions/   NNN-title.md (design decision records)
 tests/
