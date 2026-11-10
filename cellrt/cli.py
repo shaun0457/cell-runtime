@@ -344,7 +344,8 @@ def _umask() -> int:
 
 def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
-    write leaves the old file whole, and removes the temporary file. The temporary file has a
+    write leaves the old file whole, and removes the temporary file (an interrupt in the instant
+    between creating it and reading its name can still leave one). The temporary file has a
     name no other file has, so the write touches nothing but `path`. A failure names `what` and
     the error type only. On Windows a read-only `path` cannot be replaced, so the write fails,
     as a plain write to it would."""
@@ -370,7 +371,7 @@ def _write_whole(path: Path, text: str, *, what: str) -> None:
             mode = 0o666 & ~_umask()
         os.chmod(tmp, mode)
         os.replace(tmp, path)
-    except BaseException as exc:  # Ctrl+C too: no temporary file is left behind
+    except BaseException as exc:  # Ctrl+C too, once the temporary file is named
         if tmp is not None:
             # Windows deletes no read-only file, and the temporary file may have taken a
             # read-only mode just above (#67 review F4); POSIX ignores the mode here.
