@@ -147,7 +147,11 @@ def rules_overlap(a: PromotedRule, b: PromotedRule) -> bool:
     a rule's own window, so it tells two rules apart only when their windows are the same.
 
     Readings are taken as unbounded, so a pair is called overlapping also where a reading that
-    meets both cannot occur (a force below 0 N): a false refusal, never a missed overlap."""
+    meets both cannot occur (a force below 0 N): a false refusal, never a missed overlap. The
+    windows are compared in seconds, while the Monitor counts a window in samples: two windows
+    that round to the same number of samples (0.46 s and 0.5 s at 50 ms) are taken as different,
+    so `progress_mm` is left out and the pair may be refused. Also a false refusal, never a
+    missed overlap (#66 review F3)."""
     if a.skill != b.skill:
         return False
     fields = set(FIELD_BOUNDS) - (set() if a.window_s == b.window_s else {"progress_mm"})

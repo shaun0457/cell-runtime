@@ -282,6 +282,21 @@ def test_the_call_after_the_cap_raises_before_any_request() -> None:
     assert str(reached.value) == CAP_REACHED
 
 
+def test_a_call_refused_as_busy_sent_nothing_and_is_not_counted() -> None:
+    async def busy(**arguments: Any) -> Any:
+        raise RequestsBusy()
+
+    cap = ModelCallCap(1)
+    client = NimChatClient(busy, cap=cap)
+
+    with pytest.raises(RequestsBusy):
+        _complete(client)
+
+    assert cap.used == 0
+    with pytest.raises(ValueError, match="no call"):
+        cap.give_back()
+
+
 def test_clients_given_the_same_cap_share_it() -> None:
     cap = ModelCallCap(1)
     first = NimChatClient(FakeCreate([_completion()]), cap=cap)

@@ -102,7 +102,7 @@ class ModelCallCapReached(RuntimeError):
 
 class RequestsBusy(RuntimeError):
     """A call while MAX_LIVE_REQUESTS requests of earlier, cancelled calls still run. Raised
-    before any request is made."""
+    before any request is made, and only then: `NimChatClient` gives the call back to the cap."""
 
     def __init__(self) -> None:
         super().__init__(REQUESTS_BUSY)
@@ -146,6 +146,12 @@ class ModelCallCap:
         if self._used >= self.max_calls:
             raise ModelCallCapReached()
         self._used += 1
+
+    def give_back(self) -> None:
+        """Return the last call taken: it was refused before it sent anything."""
+        if self._used == 0:
+            raise ValueError("no call to give back")
+        self._used -= 1
 
 
 def check_base_url(url: str) -> str:
@@ -288,7 +294,11 @@ class NimChatClient:
 
     async def complete(self, request: ChatRequest) -> ChatReply:
         self._cap.take()
-        response = await self._create(**self._arguments(request))
+        try:
+            response = await self._create(**self._arguments(request))
+        except RequestsBusy:
+            self._cap.give_back()  # refused before it sent anything: not a call (#66 review F2)
+            raise
         return _reply(response, request.model, _tool_name(request.tool))
 
     def _arguments(self, request: ChatRequest) -> dict[str, Any]:

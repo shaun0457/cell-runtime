@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Iterator
 from enum import StrEnum
@@ -309,6 +310,14 @@ def _is_store_file(path: Path, db: Path) -> bool:
     return _same_file(path, db) or any(_same_file(path, s) for s in siblings)
 
 
+def _umask() -> int:
+    """The process umask. Reading it means setting it, so it is set back at once; the CLI
+    writes from one thread."""
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
+
 def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
     write leaves the old file whole. The temporary file has a name no other file has, so the
@@ -327,6 +336,13 @@ def _write_whole(path: Path, text: str, *, what: str) -> None:
         ) as f:
             tmp = Path(f.name)
             f.write(text)
+        # A temporary file is private (0600); the file it becomes keeps the mode of the file it
+        # replaces, or follows the umask like any new file (#66 review F4).
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = 0o666 & ~_umask()
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except OSError as exc:
         if tmp is not None:
@@ -731,8 +747,9 @@ def trace(
 ) -> None:
     """Export a run as Chrome trace event JSON, for https://ui.perfetto.dev or chrome://tracing."""
     events = _run_events(run_id, db)
-    # Replacing the store would lose the log for good: it is append-only only through SQLite.
-    if out is not None and out.exists() and os.path.samefile(out, db):
+    # Replacing the store, or the files SQLite keeps beside it, would lose the log for good: it
+    # is append-only only through SQLite.
+    if out is not None and _is_store_file(out, db):
         _fail("--out is the event store itself; no trace written")
     try:
         text = json.dumps(export_trace(events, clock=clock.value), allow_nan=False)
