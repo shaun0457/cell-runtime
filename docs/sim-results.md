@@ -57,8 +57,9 @@ What happened, by setting:
     completion tokens (`finish_reason` length) with no tool call; the likely cause, as for 17 of
     the 89 calls in #52, is that the model reasoned until the limit.
 - **goal3 (SC).** Fails in every setting of this run, also without a fault: the SC plug jams at
-  the port entrance (#28). The dropout only changes which verdict ends it. (In the rerun below,
-  without a fault, it seated in two of three C runs.)
+  the port entrance (#28). The dropout only changes which verdict ends it. (In the reruns below,
+  without a fault, it seated in two of three C runs after the F1 fix and in three of three with
+  the 4096-token budget.)
 
 ## What this shows and what it does not
 
@@ -136,6 +137,60 @@ model calls, at most 2 per task. The scorer agrees with the runtime on all 12 ta
   #1 two did not and the INSERT_STUCK budget of 2 ran out. In #2 it seated during align. One
   recovery that worked is one case, not a rate.
 
+## Rerun with a 4096-token budget
+
+`2d52365` on `feat/planner-settings`, on 2026-11-10, with the same VM, image, engine config and
+fault as the F1 rerun (`"goals": [1, 2]`): C-LLM three times with `CELLRT_MAX_TOKENS=4096` and
+`CELLRT_REASONING=default`, the setting the mock comparison chose
+(`docs/phase3-llm-results.md`, "Token budget and reasoning"). Three model calls, one per goal1
+run; goal2 and goal3 raised no UNKNOWN. The scorer agrees with the runtime on 8 of the 9 tasks.
+
+| Goal | C-LLM #1 | C-LLM #2 | C-LLM #3 |
+|---|---|---|---|
+| goal1 SFP, dropout | **retry, success, 75** | **retry, success, 75** | **retry, success, 75** |
+| goal2 SFP, dropout | FORCE_LIMIT twice, failed, 0 | success, 75 | success, but the scorer: **partial, 50** |
+| goal3 SC, no fault | success, 75 | success, 75 | success, 75 |
+
+- **Every call answered.** All three came back as a `retry` tool call (`finish_reason:
+  tool_calls`) after 9.4, 10.0 and 8.1 s of wall time, with 745, 881 and 648 completion tokens
+  for a 1176-token prompt. All three were under 1024, so they fit the old budget as well: this
+  run shows the calls came back, not that the larger budget was needed. In
+  the F1 rerun 5 of 6 calls stopped at 1024; the evidence for the budget is the mock comparison
+  (2 of 15 answers cut at 1024, none at 4096).
+- **Each retry stepped down.** In every goal1 run the dropout began during align (12.0 s), the
+  Monitor called UNKNOWN (`insert_stalled`) 1.05 s into `insert_scripted`, and the link came
+  back at 27.0-27.1 s, while the model was thinking (2.25-2.75 s of sim time passed during the
+  call). The retried `insert_scripted` started after that and seated the plug in 1.65 s: from
+  12.2-12.6 mm down to its seat (-0.97 to -0.98 mm), at most 0.54 mm between two 50 ms samples
+  (a scripted step is 0.5 mm), at most 5.8 N in our samples. The scorer saw no force over 20 N
+  and gave 75 each. The timing is #61's goal1 #1, the link back before the retry starts, where
+  the retry jumped 12 mm in 0.15 s; the F1 fix is what changed. As in #61, the link was back
+  when the retry started, which the model cannot know.
+- **goal2 #1 started in the wrong place.** From its first sample (0.10 s) the plug was at the
+  port's height (-1.3 mm) and 31 mm off its axis, and the cameras show the gripper beside the
+  task board; in #2 and #3 it started 137 mm above the port, 40 mm off the axis. Before trial 2
+  the engine's log (`logs61/rllm1.sim.log`) reads "Successfully reset joints to home position,
+  robot homed successfully.", as in run 2; why this one started there is not established. Being
+  under 20 mm already, the plug set off the dropout at 0.15 s, during approach. The link came
+  back at 15.2 s, and at 26.5 s the force reached 27.7 N; that align went on from where its
+  targets had got to (a case the F1 fix does not cover) is the likely reading, not one the data
+  shows. The Monitor called
+  FORCE_LIMIT, B's table retracted slowly (a known class, so no model call), and the second
+  align met 20.4 N at 47.6 s, with the plug 20.5 mm off the port axis and the FORCE_LIMIT budget
+  used up. The scorer: task not completed (0), force over 20 N for 0.63 s with a peak of
+  28.05 N, under its 1 s, no penalty.
+- **goal2 #3 is the first disagreement with the scorer.** The dropout began at 13.9 s in align
+  (16.8 mm), and the plug went on down, as in #2, but settled near 0 mm (lowest -0.24 mm)
+  instead of the SFP seat at -0.98 mm. `insert_scripted` found it seated at once and `verify`
+  passed, because the runtime's seated band is -3 to +1 mm, one band for both port types
+  (`adapters/aic/skills.py`, set from #28's SFP seats at -0.98 mm and an SC seat at +0.07 mm).
+  The scorer called it a partial insertion (50, "distance of -0.00m"). The band is too wide for
+  an SFP plug; a band per port type is a change to the skills, left for a later PR.
+- **goal2 #2:** the dropout began at 14.9 s in align (15.7 mm) and the plug went on down to its
+  seat (-0.97 mm), as in #61's goal2 under A: a fault with no effect.
+- **goal3 (SC, no fault):** seated during align in all three runs (75 each). In the F1 rerun it
+  jammed at the entrance in two of three.
+
 ## Media
 
 Recorded in the VM from the three wrist cameras (headless Gazebo) and composed with the event
@@ -151,6 +206,11 @@ reviewed:
   a poster frame: the rerun's goal2 C-LLM #2, whose retry steps the plug down to its seat. The
   rerun's other two C-LLM runs were recorded too; their frames are on the VM's disk, not
   rendered.
+- From the 4096-token rerun: `c_llm_goal1_retry_4096_hero.mp4` (13 s, 413 KB) and a poster
+  frame, goal1 C-LLM #1: the stall, 9.4 s of the model thinking, the retry stepping down. All
+  three runs were recorded.
+- `demo.mp4` (55 s, 1.2 MB, 2x): four title cards and three of these clips in order: #61's
+  retry that jumped, the F1 rerun's retry that stepped down, and this rerun's.
 
 ## Reproduce
 
@@ -158,10 +218,13 @@ The runbook's sections 4-6 and its section 10, with the policy settings from env
 variables (README, "The AIC cell"): `CELLRT_SETTING`, `CELLRT_PLANNER`, `CELLRT_FAULT`, and for
 `llm` the key in `NVIDIA_API_KEY`. Session names were `s61clean` (clean), `s61` (A, B, C-rule) and
 `s61llm` (C-LLM, attempts a1 and a2); in the rerun, `sf1clean` and `sf1llm` (attempts a1 to a3)
-in their own store. Inspect a run from a copy of the store:
+in their own store; in the 4096-token rerun, `srllm` (attempts a1 to a3, with
+`CELLRT_MAX_TOKENS=4096` and `CELLRT_REASONING=default`) in a third. Inspect a run from a copy
+of the store:
 
 ```bash
 cellrt replay s61llm/goal1/task_1/C/0/a1 --db sim61-copy.sqlite
 cellrt trace s61llm/goal1/task_1/C/0/a1 --db sim61-copy.sqlite --out trace.json
 cellrt replay sf1llm/goal2/task_1/C/0/a2 --db simf1-copy.sqlite
+cellrt replay srllm/goal2/task_1/C/0/a3 --db simr-copy.sqlite
 ```
