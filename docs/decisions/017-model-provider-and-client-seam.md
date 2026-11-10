@@ -132,9 +132,9 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   command builds. The call after the cap raises `ModelCallCapReached` before any request; the
   run records `planner_raised ModelCallCapReached`. Before an eval starts,
   `check_call_budget` refuses it when the units of setting C × the per-task planner budget
-  exceed the cap (plus one plan call per unit with the model task planner, `--tree llm`, ADR
-  023, which shares the cap). That count includes units a resumed eval will skip, so it errs
-  high.
+  exceed the cap (plus one plan call per scenario and seed with the model task planner, `--tree
+  llm`, ADR 023, which shares the cap). That count includes units a resumed eval will skip, so
+  it errs high. A plan call that meets the cap stops the eval.
 - **Command line:** `cellrt eval` and `cellrt run` take `--planner llm`, `--model` and
   `--max-model-calls` (default 100, at most 10 000). `cellrt smoke-llm` makes the smoke call
   with a cap of 1 and prints its report as JSON. A command without setting C builds no planner

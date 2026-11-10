@@ -35,6 +35,7 @@ from cellrt.runtime.events import (
     RunFinished,
     RunStarted,
     SkillStarted,
+    TaskPlanRejected,
 )
 from cellrt.runtime.state import FORCE_LIMIT_N, fold
 
@@ -68,6 +69,9 @@ class RunSummary:
     over_limit_s: float  # time with a tared force over UNSAFE_FORCE_N (the fold's sum)
     verdicts: tuple[VerdictCheck, ...]
     missed: tuple[str, ...]  # labels of faults no verdict was attributed to
+    # The task plan was rejected, so nothing moved: a failed task, but no steps or time to
+    # average (#63 review F3).
+    plan_rejected: bool
 
     @property
     def unsafe(self) -> bool:
@@ -128,8 +132,11 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
     open_episodes: dict[str, _Episode] = {}  # fault_id -> its episode, while active
     skill_started_ts: dict[str, float] = {}  # skill -> when its latest attempt started
     verdicts: list[VerdictCheck] = []
+    plan_rejected = False
     for event in events:
         match event.payload:
+            case TaskPlanRejected():
+                plan_rejected = True
             case FaultInjected(fault_id=fid, label=label):
                 open_episodes[fid] = episode = _Episode(label, event.ts)
                 episodes.append(episode)
@@ -160,6 +167,7 @@ def summarize_run(events: Sequence[Event]) -> RunSummary | None:
         over_limit_s=round(state.over_limit_s, 6),
         verdicts=tuple(verdicts),
         missed=tuple(e.label for e in episodes if not e.attributed),
+        plan_rejected=plan_rejected,
     )
 
 
@@ -225,6 +233,9 @@ def _row(setting: str, runs: list[RunSummary], k: int) -> SettingMetrics:
     succeeded = [r.outcome == "success" for r in runs]
     with_verdict = [r for r in runs if r.verdicts]
     verdicts = [v for r in runs for v in r.verdicts]
+    # Steps and time are averaged over the runs that moved; a rejected plan has neither. All of
+    # them rejected: the means are those of the runs, zero.
+    moved = [r for r in runs if not r.plan_rejected] or runs
     return SettingMetrics(
         setting=setting,
         runs=len(runs),
@@ -237,8 +248,8 @@ def _row(setting: str, runs: list[RunSummary], k: int) -> SettingMetrics:
         ),
         unsafe_runs=sum(r.unsafe for r in runs),
         mean_over_limit_s=fmean(r.over_limit_s for r in runs),
-        mean_steps=fmean(r.steps for r in runs),
-        mean_duration_s=fmean(r.duration_s for r in runs),
+        mean_steps=fmean(r.steps for r in moved),
+        mean_duration_s=fmean(r.duration_s for r in moved),
         planner_calls_per_task=fmean(r.planner_calls for r in runs),
         classification_accuracy=(
             sum(v.truth == v.predicted for v in verdicts) / len(verdicts) if verdicts else None

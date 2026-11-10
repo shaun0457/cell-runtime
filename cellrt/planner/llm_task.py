@@ -15,7 +15,7 @@ import json
 import time
 from collections.abc import Callable, Mapping
 
-from cellrt.planner.base import PlannerTrace
+from cellrt.planner.base import MAX_DESCRIPTION_CHARS, PlannerTrace
 from cellrt.planner.llm import ChatClient, ChatRequest, LlmPlannerConfig
 from cellrt.planner.schemas import audit_text
 from cellrt.planner.task_plan import GOAL, MAX_PLAN_STEPS, STEP_CONTRACTS, TaskPlan, TracedPlan
@@ -23,9 +23,8 @@ from cellrt.runtime.task import Task
 from cellrt.skills.registry import SkillRegistry
 
 TOOL_NAME = "plan"
-# A skill's description is cut to this, as in the UNKNOWN planner's context
-# (`executor.behaviours.MAX_DESCRIPTION_CHARS`).
-MAX_SKILL_DESCRIPTION_CHARS = 300
+# A skill's description is cut to this, as in the UNKNOWN planner's context.
+MAX_SKILL_DESCRIPTION_CHARS = MAX_DESCRIPTION_CHARS
 
 _ROLE = """\
 You are the task planner of a robotic cable-insertion cell. Before the arm moves, you choose
@@ -96,8 +95,9 @@ def task_context(task: Task, descriptions: Mapping[str, str]) -> dict[str, objec
 
 # Changes whenever the system prompt, the tool or the user message's layout changes (one
 # example of each is hashed, a description longer than the cut included), so two prompt
-# versions never share a hash. The names and descriptions themselves come from the registry,
-# which the `skills` part already hashes.
+# versions never share a hash. The names and descriptions themselves come from the registry:
+# a description is a constant in its skill's source, which the `code` and `adapters` parts
+# hash (the `skills` part holds a skill's parameters, not its description).
 PROMPT_VERSION = hashlib.sha256(
     json.dumps(
         [

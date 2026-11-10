@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Iterator
 from enum import StrEnum
@@ -43,6 +44,7 @@ from cellrt.planner.nim import (
     MAX_MODEL_CALLS_LIMIT,
     LlmSetupError,
     ModelCallCap,
+    ModelCallCapReached,
 )
 from cellrt.planner.smoke import run_smoke
 from cellrt.planner.task_plan import TablePlanner, TaskPlanner
@@ -81,6 +83,13 @@ BASELINE_SEEDS = 3
 BASELINE_K = 2
 # Validation errors shown for an invalid scenarios file (location and type only).
 MAX_SHOWN_ERRORS = 5
+# A task plan call that hit the model call cap stops the whole eval (or run).
+CAP_STOPPED = (
+    "the model call cap ({cap}) was reached on a task plan call; stopped. Units not finished"
+    " run again on the next eval: raise --max-model-calls to give them room"
+)
+# A unit whose task plan call timed out or raised: no run_finished, so a resume runs it again.
+UNANSWERED_NOTE = "the task plan call timed out or raised; nothing moved"
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
 promote_app = typer.Typer(
@@ -147,17 +156,24 @@ def run(
     )
     task_planner = _tree(tree, model=model, cap=cap)
     with EventStore(db) as store:
-        result = run_unit(
-            by_id[scenario],
-            setting,  # type: ignore[arg-type]
-            seed,
-            store,
-            recovery=recovery,
-            planner=chosen,
-            tree=task_planner,
-        )
+        try:
+            result = run_unit(
+                by_id[scenario],
+                setting,  # type: ignore[arg-type]
+                seed,
+                store,
+                recovery=recovery,
+                planner=chosen,
+                tree=task_planner,
+            )
+        except ModelCallCapReached:
+            _fail(CAP_STOPPED.format(cap=cap.max_calls))
     if _asks_a_model(planner, chosen, tree):
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
+    if result.outcome is None:
+        typer.echo(f"outcome: unfinished ({UNANSWERED_NOTE})")
+        typer.echo(result.run_id)
+        raise typer.Exit(code=1)
     typer.echo(f"outcome: {result.outcome}")
     typer.echo(result.run_id)
 
@@ -185,37 +201,46 @@ def eval_(
     cap = _cap(max_model_calls)
     # One config for the call pre-check and the eval; checked before the store is opened.
     monitor, recovery = _with_promoted(promoted)
-    # Every unit of setting C may ask the planner, and a model task planner plans every unit,
-    # finished ones included: an upper bound.
+    # Every unit of setting C may ask the planner, and a model task planner is asked once per
+    # (scenario, seed), whatever the settings, finished units included: an upper bound.
     units_with_planner = len(loaded) * seeds if "C" in chosen else 0
-    plan_calls = len(loaded) * seeds * len(chosen) if tree == "llm" else 0
+    plan_calls = len(loaded) * seeds if tree == "llm" else 0
     chosen_planner = _planner(
         planner, units_with_planner, recovery, model=model, cap=cap, plan_calls=plan_calls
     )
     task_planner = _tree(tree, model=model, cap=cap)
     with EventStore(db) as store:
-        runs = run_eval(
-            loaded,
-            chosen,  # type: ignore[arg-type]
-            seeds,
-            store,
-            recovery=recovery,
-            monitor=monitor,
-            planner=chosen_planner,
-            tree=task_planner,
-        )
+        try:
+            runs = run_eval(
+                loaded,
+                chosen,  # type: ignore[arg-type]
+                seeds,
+                store,
+                recovery=recovery,
+                monitor=monitor,
+                planner=chosen_planner,
+                tree=task_planner,
+            )
+        except ModelCallCapReached:
+            _fail(CAP_STOPPED.format(cap=cap.max_calls))
         rejected: list[str] = []
         table = compute_metrics(_noting_rejected_plans(store, runs.run_ids, rejected), k)
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
     if task_planner is not None:  # the table does not say how its tasks became trees
         typer.echo(f"tree: {_planner_name(tree, model)}", err=True)
-        # The table counts a rejected plan as an aborted task with no steps and no time.
+        # The table counts a rejected plan as an aborted task, left out of the step and time means.
         typer.echo(f"task plans rejected: {len(rejected)} of {len(runs.run_ids)} runs", err=True)
     if "C" in chosen:  # the table's C row does not say which planner it ran with
         typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)
     if _asks_a_model(planner, chosen_planner, tree):
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
+    if runs.unfinished:
+        typer.echo(
+            f"{len(runs.unfinished)} units unfinished ({UNANSWERED_NOTE}; not in the table,"
+            f" the next eval runs them again): {', '.join(runs.unfinished)}",
+            err=True,
+        )
     if runs.gave_up:
         typer.echo(
             f"gave up on {len(runs.gave_up)} units interrupted {MAX_ATTEMPTS} times"
@@ -285,6 +310,14 @@ def _is_store_file(path: Path, db: Path) -> bool:
     return _same_file(path, db) or any(_same_file(path, s) for s in siblings)
 
 
+def _umask() -> int:
+    """The process umask. Reading it means setting it, so it is set back at once; the CLI
+    writes from one thread."""
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
+
 def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
     write leaves the old file whole. The temporary file has a name no other file has, so the
@@ -303,6 +336,13 @@ def _write_whole(path: Path, text: str, *, what: str) -> None:
         ) as f:
             tmp = Path(f.name)
             f.write(text)
+        # A temporary file is private (0600); the file it becomes keeps the mode of the file it
+        # replaces, or follows the umask like any new file (#66 review F4).
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = 0o666 & ~_umask()
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except OSError as exc:
         if tmp is not None:
@@ -707,8 +747,9 @@ def trace(
 ) -> None:
     """Export a run as Chrome trace event JSON, for https://ui.perfetto.dev or chrome://tracing."""
     events = _run_events(run_id, db)
-    # Replacing the store would lose the log for good: it is append-only only through SQLite.
-    if out is not None and out.exists() and os.path.samefile(out, db):
+    # Replacing the store, or the files SQLite keeps beside it, would lose the log for good: it
+    # is append-only only through SQLite.
+    if out is not None and _is_store_file(out, db):
         _fail("--out is the event store itself; no trace written")
     try:
         text = json.dumps(export_trace(events, clock=clock.value), allow_nan=False)

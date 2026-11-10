@@ -12,7 +12,9 @@ insertion takes, not whether a plan will work.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from itertools import islice
 from types import MappingProxyType
@@ -35,6 +37,11 @@ MAX_ANSWER_CHARS = 4_000
 # At most this many parse codes are kept for one answer.
 MAX_PARSE_CODES = 10
 GOAL = "verified"
+# The codes of a planner that gave no answer: it timed out or raised. Nothing is known about the
+# plan, so the unit has no result and an eval runs it again (#63 review F2).
+UNANSWERED_CODES = ("planner_timed_out", "planner_error:")
+# Recorded when a plan call meets the model call cap; the eval stops there.
+CAP_REACHED = "cap_reached"
 # The steps every task runs when no task planner is given (`--tree fixed`).
 FIXED_STEPS = ("approach", "align", "insert_scripted", "verify")
 
@@ -100,6 +107,11 @@ class PlanResult:
     # The model call behind the answer, if there was one, as the log keeps it (scrubbed, cut).
     trace: PlannerTrace | None = None
 
+    @property
+    def unanswered(self) -> bool:
+        """The planner timed out or raised: a failed call, not a rejected plan."""
+        return any(e.startswith(UNANSWERED_CODES) for e in self.errors)
+
 
 def verify_plan(steps: tuple[str, ...], registry: SkillRegistry) -> tuple[str, ...]:
     """The plan's error codes, in step order (empty if it is valid). A code names a step by its
@@ -130,10 +142,11 @@ def verify_plan(steps: tuple[str, ...], registry: SkillRegistry) -> tuple[str, .
 
 
 async def plan_task(tree: TaskPlanner, task: Task, registry: SkillRegistry) -> PlanResult:
-    """Ask the task planner, within its deadline, and check its answer. A planner that raises
-    gives a rejection with the exception's type only: its message may carry upstream text. A
-    model planner's answer (`TracedPlan`) is parsed into `TaskPlan` first, and its trace is
-    kept whatever the verdict. A cancellation of the run itself is not caught."""
+    """Ask the task planner, within its deadline, and check its answer. A planner that times out
+    or raises gives an `unanswered` result with the exception's type only: its message may
+    carry upstream text. A model planner's answer (`TracedPlan`) is parsed into `TaskPlan`
+    first, and its trace is kept whatever the verdict. `ModelCallCapReached` and a cancellation
+    of the run itself are not caught."""
     # Wall time by design: nothing has moved yet, and the sim clock does not run (ADR 016).
     deadline = asyncio.timeout(planner_deadline(tree))  # noqa: TID251
     trace: PlannerTrace | None = None
@@ -145,6 +158,10 @@ async def plan_task(tree: TaskPlanner, task: Task, registry: SkillRegistry) -> P
                 if not isinstance(answer.trace, PlannerTrace):  # planner code: never echo it
                     return PlanResult((), ("trace_invalid",))
                 trace, proposed = answer.trace.stored(), parse_plan(answer.raw)
+            elif isinstance(answer, str | bytes | Mapping | AbstractSet):
+                # Iterable, but not a list of names: a string would be read letter by letter,
+                # and a set in an order that changes from one process to the next.
+                return PlanResult((), ("not_a_list",))
             else:
                 proposed = tuple(islice(answer, MAX_PLAN_STEPS + 1))
     except TimeoutError:
@@ -152,8 +169,8 @@ async def plan_task(tree: TaskPlanner, task: Task, registry: SkillRegistry) -> P
             return PlanResult((), ("planner_timed_out",))
         return PlanResult((), ("planner_error: TimeoutError",))
     except ModelCallCapReached:
-        return PlanResult((), ("cap_reached",))
-    except Exception as exc:  # an invalid answer is an event of the run, not a crash
+        raise  # the command's budget is spent: the caller stops (#63 review F2)
+    except Exception as exc:  # a failed call is an event of the run, not a crash
         return PlanResult((), (f"planner_error: {type(exc).__name__}",))
     if isinstance(proposed, ParseRefused):
         return PlanResult((), proposed.codes, trace)
@@ -174,13 +191,16 @@ class ParseRefused:
 def parse_plan(raw: object) -> tuple[str, ...] | ParseRefused:
     """A model's answer as steps, or the codes that refuse it: where (a field of `TaskPlan`, a
     list index, or `<key>` for a key the model made up, so its text never reaches a code) and
-    the error type. JSON text over MAX_ANSWER_CHARS is refused unread."""
+    the error type. JSON text over MAX_ANSWER_CHARS is refused unread; so is a structure a
+    client already parsed whose JSON text would be."""
     try:
         if isinstance(raw, str):
             if len(raw) > MAX_ANSWER_CHARS:
                 return ParseRefused(("answer: too_large",))
             plan = TaskPlan.model_validate_json(raw)
         else:
+            if _json_chars(raw) > MAX_ANSWER_CHARS:
+                return ParseRefused(("answer: too_large",))
             plan = TaskPlan.model_validate(raw)
     except ValidationError as exc:
         found = exc.errors(include_url=False, include_input=False, include_context=False)
@@ -188,6 +208,15 @@ def parse_plan(raw: object) -> tuple[str, ...] | ParseRefused:
             tuple(f"{_where(e['loc'])}: {e['type']}" for e in found[:MAX_PARSE_CODES])
         )
     return tuple(plan.steps)
+
+
+def _json_chars(raw: object) -> int:
+    """The length of `raw` as JSON text; past the limit when it is not JSON at all (a structure
+    nested too deep, or holding something JSON has no form for)."""
+    try:
+        return len(json.dumps(raw, ensure_ascii=False))  # characters, as for JSON text
+    except (TypeError, ValueError, RecursionError):
+        return MAX_ANSWER_CHARS + 1
 
 
 def _where(loc: tuple[int | str, ...]) -> str:

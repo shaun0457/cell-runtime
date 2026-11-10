@@ -26,6 +26,9 @@ from cellrt.executor.wall import wall_now
 from cellrt.monitor.classifier import SAFETY_CLASSES, Monitor, MonitorConfig, Verdict
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.planner.base import (
+    MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS,  # re-exported: it lived here before
+)
+from cellrt.planner.base import (
     MAX_TRACE_NAME_CHARS as MAX_TRACE_NAME_CHARS,  # re-exported: it lived here before
 )
 from cellrt.planner.base import (
@@ -75,8 +78,6 @@ PLANNER_WAITS: tuple[PlannerWait, ...] = get_args(PlannerWait)
 # limit, ADR 006), which are the `motion` profile's. Holding still is no progress, so the
 # insertion rules would call every hold a stall (ADR 020).
 HOLD_PROFILE: MonitorProfile = "motion"
-# A skill's description, as every planner call (and the log) carries it, is cut to this.
-MAX_DESCRIPTION_CHARS = 300
 
 
 @dataclass
@@ -610,15 +611,4 @@ def _result_of(task: asyncio.Task[SkillResult]) -> tuple[SkillResult, str | None
 
 def _responded(skill: str, trace: PlannerTrace) -> PlannerResponded:
     """The trace as the log keeps it (`PlannerTrace.stored`)."""
-    kept = trace.stored()
-    return PlannerResponded(
-        skill=skill,
-        provider=kept.provider,
-        model=kept.model,
-        prompt=kept.prompt,
-        response=kept.response,
-        prompt_tokens=kept.prompt_tokens,
-        completion_tokens=kept.completion_tokens,
-        finish_reason=kept.finish_reason,
-        latency_s=kept.latency_s,
-    )
+    return PlannerResponded(skill=skill, **trace.stored().event_fields())

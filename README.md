@@ -112,16 +112,21 @@ stall, and the metrics do not yet tell a fault a skill cleared from one the Moni
 uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
 ```
 
-`--tree llm` asks the model on NIM for the plan instead: one call per run, through a `plan` tool
-limited to the plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the
-eval does not start if its plan calls plus its UNKNOWN calls could exceed it). The model's
+`--tree llm` asks the model on NIM for the plan instead, through a `plan` tool limited to the
+plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the eval does not
+start if its plan calls plus its UNKNOWN calls could exceed it). An eval asks once per (task,
+seed): the settings of that seed run the same plan, recorded with `reused_from`, so they differ
+only in how they recover; `cellrt run` asks every time. The model's
 answer is parsed and checked like any plan; the call's prompt, answer (scrubbed and cut), tokens
 and latency are recorded as `task_plan_responded`, and `cellrt replay` prints a summary line for
 it without calling the model. The model is told the task's fields and the skills' descriptions
 and contracts. It is not told which faults the mock injects, but the `insert_act` description
 says it frees a plug rotated against the port, which is the SC task's fault; the table's row
 (ours) encodes that knowledge directly. `eval` prints how many plans were rejected on stderr;
-the table's means still include those runs. The first run with a real model as the task
+those runs count as failed tasks, but the mean steps and duration leave them out, since nothing
+moved. A plan call that timed out or raised rejects nothing: the unit is left unfinished, out
+of the table, and the next eval runs it again. A plan call that meets the cap stops the eval.
+The first run with a real model as the task
 planner, and what it did and did not show, is in
 [`docs/phase3-task-to-tree-results.md`](docs/phase3-task-to-tree-results.md): it added nothing
 over the table.

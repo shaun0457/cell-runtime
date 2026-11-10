@@ -85,6 +85,6 @@ Making append-only a database trigger means it holds even if a bug tries to rewr
   `planner_timed_out`, version 9 (#56) `planner_preempted`, version 10 (#57)
   `planner_decided.waited_sim_s`, version 11 (ADR 023) `task_planned` and
   `task_plan_rejected`, version 12 (ADR 023) `task_plan_responded`, version 13 (ADR 021)
-  `promoted_stopped`. A test hashes every
+  `promoted_stopped`, version 14 (ADR 023) `reused_from` on the plan events. A test hashes every
   payload's JSON schema and pins the hash per version,
   so a shape change without a bump fails.

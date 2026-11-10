@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -186,3 +188,38 @@ def test_trace_never_writes_over_the_event_store(tmp_path: Path) -> None:
     assert "--out is the event store itself; no trace written" in trace.stderr
     with EventStore(db) as store:
         assert len(store.events("r/A/0/a1")) == 1
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_trace_never_writes_over_the_files_sqlite_keeps_beside_the_store(
+    tmp_path: Path, suffix: str
+) -> None:
+    db = tmp_path / "cli.sqlite"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=1.0, payload=payload))
+    beside = db.with_name(db.name + suffix)
+
+    trace = _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(beside))
+
+    assert trace.returncode == 1
+    assert "--out is the event store itself; no trace written" in trace.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_a_written_file_gets_the_mode_a_plain_write_would_give(tmp_path: Path) -> None:
+    db = tmp_path / "cli.sqlite"
+    out = tmp_path / "trace.json"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=1.0, payload=payload))
+    mask = os.umask(0o022)
+    os.umask(mask)
+
+    assert _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(out)).returncode == 0
+
+    assert stat.S_IMODE(out.stat().st_mode) == 0o666 & ~mask
+    # A file written again keeps the mode it had, as a plain write would.
+    out.chmod(0o600)
+    assert _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(out)).returncode == 0
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600

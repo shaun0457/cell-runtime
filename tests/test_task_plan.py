@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import pytest
 
 from cellrt.eval.metrics import summarize_run
-from cellrt.eval.runner import run_eval, run_unit
+from cellrt.eval.runner import MAX_ATTEMPTS, run_eval, run_unit
 from cellrt.eval.scenarios import Scenario
 from cellrt.executor.trees import SKILL_SEQUENCE
 from cellrt.planner.task_plan import (
@@ -244,16 +244,20 @@ def test_an_invalid_plan_ends_the_run_aborted_before_any_skill_starts(
     assert summarize_run(events) is not None
 
 
-def test_a_task_planner_that_raises_is_a_rejection_that_keeps_only_the_error_type(
+def test_a_task_planner_that_raises_leaves_the_unit_unfinished_keeping_only_the_error_type(
     store: EventStore, baseline: Scenario
 ) -> None:
+    # No answer is not a rejected plan: the unit has no result, so no metric counts it, and an
+    # eval runs it again (#63 review F2).
     done = run_unit(baseline, "B", 0, store, tree=Raising())
     events = store.events(done.run_id)
 
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
     rejected = events[1].payload
     assert isinstance(rejected, TaskPlanRejected)
     assert (rejected.errors, rejected.steps) == (["planner_error: RuntimeError"], [])
-    assert done.outcome == "aborted"
+    assert done.outcome is None
+    assert summarize_run(events) is None
     assert not any("sk-abc" in e.model_dump_json() for e in events)
 
 
@@ -308,7 +312,8 @@ def test_a_task_planner_that_never_answers_is_cancelled_at_its_deadline(
     rejected = events[1].payload
     assert isinstance(rejected, TaskPlanRejected) and rejected.errors == ["planner_timed_out"]
     assert tree.cancelled
-    assert [e.type for e in events][-1] == "run_finished" and done.outcome == "aborted"
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
+    assert done.outcome is None  # unfinished: an eval runs it again
 
 
 def test_a_timeout_raised_inside_the_planner_is_its_error_not_the_deadline(
@@ -319,6 +324,55 @@ def test_a_timeout_raised_inside_the_planner_is_its_error_not_the_deadline(
     rejected = store.events(done.run_id)[1].payload
     assert isinstance(rejected, TaskPlanRejected)
     assert rejected.errors == ["planner_error: TimeoutError"]
+
+
+@dataclass
+class Flaky:
+    """Raises on its first `failures` calls, then answers with the fixed steps."""
+
+    failures: int
+    name: str = "flaky"
+    calls: int = 0
+
+    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str]:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise ConnectionError("upstream reset")
+        return SKILL_SEQUENCE
+
+    def describe(self) -> Mapping[str, object]:
+        return {}
+
+
+def test_an_eval_runs_a_unit_whose_plan_call_failed_again_when_resumed(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=1)
+
+    first = run_eval([baseline], ["A"], 1, store, tree=tree)
+    again = run_eval([baseline], ["A"], 1, store, tree=tree)
+
+    assert (first.run_ids, first.unfinished, first.ran, first.skipped) == (
+        [],
+        ["baseline/A/0"],
+        1,
+        0,
+    )
+    assert (again.ran, again.skipped, again.unfinished) == (1, 0, [])
+    [run_id] = again.run_ids
+    assert run_id.endswith("/a2") and summarize_run(store.events(run_id)) is not None
+
+
+def test_a_unit_whose_plan_call_keeps_failing_is_given_up_after_max_attempts(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=MAX_ATTEMPTS + 1)
+
+    evals = [run_eval([baseline], ["A"], 1, store, tree=tree) for _ in range(MAX_ATTEMPTS + 1)]
+
+    assert [e.unfinished for e in evals[:MAX_ATTEMPTS]] == [["baseline/A/0"]] * MAX_ATTEMPTS
+    assert (evals[-1].ran, evals[-1].gave_up) == (0, ["baseline/A/0"])
+    assert tree.calls == MAX_ATTEMPTS
 
 
 @pytest.mark.parametrize("deadline", [0, -1.0, 120.5, float("nan")])
@@ -341,6 +395,22 @@ def test_an_endless_answer_is_read_only_up_to_one_step_past_the_limit(
     assert rejected.steps == ["approach"] * (MAX_PLAN_STEPS + 1)
 
 
+@pytest.mark.parametrize(
+    "answer",
+    ["approach", b"approach", {"approach": 1, "verify": 2}, frozenset(SKILL_SEQUENCE)],
+)
+def test_an_answer_that_is_not_a_list_of_names_is_refused_whole(
+    store: EventStore, baseline: Scenario, answer: object
+) -> None:
+    # A string, a mapping or a set is iterable, but read as one it would be letters, keys, or
+    # names in hash order.
+    done = run_unit(baseline, "A", 0, store, tree=Scripted(answer))  # type: ignore[arg-type]
+
+    rejected = store.events(done.run_id)[1].payload
+    assert isinstance(rejected, TaskPlanRejected)
+    assert (rejected.errors, rejected.steps) == (["not_a_list"], [])
+
+
 def test_cancelling_the_run_while_it_plans_is_not_turned_into_a_rejection() -> None:
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(plan_task(Cancelling(), Task(), mock_registry()))
@@ -355,3 +425,116 @@ def test_a_rejected_unit_is_finished_and_skipped_when_the_eval_resumes(
     again = run_eval([baseline], ["A", "B"], 2, store, tree=tree)
 
     assert (first.ran, again.ran, again.skipped, again.gave_up) == (4, 0, 4, [])
+
+
+# --- one plan per (scenario, seed) in an eval (#63 review F1) -------------------------------
+
+
+@dataclass
+class Counting:
+    """Answers with `steps` and counts its calls."""
+
+    steps: Sequence[str] = SKILL_SEQUENCE
+    name: str = "counting"
+    calls: int = 0
+
+    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str]:
+        self.calls += 1
+        return self.steps
+
+    def describe(self) -> Mapping[str, object]:
+        return {"steps": list(self.steps)}
+
+
+def _plan_of(store: EventStore, run_id: str) -> TaskPlanned | TaskPlanRejected:
+    [plan] = [
+        e.payload
+        for e in store.events(run_id)
+        if isinstance(e.payload, TaskPlanned | TaskPlanRejected)
+    ]
+    return plan
+
+
+def test_every_setting_of_a_seed_runs_the_plan_of_one_call(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting()
+
+    runs = run_eval([baseline], ["A", "B", "C"], 2, store, tree=tree)
+
+    assert tree.calls == 2
+    reused = list(replay_lines(store.events("baseline/B/0/a1")))[1]
+    assert reused.endswith("(reused from baseline/A/0/a1)")
+    assert "reused" not in list(replay_lines(store.events("baseline/A/0/a1")))[1]
+    for seed in (0, 1):
+        origin = f"baseline/A/{seed}/a1"
+        assert _plan_of(store, origin).reused_from is None
+        for setting in ("B", "C"):
+            plan = _plan_of(store, f"baseline/{setting}/{seed}/a1")
+            assert isinstance(plan, TaskPlanned)
+            assert (plan.reused_from, plan.steps) == (origin, list(SKILL_SEQUENCE))
+    assert len(runs.run_ids) == 6
+
+
+def test_a_rejected_plan_is_shared_and_ends_every_setting_of_its_seed_aborted(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting(steps=("verify",))
+
+    a, b = run_eval([baseline], ["A", "B"], 1, store, tree=tree).run_ids
+
+    assert tree.calls == 1
+    rejected = _plan_of(store, b)
+    assert isinstance(rejected, TaskPlanRejected)
+    assert (rejected.reused_from, rejected.errors) == (a, _plan_of(store, a).errors)
+    finished = store.events(b)[-1].payload
+    assert isinstance(finished, RunFinished) and finished.outcome == "aborted"
+    assert _skills_started(store.events(b)) == []
+
+
+def test_a_resumed_eval_reuses_a_finished_run_s_plan_naming_the_run_that_asked(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting()
+
+    run_eval([baseline], ["A"], 1, store, tree=tree)
+    run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+    a, b, c = run_eval([baseline], ["A", "B", "C"], 1, store, tree=tree).run_ids
+
+    assert tree.calls == 1
+    assert (_plan_of(store, b).reused_from, _plan_of(store, c).reused_from) == (a, a)
+
+
+def test_a_plan_made_under_another_tree_configuration_is_not_reused(
+    store: EventStore, baseline: Scenario
+) -> None:
+    run_eval([baseline], ["A"], 1, store, tree=Counting(name="one"))
+    other = Counting(name="other")
+
+    [b] = run_eval([baseline], ["B"], 1, store, tree=other).run_ids
+
+    assert other.calls == 1 and _plan_of(store, b).reused_from is None
+
+
+def test_a_failed_plan_call_is_made_once_for_every_setting_of_its_seed(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=1)
+
+    first = run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+    again = run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+
+    assert first.unfinished == ["baseline/A/0", "baseline/B/0"]
+    assert _plan_of(store, "baseline/B/0/a1").reused_from == "baseline/A/0/a1"
+    assert tree.calls == 2
+    a, b = again.run_ids
+    assert a.endswith("/a2") and _plan_of(store, b).reused_from == a
+
+
+def test_run_unit_asks_its_planner_every_time(store: EventStore, baseline: Scenario) -> None:
+    tree = Counting()
+
+    run_unit(baseline, "A", 0, store, tree=tree)
+    run_unit(baseline, "B", 0, store, tree=tree)
+
+    assert tree.calls == 2

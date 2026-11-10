@@ -13,7 +13,7 @@ from typing import ClassVar
 
 import pytest
 
-from cellrt.eval.runner import run_unit
+from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import Scenario, load_scenarios
 from cellrt.planner.llm import ChatReply, ChatRequest, LlmPlannerConfig
 from cellrt.planner.llm_task import MAX_SKILL_DESCRIPTION_CHARS, TOOL_NAME, LlmTaskPlanner
@@ -23,7 +23,9 @@ from cellrt.planner.task_plan import (
     MAX_ANSWER_CHARS,
     MAX_PARSE_CODES,
     MAX_PLAN_STEPS,
+    ParseRefused,
     TracedPlan,
+    parse_plan,
 )
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import (
@@ -250,6 +252,17 @@ def test_an_answer_too_large_to_parse_is_refused_unread(store: EventStore) -> No
     assert len(responded.response) <= 4_000
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"steps": ["a" * (MAX_ANSWER_CHARS + 1)]},  # its JSON text is over the bound
+        {"steps": [object()]},  # no JSON form at all
+    ],
+)
+def test_a_structured_answer_is_bounded_like_json_text(raw: object) -> None:
+    assert parse_plan(raw) == ParseRefused(("answer: too_large",))
+
+
 def test_a_model_that_never_answers_is_cancelled_at_the_deadline_before_any_motion(
     store: EventStore,
 ) -> None:
@@ -258,17 +271,60 @@ def test_a_model_that_never_answers_is_cancelled_at_the_deadline_before_any_moti
     done = run_unit(_sc(), "B", 0, store, tree=_planner(client, deadline_s=0.05))
     events = store.events(done.run_id)
 
-    assert [e.type for e in events] == ["run_started", "task_plan_rejected", "run_finished"]
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
     [rejected] = _of(events, TaskPlanRejected)
     assert rejected.errors == ["planner_timed_out"] and client.cancelled
-    assert done.outcome == "aborted"
+    assert done.outcome is None  # no answer: the unit is not finished (#63 review F2)
 
 
-def test_a_call_past_the_cap_is_a_rejection(store: EventStore) -> None:
-    done = run_unit(_sc(), "B", 0, store, tree=_planner(ScriptedClient([ModelCallCapReached()])))
+def test_a_call_past_the_cap_stops_the_run_unfinished_and_says_why(store: EventStore) -> None:
+    tree = _planner(ScriptedClient([ModelCallCapReached()]))
 
-    [rejected] = _of(store.events(done.run_id), TaskPlanRejected)
+    with pytest.raises(ModelCallCapReached):
+        run_unit(_sc(), "B", 0, store, tree=tree)
+
+    [run] = store.runs()
+    events = store.events(run.run_id)
+    assert [e.type for e in events] == ["run_started", "task_plan_rejected"]
+    [rejected] = _of(events, TaskPlanRejected)
     assert rejected.errors == ["cap_reached"]
+
+
+def test_an_eval_stops_at_the_cap_and_keeps_the_units_it_finished(store: EventStore) -> None:
+    # Two answers and then the cap: the third unit stops the eval; nothing after it runs.
+    client = ScriptedClient([_reply(), _reply(), ModelCallCapReached()])
+
+    with pytest.raises(ModelCallCapReached):
+        run_eval([_sc()], ["A"], 4, store, tree=_planner(client))
+
+    finished = [r.finished for r in store.runs()]
+    assert finished == [True, True, False]
+
+
+def test_settings_that_reuse_a_model_plan_keep_no_trace_of_their_own(store: EventStore) -> None:
+    client = ScriptedClient([_reply()])  # one answer: a second call would fail the test
+
+    a, b = run_eval([_sc()], ["A", "B"], 1, store, tree=_planner(client)).run_ids
+
+    assert len(client.requests) == 1
+    assert len(_of(store.events(a), TaskPlanResponded)) == 1
+    assert _of(store.events(b), TaskPlanResponded) == []
+    [planned] = _of(store.events(b), TaskPlanned)
+    assert planned.reused_from == a
+
+
+def test_a_resumed_eval_reuses_a_model_plan_recorded_after_its_trace(store: EventStore) -> None:
+    # The plan is the third event (after run_started and task_plan_responded): the resume reads
+    # that far, so it does not ask again.
+    client = ScriptedClient([_reply()])
+    tree = _planner(client)
+
+    [a] = run_eval([_sc()], ["A"], 1, store, tree=tree).run_ids
+    again = run_eval([_sc()], ["A", "B"], 1, store, tree=tree)
+
+    assert len(client.requests) == 1 and again.unfinished == []
+    [planned] = _of(store.events(again.run_ids[1]), TaskPlanned)
+    assert planned.reused_from == a
 
 
 def test_secrets_in_the_answer_or_an_error_never_reach_the_log(store: EventStore) -> None:
