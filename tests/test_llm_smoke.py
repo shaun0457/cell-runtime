@@ -46,6 +46,8 @@ def test_a_tool_call_that_validates_is_reported_with_its_cost() -> None:
     report = _smoke(FakeCreate([_completion()]))
 
     assert report == SmokeReport(
+        max_tokens=1024,
+        reasoning="default",
         answer="tool_call",
         valid=True,
         decision="switch_skill",
@@ -138,6 +140,19 @@ def test_the_smoke_call_counts_against_the_cap() -> None:
 
     assert first.valid and (second.answer, second.error) == ("error", "ModelCallCapReached")
     assert len(create.calls) == 1
+
+
+def test_the_report_names_the_token_budget_and_reasoning_it_asked_with() -> None:
+    client = NimChatClient(FakeCreate([_completion(), APIStatusError("down")]), cap=ModelCallCap(2))
+    config = LlmPlannerConfig(model=NIM_MODEL, max_tokens=4096, reasoning="off")
+
+    answered = run_smoke(client, config)
+    failed = run_smoke(client, config)
+
+    assert (answered.answer, failed.answer) == ("tool_call", "error")
+    for report in (answered, failed):
+        data = report.as_dict()
+        assert (data["max_tokens"], data["reasoning"]) == (4096, "off")
 
 
 def test_provider_names_in_the_report_are_scrubbed_and_cut() -> None:

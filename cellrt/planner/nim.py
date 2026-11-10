@@ -312,6 +312,11 @@ class NimChatClient:
             # Plain JSON, and the SDK's own copy: the planner's tool is shared by every call.
             arguments["tools"] = [json.loads(json.dumps(request.tool))]
             arguments["tool_choice"] = self._tool_choice
+        if request.reasoning == "off":
+            # The switch Nemotron's chat template reads on NIM, sent in the body by the SDK:
+            # the smoke call of 2026-11-10 answered in 26 completion tokens, not 844 (ADR 017).
+            # A model whose template has no such switch ignores it.
+            arguments["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         return arguments
 
 

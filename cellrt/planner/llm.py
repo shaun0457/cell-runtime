@@ -14,7 +14,7 @@ import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 
 from cellrt.planner.base import (
     DEFAULT_PLANNER_DEADLINE_S,
@@ -26,9 +26,14 @@ from cellrt.planner.base import (
 from cellrt.planner.schemas import audit_text, decision_json_schema
 
 MAX_MODEL_CHARS = 128
+DEFAULT_MAX_TOKENS = 1_024
 MAX_TOKENS_LIMIT = 8_192
 MAX_TEMPERATURE = 2.0
 TOOL_NAME = "decide"
+# "default" leaves the model's reasoning as its host sets it; "off" asks the host to answer
+# without it. A reasoning model spends its tokens on reasoning first, out of `max_tokens`.
+Reasoning = Literal["default", "off"]
+REASONING_MODES: tuple[str, ...] = get_args(Reasoning)
 
 _ROLE = """\
 You are the recovery planner of a robotic cable-insertion cell. A skill has failed, and the
@@ -82,6 +87,7 @@ class ChatRequest:
     tool: Mapping[str, object] | None  # one function tool, or None for a JSON answer
     max_tokens: int
     temperature: float
+    reasoning: Reasoning  # the client maps "off" to its host's switch
 
 
 @dataclass(frozen=True)
@@ -109,10 +115,11 @@ class ChatClient(Protocol):
 @dataclass(frozen=True)
 class LlmPlannerConfig:
     model: str
-    max_tokens: int = 1_024
+    max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = 0.0
     mode: Literal["tool", "json"] = "tool"
     deadline_s: float = DEFAULT_PLANNER_DEADLINE_S  # wall time per call
+    reasoning: Reasoning = "default"
 
     def __post_init__(self) -> None:
         if not 0 < len(self.model) <= MAX_MODEL_CHARS:
@@ -127,6 +134,8 @@ class LlmPlannerConfig:
         checked_deadline(self.deadline_s)  # the same check as at run time
         if self.mode not in SYSTEM_PROMPTS:
             raise ValueError(f"mode must be one of {', '.join(SYSTEM_PROMPTS)}")
+        if self.reasoning not in REASONING_MODES:
+            raise ValueError(f"reasoning must be one of {', '.join(REASONING_MODES)}")
 
 
 class LlmPlanner:
@@ -156,6 +165,7 @@ class LlmPlanner:
             "temperature": self.config.temperature,
             "mode": self.config.mode,
             "deadline_s": self.config.deadline_s,
+            "reasoning": self.config.reasoning,
             "prompt_version": PROMPT_VERSION,
             "client": dict(self._client.describe()),
         }
@@ -171,6 +181,7 @@ class LlmPlanner:
             tool=DECIDE_TOOL if self.config.mode == "tool" else None,
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,
+            reasoning=self.config.reasoning,
         )
         started = self._timer()
         reply = await self._client.complete(request)

@@ -144,6 +144,7 @@ class LlmTaskPlanner:
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
             "deadline_s": self.config.deadline_s,
+            "reasoning": self.config.reasoning,
             "prompt_version": PROMPT_VERSION,
             "client": dict(self._client.describe()),
         }
@@ -164,6 +165,7 @@ class LlmTaskPlanner:
             tool=plan_tool(names),
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,
+            reasoning=self.config.reasoning,
         )
         started = self._timer()
         reply = await self._client.complete(request)

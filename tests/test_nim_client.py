@@ -25,11 +25,13 @@ from cellrt.planner.factory import (
     PLANNER_KINDS,
     CallBudgetExceeded,
     PlannerSettingRefused,
+    build_llm_task_planner,
     build_planner,
     check_call_budget,
 )
 from cellrt.planner.fixed_planner import FixedPlanner
-from cellrt.planner.llm import DECIDE_TOOL, ChatRequest, LlmPlanner, LlmPlannerConfig
+from cellrt.planner.llm import DECIDE_TOOL, ChatRequest, LlmPlanner, LlmPlannerConfig, Reasoning
+from cellrt.planner.llm_task import LlmTaskPlanner
 from cellrt.planner.nim import (
     BASE_URL_REFUSED,
     CAP_REACHED,
@@ -69,13 +71,16 @@ PHASE0 = Path(__file__).resolve().parents[1] / "eval" / "scenarios" / "phase0.ya
 YAW = {s.id: s for s in load_scenarios(PHASE0)}["yaw_mismatch"]
 
 
-def _request(*, tool: Mapping[str, object] | None = DECIDE_TOOL) -> ChatRequest:
+def _request(
+    *, tool: Mapping[str, object] | None = DECIDE_TOOL, reasoning: Reasoning = "default"
+) -> ChatRequest:
     return ChatRequest(
         model=NIM_MODEL,
         messages=({"role": "system", "content": "s"}, {"role": "user", "content": "u"}),
         tool=tool,
         max_tokens=256,
         temperature=0.2,
+        reasoning=reasoning,
     )
 
 
@@ -137,6 +142,26 @@ def test_tool_choice_is_a_client_setting() -> None:
     assert create.calls[0]["tool_choice"] == "required"
     with pytest.raises(ValueError):
         _client(FakeCreate([]), tool_choice="none")
+
+
+def test_reasoning_off_asks_nim_to_turn_the_models_thinking_off() -> None:
+    create = FakeCreate([_completion(), _completion()])
+    client = _client(create)
+
+    _complete(client, _request(reasoning="off"))
+    create.calls[0]["extra_body"]["chat_template_kwargs"]["enable_thinking"] = True  # by the SDK
+    _complete(client, _request(reasoning="off"))
+
+    # The switch Nemotron's chat template reads on NIM (smoke call of 2026-11-10, ADR 017).
+    assert create.calls[1]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_default_reasoning_leaves_the_request_as_the_host_expects_it() -> None:
+    create = FakeCreate([_completion()])
+
+    _complete(_client(create), _request(reasoning="default"))
+
+    assert "extra_body" not in create.calls[0]
 
 
 def test_a_json_mode_request_sends_no_tool() -> None:
@@ -438,13 +463,19 @@ def test_the_factory_builds_a_capped_nim_planner_from_its_settings() -> None:
         max_model_calls=7,
         deadline_s=45.0,
         tool_choice="required",
+        reasoning="off",
         env={KEY_ENV: FAKE_KEY},
         connect=_connect(FakeCreate([]), seen),
     )
 
     assert isinstance(planner, LlmPlanner)
     assert planner.config == LlmPlannerConfig(
-        model="nvidia/other-model", max_tokens=300, temperature=0.5, mode="json", deadline_s=45.0
+        model="nvidia/other-model",
+        max_tokens=300,
+        temperature=0.5,
+        mode="json",
+        deadline_s=45.0,
+        reasoning="off",
     )
     assert planner.deadline_s == 45.0  # one deadline: the runtime's (ADR 016) and the SDK's
     assert planner.describe()["client"] == {
@@ -453,6 +484,22 @@ def test_the_factory_builds_a_capped_nim_planner_from_its_settings() -> None:
         "tool_choice": "required",
     }
     assert seen == {"base_url": "http://127.0.0.1:8000/v1", "api_key": FAKE_KEY, "timeout_s": 45.0}
+
+
+def test_the_factory_builds_the_task_planner_with_the_same_model_settings() -> None:
+    planner = build_llm_task_planner(
+        model="nvidia/other-model",
+        max_tokens=4096,
+        reasoning="off",
+        cap=ModelCallCap(1),
+        env={KEY_ENV: FAKE_KEY},
+        connect=_connect(FakeCreate([])),
+    )
+
+    assert isinstance(planner, LlmTaskPlanner)
+    assert planner.config == LlmPlannerConfig(
+        model="nvidia/other-model", max_tokens=4096, reasoning="off"
+    )
 
 
 def test_the_factory_defaults_to_the_smoke_tested_nemotron_on_hosted_nim() -> None:

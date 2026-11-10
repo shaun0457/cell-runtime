@@ -2,9 +2,10 @@
 
 `run_smoke` sends one fixed, realistic failure through the model planner: the yaw-mismatch
 UNKNOWN as the mock world produces it (phase0.yaml, seed 0), where switching to `insert_act` is
-the answer that works. The report says whether the answer came as a tool call or as text,
-whether it passed the planner validation, and what it cost. It holds no provider text but the
-model id and the finish reason, scrubbed and cut; a failed call shows its exception type only.
+the answer that works. The report names the token budget and reasoning setting it asked with,
+and says whether the answer came as a tool call or as text, whether it passed the planner
+validation, and what it cost. It holds no provider text but the model id and the finish reason,
+scrubbed and cut; a failed call shows its exception type only.
 """
 
 from __future__ import annotations
@@ -16,7 +17,14 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 from cellrt.planner.base import FailureContext, Traced
-from cellrt.planner.llm import ChatClient, ChatReply, ChatRequest, LlmPlanner, LlmPlannerConfig
+from cellrt.planner.llm import (
+    ChatClient,
+    ChatReply,
+    ChatRequest,
+    LlmPlanner,
+    LlmPlannerConfig,
+    Reasoning,
+)
 from cellrt.planner.schemas import Rejection, validate_decision
 from cellrt.runtime.scrub import scrub
 from cellrt.skills.mock import mock_registry
@@ -57,6 +65,8 @@ def smoke_context(registry: SkillRegistry) -> FailureContext:
 
 @dataclass(frozen=True)
 class SmokeReport:
+    max_tokens: int  # the request's token budget, so saved reports can be told apart
+    reasoning: Reasoning  # the request's reasoning setting
     answer: Answer  # how the model answered; "error" if the call raised
     valid: bool  # whether the answer passed the planner validation
     decision: str | None  # the decision's kind, when valid
@@ -69,8 +79,10 @@ class SmokeReport:
     latency_s: float | None  # wall time of the call
 
     @classmethod
-    def failed(cls, error: str) -> SmokeReport:
+    def failed(cls, error: str, config: LlmPlannerConfig) -> SmokeReport:
         return cls(
+            max_tokens=config.max_tokens,
+            reasoning=config.reasoning,
             answer="error",
             valid=False,
             decision=None,
@@ -116,12 +128,14 @@ async def _smoke(
         # A model call is wall time by design: this is the one bound on it here.
         answer = await asyncio.wait_for(planner.triage(ctx), config.deadline_s)  # noqa: TID251
     except Exception as exc:  # the type only: the text may hold anything
-        return SmokeReport.failed(type(exc).__name__)
+        return SmokeReport.failed(type(exc).__name__, config)
     assert isinstance(answer, Traced) and watched.reply is not None
     reply = watched.reply
     result = validate_decision(answer.raw, registry, ctx.skill, ctx.options)
     valid = not isinstance(result, Rejection)
     return SmokeReport(
+        max_tokens=config.max_tokens,
+        reasoning=config.reasoning,
         answer=_answer_kind(reply),
         valid=valid,
         decision=None if isinstance(result, Rejection) else result.kind,

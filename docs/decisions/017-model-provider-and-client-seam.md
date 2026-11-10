@@ -93,6 +93,30 @@ Constraints:
 Both go through the same validator (ADR 008), so the choice changes how often an answer is
 valid, not what an invalid answer can do.
 
+### Reasoning (added 2026-11-10, after #52)
+
+Nemotron 3.5 Lightning reasons before it answers, out of the same `max_tokens`. In #52, 17 of
+89 calls came back empty with `finish_reason: length` at exactly 1024 completion tokens, and in
+the sim 5 of 6 did.
+
+#### Option A — leave reasoning to the host; raise `max_tokens` only
+- Pros: no new setting; the model answers as it was tuned to.
+- Cons: every call stays slow and long (about 800 completion tokens and 10 s); a larger budget
+  makes an empty answer rarer, not impossible.
+
+#### Option B — a provider-neutral `reasoning` setting on the request, mapped by the client
+- Pros: one setting for every model planner, chosen per command and counted in the config hash;
+  the core does not know the host's parameter, only `NimChatClient` does. Like the token budget,
+  it is set by a command-line option for `cellrt`, and by an environment variable for the AIC
+  policy, which has no command line.
+- Cons: the switch is the model's chat template's: a model without it ignores the setting with
+  no error; the client has to know each host's parameter.
+
+#### Option C — `/no_think` in the system prompt
+- Pros: no change to the request.
+- Cons: changes the prompt, and its version, for every model; only models trained on the tag
+  obey it; mixes a setting into the prompt.
+
 ## Decision
 
 <!-- Decision and Why drafted by Claude. Shaun delegated these sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
@@ -140,6 +164,15 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   with a cap of 1 and prints its report as JSON. A command without setting C builds no planner
   and needs no key. Every setup error is an `LlmSetupError` with a fixed message, printed as
   is.
+- **Token budget and reasoning:** reasoning option B, with A kept as a setting. `ChatRequest`
+  carries `reasoning` (`default` or `off`); for `off`, `NimChatClient` sends
+  `extra_body={"chat_template_kwargs": {"enable_thinking": false}}`, the switch the smoke call of
+  2026-11-10 confirmed. `cellrt eval`, `run` and `smoke-llm` take `--max-tokens` (1 to 8192,
+  default 1024) and `--reasoning` (default `default`) for every model call they make; the AIC
+  policy reads `CELLRT_MAX_TOKENS` and `CELLRT_REASONING`. Both are in the planner's
+  `describe()`, so in the config hash. The defaults are the settings #52 ran with, so earlier
+  commands mean what they meant; which setting the next evals use is chosen by a comparison,
+  recorded in `docs/phase3-llm-results.md`.
 - **Errors:** SDK exceptions propagate unchanged. The executor and the smoke report keep their
   type name only.
 - **Answer:** tool calling first (format A), with `tool_choice: "auto"`. `"required"` is a
@@ -166,6 +199,12 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   shell history and the log.
 - **Fixed messages and type names:** the scrubber is best effort, so the rule is to never
   record provider text, not to clean it.
+- **Reasoning as a request setting:** the empty answers of #52 most likely came from a setting,
+  not from the model's judgement, so the setting is made explicit and measurable. Keeping the
+  host's parameter in the client keeps the core provider-neutral; a prompt tag would change what
+  the eval tests. Switching reasoning off is a trade, not a fix: the smoke call answered about
+  18 times faster (0.6 s against 10.6 s) but chose differently, so the comparison measures what
+  it costs.
 
 ## Consequences
 
@@ -175,7 +214,17 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
 - The lock file now lists `openai` and its dependencies, so the `lock` part of every run's
   config hash changes once (`code` changes with every commit anyway).
 - A provider feature outside `ChatRequest` / `ChatReply` (streaming, reasoning text,
-  `response_format`) needs a protocol change.
+  `response_format`) needs a protocol change. Switching reasoning off is in the protocol; the
+  reasoning text is still not read or stored.
+- `cellrt promote propose` (ADR 021) keeps its own `--max-tokens` and takes no `--reasoning`:
+  it always asks with reasoning as the host sets it.
+- `reasoning: off` relies on the model's chat template. Another model on NIM may ignore it
+  without an error, and the run is still recorded as reasoning off; or the host may refuse the
+  field, and every call fails as a planner error (the exception type only). Check a new model
+  with `cellrt smoke-llm --reasoning off` first: its completion tokens show whether the switch
+  took. The client does not keep a list of the models that support it.
+- Adding `reasoning` to the planner's `describe()` changes the config hash of every model
+  planner run, so a store from before this change is not resumed by a new eval.
 - The SDK reads more of the environment than the refused variables. `OPENAI_LOG` turns on its
   logging: leave it unset for a real eval. Its HTTP client honours the proxy environment
   variables and follows the host's redirects, so a proxy set in the environment sees the
@@ -207,5 +256,17 @@ Nearly 600 completion tokens for one short tool call suggests the model reasons 
 answers; reasoning was left at the host's default.
 
 So tool calling works, and the planner stays in tool mode. Not tried yet: `"required"`, JSON
-mode, reasoning switched off. One call says the path works, not how often the model is right:
-that is the eval's job (#52).
+mode. One call says the path works, not how often the model is right: that is the eval's job
+(#52).
+
+On 2026-11-10, two more Lightning calls, the same failure, tool mode, 1024 tokens, one with
+reasoning at the host's default and one with
+`chat_template_kwargs: {"enable_thinking": false}`:
+
+| Reasoning | Completion tokens | Latency | Answer |
+|---|---|---|---|
+| host's default | 844 (3097 characters of `reasoning_content`) | 10.6 s | `switch_skill` to `insert_act`, valid |
+| off | 26 (no `reasoning_content`) | 0.6 s | `retry`, valid |
+
+Both came back as a `decide` tool call (`finish_reason: tool_calls`). With reasoning off the
+answer changed to one that does not fix this failure; one call each is not a rate.

@@ -9,9 +9,10 @@ import sqlite3
 import stat
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, NoReturn, cast
 
 import typer
 import yaml
@@ -37,7 +38,7 @@ from cellrt.planner.factory import (
     llm_client_and_config,
     model_call_cap,
 )
-from cellrt.planner.llm import MAX_TOKENS_LIMIT
+from cellrt.planner.llm import DEFAULT_MAX_TOKENS, MAX_TOKENS_LIMIT, REASONING_MODES, Reasoning
 from cellrt.planner.nim import (
     DEFAULT_MODEL,
     KEY_ENV,
@@ -126,6 +127,23 @@ MaxModelCallsOption = Annotated[
         help="most model calls this command may make; it does not start if it could make more",
     ),
 ]
+# The token budget and the reasoning of every model call the command makes: the UNKNOWN
+# planner's and the task planner's. A reasoning model spends its budget on reasoning first.
+MaxTokensOption = Annotated[
+    int,
+    typer.Option(
+        min=1,
+        max=MAX_TOKENS_LIMIT,
+        help="the model's tokens per call, its reasoning included (--planner llm, --tree llm)",
+    ),
+]
+ReasoningOption = Annotated[
+    str,
+    typer.Option(
+        help="the model's reasoning: default (as the host sets it) or off"
+        " (--planner llm, --tree llm)"
+    ),
+]
 
 
 @app.command()
@@ -137,6 +155,8 @@ def run(
     db: DbOption = DEFAULT_DB,
     planner: PlannerOption = "rule",
     model: ModelOption = DEFAULT_MODEL,
+    max_tokens: MaxTokensOption = DEFAULT_MAX_TOKENS,
+    reasoning: ReasoningOption = "default",
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
     tree: TreeOption = "fixed",
 ) -> None:
@@ -144,6 +164,7 @@ def run(
     if setting not in SETTINGS:
         _fail(f"unknown setting {setting!r}; known: {', '.join(SETTINGS)}")
     _check_tree(tree)
+    asked = _ModelSettings(model, max_tokens, _check_reasoning(reasoning))
     by_id = {s.id: s for s in _load(scenarios)}
     if scenario not in by_id:
         _fail(f"unknown scenario {scenario!r}; known: {', '.join(by_id)}")
@@ -152,9 +173,9 @@ def run(
     units_with_planner = int(setting == "C")
     plan_calls = int(tree == "llm")
     chosen = _planner(
-        planner, units_with_planner, recovery, model=model, cap=cap, plan_calls=plan_calls
+        planner, units_with_planner, recovery, settings=asked, cap=cap, plan_calls=plan_calls
     )
-    task_planner = _tree(tree, model=model, cap=cap)
+    task_planner = _tree(tree, settings=asked, cap=cap)
     with EventStore(db) as store:
         try:
             result = run_unit(
@@ -187,6 +208,8 @@ def eval_(
     db: DbOption = DEFAULT_DB,
     planner: PlannerOption = "rule",
     model: ModelOption = DEFAULT_MODEL,
+    max_tokens: MaxTokensOption = DEFAULT_MAX_TOKENS,
+    reasoning: ReasoningOption = "default",
     max_model_calls: MaxModelCallsOption = DEFAULT_MAX_MODEL_CALLS,
     tree: TreeOption = "fixed",
     promoted: Annotated[
@@ -197,6 +220,7 @@ def eval_(
     """Run every scenario x setting x seed, then print metrics read from the event log."""
     chosen = _settings(settings)
     _check_tree(tree)
+    asked = _ModelSettings(model, max_tokens, _check_reasoning(reasoning))
     loaded = _load(scenarios)
     cap = _cap(max_model_calls)
     # One config for the call pre-check and the eval; checked before the store is opened.
@@ -206,9 +230,9 @@ def eval_(
     units_with_planner = len(loaded) * seeds if "C" in chosen else 0
     plan_calls = len(loaded) * seeds if tree == "llm" else 0
     chosen_planner = _planner(
-        planner, units_with_planner, recovery, model=model, cap=cap, plan_calls=plan_calls
+        planner, units_with_planner, recovery, settings=asked, cap=cap, plan_calls=plan_calls
     )
-    task_planner = _tree(tree, model=model, cap=cap)
+    task_planner = _tree(tree, settings=asked, cap=cap)
     with EventStore(db) as store:
         try:
             runs = run_eval(
@@ -228,11 +252,11 @@ def eval_(
     # On stderr, so the table on stdout is the same whether or not the eval was resumed.
     typer.echo(f"ran {runs.ran} units, {runs.skipped} already finished", err=True)
     if task_planner is not None:  # the table does not say how its tasks became trees
-        typer.echo(f"tree: {_planner_name(tree, model)}", err=True)
+        typer.echo(f"tree: {_planner_name(tree, asked)}", err=True)
         # The table counts a rejected plan as an aborted task, left out of the step and time means.
         typer.echo(f"task plans rejected: {len(rejected)} of {len(runs.run_ids)} runs", err=True)
     if "C" in chosen:  # the table's C row does not say which planner it ran with
-        typer.echo(f"planner for setting C: {_planner_name(planner, model)}", err=True)
+        typer.echo(f"planner for setting C: {_planner_name(planner, asked)}", err=True)
     if _asks_a_model(planner, chosen_planner, tree):
         typer.echo(f"model calls: {cap.used} of {cap.max_calls}", err=True)
     if runs.unfinished:
@@ -374,12 +398,28 @@ def _settings(settings: str) -> list[str]:
     return chosen
 
 
+@dataclass(frozen=True)
+class _ModelSettings:
+    """The model settings of a command, the same for every model planner it builds."""
+
+    model: str
+    max_tokens: int
+    reasoning: Reasoning
+
+
+def _check_reasoning(name: str) -> Reasoning:
+    """Exit on an unknown `--reasoning` before any run is recorded or any call is made."""
+    if name not in REASONING_MODES:
+        _fail(f"unknown reasoning {name!r}; known: {', '.join(REASONING_MODES)}")
+    return cast(Reasoning, name)
+
+
 def _planner(
     name: str,
     units_with_planner: int,
     recovery: RecoveryConfig,
     *,
-    model: str,
+    settings: _ModelSettings,
     cap: ModelCallCap,
     plan_calls: int = 0,
 ) -> Planner | None:
@@ -398,7 +438,13 @@ def _planner(
             )
         if units_with_planner == 0:
             return None
-        return build_planner(name, model=model, cap=cap)
+        return build_planner(
+            name,
+            model=settings.model,
+            max_tokens=settings.max_tokens,
+            reasoning=settings.reasoning,
+            cap=cap,
+        )
     except LlmSetupError as exc:
         _fail(str(exc))
 
@@ -409,7 +455,7 @@ def _check_tree(name: str) -> None:
         _fail(f"unknown tree {name!r}; known: {', '.join(TREE_KINDS)}")
 
 
-def _tree(name: str, *, model: str, cap: ModelCallCap) -> TaskPlanner | None:
+def _tree(name: str, *, settings: _ModelSettings, cap: ModelCallCap) -> TaskPlanner | None:
     """The task planner `--tree` names; None for `fixed`, which plans nothing. The model task
     planner's calls count against `cap`. Exits with a fixed message on a refused setting (no
     key); the key is in no message."""
@@ -418,7 +464,12 @@ def _tree(name: str, *, model: str, cap: ModelCallCap) -> TaskPlanner | None:
         return TablePlanner()
     if name == "llm":
         try:
-            return build_llm_task_planner(model=model, cap=cap)
+            return build_llm_task_planner(
+                model=settings.model,
+                max_tokens=settings.max_tokens,
+                reasoning=settings.reasoning,
+                cap=cap,
+            )
         except LlmSetupError as exc:
             _fail(str(exc))
     return None
@@ -440,8 +491,13 @@ def _asks_a_model(planner: str, chosen: Planner | None, tree: str) -> bool:
     return (planner == "llm" and chosen is not None) or tree == "llm"
 
 
-def _planner_name(name: str, model: str) -> str:
-    return f"{name} ({model})" if name == "llm" else name
+def _planner_name(name: str, settings: _ModelSettings) -> str:
+    """The planner's name; a model planner's with the settings two evals of it may differ in."""
+    if name != "llm":
+        return name
+    return (
+        f"{name} ({settings.model}, {settings.max_tokens} tokens, reasoning {settings.reasoning})"
+    )
 
 
 def _with_promoted(directory: Path | None) -> tuple[MonitorConfig, RecoveryConfig]:
@@ -470,14 +526,20 @@ def _cap(max_model_calls: int) -> ModelCallCap:
 def smoke_llm(
     model: ModelOption = DEFAULT_MODEL,
     mode: Annotated[str, typer.Option(help="how the model answers: tool or json")] = "tool",
+    max_tokens: MaxTokensOption = DEFAULT_MAX_TOKENS,
+    reasoning: ReasoningOption = "default",
 ) -> None:
     """Send one fixed failure (the yaw mismatch) to the model planner, once, and print how the
-    model answered as JSON: through the tool or as text, valid or not, tokens and latency.
-    Exits 1 unless the answer passed the planner's validation."""
+    model answered as JSON: through the tool or as text, valid or not, tokens and latency, with
+    the token budget and reasoning setting it asked with. Exits 1 unless the answer passed the
+    planner's validation."""
+    checked = _check_reasoning(reasoning)
     try:
         client, config = llm_client_and_config(
             model=model,
             mode=mode,  # type: ignore[arg-type]  # checked by the config
+            max_tokens=max_tokens,
+            reasoning=checked,
             cap=model_call_cap(1),
         )
     except LlmSetupError as exc:

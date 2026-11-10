@@ -8,6 +8,8 @@ the goals it receives: goal N of the engine config named by `CELLRT_SESSION` (de
 the scenario `<session>/goal<N>/<task id>`. `CELLRT_SETTING` (A, B or C) and `CELLRT_PLANNER`
 (rule, fixed or llm) choose the tree and setting C's planner; they are read on the first goal,
 and a bad value refuses every goal, before the arm moves, with a fixed message.
+`CELLRT_MAX_TOKENS` (1 to 8192, default 1024) and `CELLRT_REASONING` (default or off) set the
+model's token budget and reasoning for `llm`; they are read and refused the same way.
 `CELLRT_FAULT` (JSON, see `adapters/aic/faults.py`) injects a fault into the goals it names;
 it is read on the first goal too, and refused the same way.
 Nothing heavy is imported here, so loading stays inside aic_model's GetState timeout.
