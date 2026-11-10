@@ -66,10 +66,11 @@ The mount does not survive a stop and start of the VM: after one, run the `mount
    - The fork's lockfile needs it: newer pixi (0.84.1 was tried) fails with a pixi-build API
      mismatch.
    - Then uv (`curl -LsSf https://astral.sh/uv/install.sh | sh`), and restart the shell.
-6. The private cell-runtime repo needs either the GitHub CLI
-   (`sudo apt install gh && gh auth login && gh auth setup-git`) or, with no credentials on the
-   VM, a git bundle. #28 used the bundle: `git bundle create cell-runtime.bundle main` on the
-   laptop, copied with `gcloud compute scp`, then `git clone cell-runtime.bundle ~/cell-runtime`.
+6. The cell-runtime repo is public, so section 3 clones it over HTTPS with no credentials.
+   #28 ran while it was private and used a git bundle; for a branch not pushed yet that still
+   works: `git bundle create cell-runtime.bundle main` on the laptop, copied with
+   `gcloud compute scp`, then `git clone --branch main cell-runtime.bundle ~/cell-runtime`. The
+   bundle has no HEAD, so without `--branch` the clone checks nothing out.
 
 ## 3. Workspaces
 

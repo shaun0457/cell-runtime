@@ -145,7 +145,8 @@ Option C for the roles, and Option B for counting.
 - #28's report and the Phase 2 reconciliation use the insertion events as the referee, not the
   scorer's YAML.
 - A VLM check of "is the plug seated" is allowed as an experiment. It must be scored against the
-  insertion events, with false successes, false failures and abstentions reported.
+  insertion events, with false successes, false failures and abstentions reported. It is not
+  planned: the roadmap keeps perception and VLMs out of scope (`docs/roadmap.md`).
 - A proprioception-only check is a later, time-boxed experiment. If it works, it becomes a
   second geometry source with its own label.
 - To revisit: once a perception or calibration source exists, which rules may read it, and

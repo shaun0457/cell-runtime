@@ -170,7 +170,8 @@ you are reading before trusting a reference.
   - When `insert_cable` returns False, the scorer marks the task not completed and scores
     tiers 2 and 3 as 0 even if the plug is in. The insertion truth is the
     `/scoring/insertion_event` topic in the trial's bag.
-  - A seated plug sits at the port frame, not below it: SFP height -0.98 mm, SC +0.07 mm.
+  - A seated plug's tip is within about 1 mm of its port frame, not 10 mm under it as `verify`
+    first assumed: SFP height -0.98 mm, SC +0.07 mm.
     The entrances are 45.8 mm (SFP) and 13.64 mm (SC) above the port frames.
   - CheatCode's tip offset seats the SFP plug already at z_offset 0.01, i.e. during our align.
   - Real-time factor about 0.43 on a g2-standard-8 + L4: a 32 s CheatCode task takes about
@@ -202,7 +203,7 @@ you are reading before trusting a reference.
 
 - Python >= 3.11 (Kilted on Ubuntu 24.04 ships 3.12). Type hints everywhere.
 - Dependencies: stdlib `sqlite3` + `asyncio`, `py_trees`, `pydantic` (schemas), `typer` (CLI),
-  `pytest`, and `openai` as the optional extra `[llm]` (NVIDIA NIM through its
+  `pyyaml` (scenario files), `pytest`, and `openai` as the optional extra `[llm]` (NVIDIA NIM through its
   OpenAI-compatible API; the key is read only from the environment variable
   `NVIDIA_API_KEY`). Ask before adding anything else.
 - Format with `ruff format`, lint with `ruff check`. Tests with `pytest -q`.
@@ -246,7 +247,9 @@ cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
   (`docs/phase3-llm-results.md`, `docs/sim-results.md`); escalation; task-to-tree; UNKNOWN
   promotion, where replay checks a promoted rule on recorded inputs (not that a recovery
   works). The UNKNOWNs are scenarios we designed: mock faults, and an injected command dropout
-  in the sim. Open: a VLM check of "is the plug seated"; forking a run.
+  in the sim. Open: forking a run. A VLM check of "is the plug seated" is allowed as an
+  experiment (ADR 015) but not planned: perception and VLMs are out of scope
+  (`docs/roadmap.md`).
 - [ ] Phase 4 — eval report, README, demo video
 
 The re-plan after #28, and the review that shaped it: `docs/reviews/2026-11-09-plan-grill.md`.

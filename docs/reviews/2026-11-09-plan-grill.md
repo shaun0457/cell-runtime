@@ -70,16 +70,16 @@ refer to `main` @ `85c2216`.
 - **失敗情境〔假設〕：**名義 grasp 下校正出的 TCP seating threshold，在 Phase 2 改變 grasp offset 後，把入口 jam 判成 seated；runtime 成功率上升，scorer insertion 卻沒有上升。
 - **是否存活：****deterministic 原則存活；proprioception 優先應是有期限的實驗，不應成為無限延長 Phase 1 的新專案。**
 - **我會改：**
-  1. 修正整個 skill boundary：`align` 已可能完成 insertion，不能只改最後的 `verify` threshold。現況 `align` 用 `motion` profile，直到 `insert_scripted` 才啟用 insertion rules，與實際接觸階段不一致。[skills.py:142](../../adapters/aic/skills.py#L142)
+  1. 修正整個 skill boundary：`align` 已可能完成 insertion，不能只改最後的 `verify` threshold。現況 `align` 用 `motion` profile，直到 `insert_scripted` 才啟用 insertion rules，與實際接觸階段不一致。[skills.py:142](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/skills.py#L142)
   2. 先用 seated、入口 jam、未接觸三類片段，檢查候選訊號是否可分；加上 grasp variation 作保留驗證，不能只重現 run-28。
-  3. 優先評估已提供的 `controller_state.tcp_pose`，再決定是否需要自己從 joint states 實作 FK。adapter 已接入 measured TCP pose。[node.py:27](../../adapters/aic/node.py#L27)、[ros_port.py:132](../../adapters/aic/ros_port.py#L132)
-  4. seated 成立時停止多餘下壓；仍保留 safety verdict 優先權。現有 executor 已讓 `FORCE_LIMIT`／`SENSOR_DROPOUT` 覆蓋 skill success。[behaviours.py:139](../../cellrt/executor/behaviours.py#L139)
+  3. 優先評估已提供的 `controller_state.tcp_pose`，再決定是否需要自己從 joint states 實作 FK。adapter 已接入 measured TCP pose。[node.py:27](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/node.py#L27)、[ros_port.py:132](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/ros_port.py#L132)
+  4. seated 成立時停止多餘下壓；仍保留 safety verdict 優先權。現有 executor 已讓 `FORCE_LIMIT`／`SENSOR_DROPOUT` 覆蓋 skill success。[behaviours.py:139](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/executor/behaviours.py#L139)
 
-此外，**修 seated detection 不等於完成 Phase 1**：SC 的真 jam 仍要處理，3/3 exit criterion 仍有效。[phase-1 brief:84](../../docs/briefs/phase-1-aic-adapter.md#L84)
+此外，**修 seated detection 不等於完成 Phase 1**：SC 的真 jam 仍要處理，3/3 exit criterion 仍有效。[phase-1 brief:84](https://github.com/shaun0457/cell-runtime/blob/85c2216/docs/briefs/phase-1-aic-adapter.md#L84)
 
 **3. Phase 2 只保留小規模 scene faults，ACT optional**
 
-- **最強反對：**這可能讓 Phase 3 沒有可研究的 UNKNOWN。`gripper_target()` 每步用 GT plug／port orientation 做校正，也讀實際 tip offset；yaw 與 grasp offset 有可能被 skills 補償。[geometry.py:103](../../adapters/aic/geometry.py#L103) D:145–146 本來就承認此風險。另一方面，empty rail 若造成目標 TF 不存在，可能直接終止為 `ground_truth_unavailable`，根本到不了 UNKNOWN triage。[world.py:218](../../adapters/aic/world.py#L218)
+- **最強反對：**這可能讓 Phase 3 沒有可研究的 UNKNOWN。`gripper_target()` 每步用 GT plug／port orientation 做校正，也讀實際 tip offset；yaw 與 grasp offset 有可能被 skills 補償。[geometry.py:103](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/geometry.py#L103) D:145–146 本來就承認此風險。另一方面，empty rail 若造成目標 TF 不存在，可能直接終止為 `ground_truth_unavailable`，根本到不了 UNKNOWN triage。[world.py:218](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/world.py#L218)
 - **失敗情境〔假設〕：**yaw／offset 全被補償，empty rail 全是 readiness abort；最後只剩 run-28 那個「其實已成功」的 UNKNOWN，卻拿它展示 LLM recovery。
 - **是否存活：****有條件存活。縮 scope 正確，但必須先驗證材料是否存在。**
 - **我會改：**先做有成本上限的 discovery pilot，記錄每個擾動是「被補償、已知失敗、UNKNOWN、adapter abort」哪一種。若沒有 UNKNOWN，接受負結果，再明確決定是否補一種 fault channel；不要把已知類別故意改叫 UNKNOWN。
@@ -90,16 +90,16 @@ refer to `main` @ `85c2216`.
 
 **4. Phase 3 擴充 UNKNOWN、VLM verification、tracing／eval；不加 LangGraph**
 
-- **最強反對：**你同時開了 triage、task-to-tree、escalation、rule promotion、VLM 五條產品線，卻尚未證明 LLM 有一個比簡單 policy 更有價值的決策。原 brief 已承認 mock 的 C−B gap 是預先設計的 scenario 效果。[phase-3 brief:9](../../docs/briefs/phase-3-unknown-promotion.md#L9)
+- **最強反對：**你同時開了 triage、task-to-tree、escalation、rule promotion、VLM 五條產品線，卻尚未證明 LLM 有一個比簡單 policy 更有價值的決策。原 brief 已承認 mock 的 C−B gap 是預先設計的 scenario 效果。[phase-3 brief:9](https://github.com/shaun0457/cell-runtime/blob/85c2216/docs/briefs/phase-3-unknown-promotion.md#L9)
 - **失敗情境〔假設〕：**ACT 被省略，現有 decision schema 剩下實用的 `retry`／`abort`；LLM 多花數秒重述同一規則。VLM 只看走到 verify 的成功樣本而 accuracy 很高；promotion 又只在提案使用過的 logs 上通過。
 - **是否存活：****tracing／agent eval 存活；五項同時作為必要交付不存活。**
 - **我會改：**
-  - 主線只選一個：**真實 failure → 有界決策 → 驗證 → 執行／拒絕 → GT 結果**。先說清楚可選 recovery，以及為何需要推理。現有輸出只有 `SwitchSkill | Retry | Abort`。[schemas.py:42](../../cellrt/planner/schemas.py#L42)
+  - 主線只選一個：**真實 failure → 有界決策 → 驗證 → 執行／拒絕 → GT 結果**。先說清楚可選 recovery，以及為何需要推理。現有輸出只有 `SwitchSkill | Retry | Abort`。[schemas.py:42](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/planner/schemas.py#L42)
   - 對照至少包括同預算的固定 retry／abort policy 與 `RulePlanner`；量測成功、錯誤動作、latency、tokens、cost、invalid output、timeout、重複穩定性。
   - VLM 先做離線 optional experiment。必須收集失敗終點與提早中止的影像，不能只收 verify；報 false-success、false-failure、abstention，而非只有 accuracy。並先確認 insertion event 的時間語意：是曾經插入，還是拍照當下仍 seated。
-  - Promotion 的 replay 只證明**分類規則對既有輸入的行為**；不能證明新 recovery 會成功。規則要有未參與提案的保留 logs；recovery 要重新跑 sim。[phase-3 brief:37](../../docs/briefs/phase-3-unknown-promotion.md#L37)
+  - Promotion 的 replay 只證明**分類規則對既有輸入的行為**；不能證明新 recovery 會成功。規則要有未參與提案的保留 logs；recovery 要重新跑 sim。[phase-3 brief:37](https://github.com/shaun0457/cell-runtime/blob/85c2216/docs/briefs/phase-3-unknown-promotion.md#L37)
 
-不加 LangGraph／LangChain 合理，但 ADR 應解釋這個 cell 的需求與維護成本，避免宣稱 event sourcing 本身證明框架較差。**現有 `state_at()` 明寫是 future fork 的基礎；`replay_lines()` 是事件讀取。**目前不能宣稱已支援 Gazebo 的 counterfactual fork。[state.py:112](../../cellrt/runtime/state.py#L112)、[replay.py:30](../../cellrt/replay.py#L30)
+不加 LangGraph／LangChain 合理，但 ADR 應解釋這個 cell 的需求與維護成本，避免宣稱 event sourcing 本身證明框架較差。**現有 `state_at()` 明寫是 future fork 的基礎；`replay_lines()` 是事件讀取。**目前不能宣稱已支援 Gazebo 的 counterfactual fork。[state.py:112](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/runtime/state.py#L112)、[replay.py:30](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/replay.py#L30)
 
 **5. GT 保留 referee／geometry，runtime 自行判斷，VLM 作 second opinion**
 
@@ -117,25 +117,25 @@ refer to `main` @ `85c2216`.
 
 **實際 GT 路徑核對結果：**
 
-- `AicWorld` 從 TF 取得 port、plug、gripper，再用它們填 `Signals.height_mm`／`xy_offset_mm`。[world.py:218](../../adapters/aic/world.py#L218)
-- `stuck_under_force` 讀 XY error 與 height progress；`POSE_ERROR` 讀 XY；`insert_stalled` 的 progress 也是前後 height 相減。因此 **Monitor 間接讀 GT geometry**。[classifier.py:170](../../cellrt/monitor/classifier.py#L170)、[classifier.py:223](../../cellrt/monitor/classifier.py#L223)
-- `AicVerify` 直接讀 geometry，以 `max(0, -height)` 與 10 mm 比較，直接決定成功失敗。[skills.py:194](../../adapters/aic/skills.py#L194)
-- `plug_to_port_mm()` 實際做的是 **base-frame 座標差**，並假設 insertion axis 為 base −z；不是一般化的 port-frame 投影。[convert.py:132](../../adapters/aic/convert.py#L132)
+- `AicWorld` 從 TF 取得 port、plug、gripper，再用它們填 `Signals.height_mm`／`xy_offset_mm`。[world.py:218](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/world.py#L218)
+- `stuck_under_force` 讀 XY error 與 height progress；`POSE_ERROR` 讀 XY；`insert_stalled` 的 progress 也是前後 height 相減。因此 **Monitor 間接讀 GT geometry**。[classifier.py:170](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/monitor/classifier.py#L170)、[classifier.py:223](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/monitor/classifier.py#L223)
+- `AicVerify` 直接讀 geometry，以 `max(0, -height)` 與 10 mm 比較，直接決定成功失敗。[skills.py:194](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/skills.py#L194)
+- `plug_to_port_mm()` 實際做的是 **base-frame 座標差**，並假設 insertion axis 為 base −z；不是一般化的 port-frame 投影。[convert.py:132](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/convert.py#L132)
 
 所以，**skills 用 GT geometry 與「不讀 referee labels」一致；與嚴格「成功／失敗判斷完全不依賴 GT geometry」並不一致，現況 Monitor 和 verify 都違反後者。**只把 verify 改成 proprioception，仍不能把整個 runtime 稱為 GT-free。
 
-也不必把「系統不能自己評分」說成禁止 runtime 自行 verify：runtime 本來就需要判斷完成。應禁止的是拿自身判斷當獨立效能證據。移除所有 GT 是更換 perception／observation stack 的另一項工程；repo 已明訂 GT TF 代替 perception，且 submission 會阻擋 GT。[roadmap.md:45](../../docs/roadmap.md#L45)、[CLAUDE.md:153](../../CLAUDE.md#L153)
+也不必把「系統不能自己評分」說成禁止 runtime 自行 verify：runtime 本來就需要判斷完成。應禁止的是拿自身判斷當獨立效能證據。移除所有 GT 是更換 perception／observation stack 的另一項工程；repo 已明訂 GT TF 代替 perception，且 submission 會阻擋 GT。[roadmap.md:45](https://github.com/shaun0457/cell-runtime/blob/85c2216/docs/roadmap.md#L45)、[CLAUDE.md:153](https://github.com/shaun0457/cell-runtime/blob/85c2216/CLAUDE.md#L153)
 
 **對這份 JD，計畫還缺的是可展示的 agent infrastructure 行為。**
 
 J:17–25、43–53、79 很對應這個專案；目前最有價值的補強是：
 
-- **真正的非同步 model wait。** 現有 `drain()` 要求 live tasks 都在等待模擬 clock，100 次 yield 後仍未滿足就丟 `DrainError`；planner protocol 也明說目前不能等待外部工作。真 API call 不能直接替換 stub。應展示等待期間 cancel、task deadline、訊號採樣持續有效，late response 被丟棄。[runner.py:83](../../cellrt/executor/runner.py#L83)、[planner/base.py:43](../../cellrt/planner/base.py#L43)
-- **具語意的 skill contract。** AIC skills 的 preconditions 目前直接回 `True`；planner catalogue 只有名稱與 Monitor profile。schema 正確不足以證明可以從某個接觸狀態安全切換技能。[skills.py:119](../../adapters/aic/skills.py#L119)、[behaviours.py:287](../../cellrt/executor/behaviours.py#L287)
-- **可重建的 model trace。** 現有 events 保存 context、validated decision；沒有完整 rendered prompt、成功 raw response、model identity、token usage。D:166–169 是待完成要求，不能當成既有能力。[events.py:156](../../cellrt/runtime/events.py#L156)
-- **故障標籤與效應的區別。** 現有 metrics 將沒有 injected fault 的 verdict 當 false alarm；因此 clean run 中的真 SC jam 也可能被錯算。scene yaw 被補償也不應自動算 detection miss。這個分類評估定義必須在搬到 sim 前修正。[metrics.py:13](../../cellrt/eval/metrics.py#L13)
+- **真正的非同步 model wait。** 現有 `drain()` 要求 live tasks 都在等待模擬 clock，100 次 yield 後仍未滿足就丟 `DrainError`；planner protocol 也明說目前不能等待外部工作。真 API call 不能直接替換 stub。應展示等待期間 cancel、task deadline、訊號採樣持續有效，late response 被丟棄。[runner.py:83](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/executor/runner.py#L83)、[planner/base.py:43](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/planner/base.py#L43)
+- **具語意的 skill contract。** AIC skills 的 preconditions 目前直接回 `True`；planner catalogue 只有名稱與 Monitor profile。schema 正確不足以證明可以從某個接觸狀態安全切換技能。[skills.py:119](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/skills.py#L119)、[behaviours.py:287](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/executor/behaviours.py#L287)
+- **可重建的 model trace。** 現有 events 保存 context、validated decision；沒有完整 rendered prompt、成功 raw response、model identity、token usage。D:166–169 是待完成要求，不能當成既有能力。[events.py:156](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/runtime/events.py#L156)
+- **故障標籤與效應的區別。** 現有 metrics 將沒有 injected fault 的 verdict 當 false alarm；因此 clean run 中的真 SC jam 也可能被錯算。scene yaw 被補償也不應自動算 detection miss。這個分類評估定義必須在搬到 sim 前修正。[metrics.py:13](https://github.com/shaun0457/cell-runtime/blob/85c2216/cellrt/eval/metrics.py#L13)
 
-還有一項應提前處理：R:90–92 的 `hold_unconfirmed`。現在 `_confirm_hold()` 的結果被記錄，policy return 仍只看原本 `outcome`；**它尚未成為成功或繼續執行的必要條件**。[run.py:172](../../adapters/aic/run.py#L172) 這比再加一個 agent 功能，更能證明 J:25 要求的可靠性工程。
+還有一項應提前處理：R:90–92 的 `hold_unconfirmed`。現在 `_confirm_hold()` 的結果被記錄，policy return 仍只看原本 `outcome`；**它尚未成為成功或繼續執行的必要條件**。[run.py:172](https://github.com/shaun0457/cell-runtime/blob/85c2216/adapters/aic/run.py#L172) 這比再加一個 agent 功能，更能證明 J:25 要求的可靠性工程。
 
 **過度擴張的是：**四種 fault channel、大型 noise-floor campaign、ACT 強制整合、完整 GT-free perception、Gazebo 任意步驟 fork，以及五條 Phase 3 主線一起交付。VLM 是 J:71 的加分項；LangGraph 等是 J:61 的加分項。它們不應排在一條有對照、有 timeout、有 trace、有實際結果的 agent recovery 流程前面。
 

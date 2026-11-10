@@ -76,7 +76,7 @@ With 10 mm, `verify` fails every seated plug. The diagnostic showed it: task 1 w
 
 ## 6. Checks from the PRs' Might miss lists
 
-- **CheatCode tip-offset quirk** (`geometry.py:7-9`): confirmed. It matters: at z_offset 0.01
+- **CheatCode tip-offset quirk** (`geometry.py:7-9` at `85c2216`): confirmed. It matters: at z_offset 0.01
   (align's end), the SFP plug is already at its seat (height −0.98 mm from t ≈ 14 s, during
   align). CheatCode has the same quirk and passes, because it never stops to judge the plug
   between its descent and its 5 s settle.
@@ -111,8 +111,8 @@ With 10 mm, `verify` fails every seated plug. The diagnostic showed it: task 1 w
 - [x] Runbook followed once from a fresh VM. Its fixes are folded into
   `docs/runbooks/phase1-sim-run.md` (accelerator image + `libnvidia-gl-580-server`, pixi 0.67.2
   with `--frozen`, git bundle, L4 / zone sweep, gcloud from PowerShell on Windows, image digest)
-- [x] CLAUDE.md Status records this report; the roadmap revision after this run is drafted in
-  PR #42 (not merged)
+- [x] CLAUDE.md Status records this report
+- [ ] The roadmap revision after this run: drafted in PR #42, not merged
 
 ## 9. Where the data is
 
