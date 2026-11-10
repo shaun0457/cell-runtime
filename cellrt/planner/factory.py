@@ -53,9 +53,10 @@ def model_call_cap(max_model_calls: int) -> ModelCallCap:
 def check_call_budget(
     units_with_planner: int, planner_budget: int, max_model_calls: int, *, plan_calls: int = 0
 ) -> int:
-    """The most model calls the eval can make: units that ask the planner, times the per-task
-    planner budget, plus one task plan call per unit a model task planner plans (ADR 023).
-    Refused before the eval starts when that exceeds the cap."""
+    """The most model calls the command can make: units that ask the planner, times the
+    per-task planner budget, plus `plan_calls`, the model task planner's calls (ADR 023): one
+    per scenario and seed in an eval, whose settings share the plan, and one for `cellrt run`.
+    Refused before the command starts when that exceeds the cap."""
     for value in (units_with_planner, planner_budget, max_model_calls, plan_calls):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PlannerSettingRefused("unit, budget and cap counts must be non-negative integers")
@@ -129,8 +130,9 @@ def build_llm_task_planner(
     connect: Connect = connect_openai,
 ) -> LlmTaskPlanner:
     """The model task planner on NIM (ADR 023): the model planner's default settings but the
-    model, the token budget and the reasoning, which a command sets for both. Its one call per
-    run counts against `cap`, the same cap as the UNKNOWN planner's calls."""
+    model, the token budget and the reasoning, which a command sets for both. It makes one call
+    per plan asked for (once per scenario and seed in an eval, once per `cellrt run`), each
+    counted against `cap`, the same cap as the UNKNOWN planner's calls."""
     client, config = llm_client_and_config(
         model=model, max_tokens=max_tokens, reasoning=reasoning, cap=cap, env=env, connect=connect
     )

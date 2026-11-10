@@ -224,7 +224,8 @@ for a plan look different.
   UNKNOWN planner's) is its own event, `task_plan_responded` (schema version 12), recorded just
   before `task_planned` or `task_plan_rejected`, so a rejected answer keeps its trace too. A call
   that timed out or raised leaves no trace, though it may have been sent and still counts
-  against the cap. The trace is not a field of `task_planned`, and it is not
+  against the cap; only a call refused as `RequestsBusy`, before anything was sent, is given
+  back (#66 review F2). The trace is not a field of `task_planned`, and it is not
   `planner_responded`, which the agent report counts as UNKNOWN triage calls. The agent report
   shows plan calls in their own columns (plan calls per run, p50 latency, tokens per call).
 - The task planner and the UNKNOWN planner share one cap per command. `cellrt eval` refuses to

@@ -81,8 +81,9 @@ class TaskPlanned(_Payload):
 
 
 class TaskPlanRejected(_Payload):
-    """The task planner's plan failed the verifier, or the planner raised: no tree is built and
-    the run ends aborted before any motion (ADR 023)."""
+    """The task planner's plan failed the verifier, or the planner gave no answer: no tree is
+    built and nothing moves (ADR 023). A refused plan ends the run aborted. A call that timed
+    out, raised or met the model call cap records no `run_finished`: the unit is unfinished."""
 
     type: Literal["task_plan_rejected"] = "task_plan_rejected"
     planner: str
