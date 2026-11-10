@@ -184,4 +184,7 @@ period.
 - One thing may outlive a goal (#64 review F4): a model request's thread. The NIM client makes
   each request on a daemon thread, so it goes on while `step` blocks the loop (ADR 020). A call
   the run cancels ends at once, but its request runs on until it is answered or the SDK's
-  timeout ends it, and its answer is dropped. The goal does not wait for it.
+  timeout ends it, and its answer is dropped. The goal does not wait for it. That timeout is per
+  network phase, so a host that sends a byte now and then keeps the request alive: at most 4
+  such requests run at once per client, and a call beyond them is refused before it sends
+  anything (`RequestsBusy`).

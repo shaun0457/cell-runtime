@@ -38,9 +38,12 @@ from cellrt.planner.nim import (
     KEY_ENV,
     LLM_EXTRA_MISSING,
     MAX_BASE_URL_CHARS,
+    MAX_LIVE_REQUESTS,
     MAX_MODEL_CALLS_LIMIT,
     MISSING_KEY,
+    REQUEST_LOST,
     REQUEST_THREAD,
+    REQUESTS_BUSY,
     SDK_ENV_VARS,
     BaseUrlRefused,
     LlmExtraMissing,
@@ -49,6 +52,8 @@ from cellrt.planner.nim import (
     ModelCallCap,
     ModelCallCapReached,
     NimChatClient,
+    RequestLost,
+    RequestsBusy,
     SdkEnvConflict,
     check_base_url,
     check_sdk_env,
@@ -581,6 +586,7 @@ class _FakeOpenAI:
     built: ClassVar[list[_FakeOpenAI]] = []
     fail_with: ClassVar[BaseException | None] = None
     hang: ClassVar[bool] = False
+    close_fails: ClassVar[bool] = False
     release: ClassVar[threading.Event] = threading.Event()
     exited: ClassVar[threading.Event] = threading.Event()
 
@@ -607,6 +613,8 @@ class _FakeOpenAI:
     def __exit__(self, *exc: object) -> None:
         self.closed = True
         _FakeOpenAI.exited.set()
+        if _FakeOpenAI.close_fails:
+            raise OSError("closing the connection failed")
 
 
 @pytest.fixture
@@ -617,6 +625,7 @@ def fake_openai(monkeypatch: pytest.MonkeyPatch) -> type[_FakeOpenAI]:
     monkeypatch.setattr(_FakeOpenAI, "built", [])
     monkeypatch.setattr(_FakeOpenAI, "fail_with", None)
     monkeypatch.setattr(_FakeOpenAI, "hang", False)
+    monkeypatch.setattr(_FakeOpenAI, "close_fails", False)
     monkeypatch.setattr(_FakeOpenAI, "release", threading.Event())
     monkeypatch.setattr(_FakeOpenAI, "exited", threading.Event())
     return _FakeOpenAI
@@ -703,6 +712,60 @@ def test_the_sdk_client_is_closed_when_the_call_fails_or_times_out(
         asyncio.run(create(model=NIM_MODEL, messages=[]))
 
     assert [c.closed for c in fake_openai.built] == [True, True]
+
+
+def test_a_close_that_fails_keeps_the_answer_in_hand(fake_openai: type[_FakeOpenAI]) -> None:
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+    fake_openai.close_fails = True
+
+    response = asyncio.run(create(model=NIM_MODEL, messages=[]))
+
+    assert response.choices[0].finish_reason == "tool_calls"
+
+
+class _ThreadKilled(BaseException):
+    """Not an Exception: what would end a request's thread without it handing anything back."""
+
+
+def test_a_request_that_ends_its_thread_still_ends_the_call(
+    fake_openai: type[_FakeOpenAI], thread_errors: list[BaseException | None]
+) -> None:
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+    fake_openai.fail_with = _ThreadKilled("sk-not-a-key")
+
+    with pytest.raises(RequestLost) as lost:
+        asyncio.run(create(model=NIM_MODEL, messages=[]))
+
+    assert str(lost.value) == REQUEST_LOST
+    _join_requests()
+    assert thread_errors == []  # nothing printed from the thread
+
+
+def test_requests_still_running_are_bounded(fake_openai: type[_FakeOpenAI]) -> None:
+    # A cancelled call's request runs on, and the SDK's timeout is per network phase: a host
+    # that sends a byte now and then keeps it alive. Past MAX_LIVE_REQUESTS such requests, a
+    # call is refused before it sends anything, until one of them ends.
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+    fake_openai.hang = True
+
+    async def abandon(n: int) -> None:
+        for _ in range(n):
+            task = asyncio.ensure_future(create(model=NIM_MODEL, messages=[]))
+            await _turns(3)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(abandon(MAX_LIVE_REQUESTS))
+    with pytest.raises(RequestsBusy) as busy:
+        asyncio.run(create(model=NIM_MODEL, messages=[]))
+    assert str(busy.value) == REQUESTS_BUSY
+    assert len(fake_openai.built) == MAX_LIVE_REQUESTS  # nothing was sent
+
+    fake_openai.release.set()
+    _join_requests()
+    response = asyncio.run(create(model=NIM_MODEL, messages=[]))
+    assert response.choices[0].finish_reason == "tool_calls"
 
 
 def test_without_the_sdk_the_default_factory_says_to_install_the_extra(

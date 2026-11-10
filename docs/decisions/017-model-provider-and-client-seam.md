@@ -109,7 +109,10 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   the function. It builds one SDK client per call, with `max_retries=0`, and closes it on
   every exit path. Since #64's review (F4) that is the sync `OpenAI`, called on a thread of its
   own, so a request goes on while a live world step blocks the loop (ADR 020); it was
-  `AsyncOpenAI` before.
+  `AsyncOpenAI` before. A thread cannot be cancelled, so a cancelled call's request runs on: at
+  most 4 run at once per client (`MAX_LIVE_REQUESTS`), and a call beyond them is refused with a
+  fixed message before anything is sent. A new client per call costs a TLS handshake each time;
+  at one call per failure that is not worth a shared client.
 - **One deadline:** the planner's `deadline_s` (ADR 016, default 30 s, at most 120 s) is also
   the SDK's timeout; there is no second setting. The SDK applies its timeout to each network
   phase (connect, each read), so it is not a bound on the whole call: that bound is the
