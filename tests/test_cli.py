@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import math
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+from cellrt.runtime.events import Event, SkillStarted
+from cellrt.runtime.store import EventStore
 
 REPO = Path(__file__).resolve().parent.parent
 SCENARIOS = REPO / "eval" / "scenarios" / "phase0.yaml"
@@ -82,3 +88,81 @@ def test_a_setting_b_run_shows_its_recovery_in_the_replay(tmp_path: Path) -> Non
     assert recoveries[0].split()[3:] == [
         "insert_scripted", "POSE_ERROR", "->", "realign", "(class", "1,", "total", "1)"
     ]  # fmt: skip
+
+
+def _names(trace: dict[str, Any], ph: str) -> list[str]:
+    return [e["name"] for e in trace["traceEvents"] if e["ph"] == ph]
+
+
+def test_trace_writes_a_stored_run_as_trace_json(tmp_path: Path) -> None:
+    db = str(tmp_path / "cli.sqlite")
+    out = tmp_path / "traces" / "yaw.json"
+    run = _cellrt("run", "--scenarios", str(SCENARIOS), "--scenario", "yaw_mismatch",
+                  "--setting", "C", "--seed", "0", "--db", db)  # fmt: skip
+    assert run.returncode == 0, run.stderr
+    run_id = run.stdout.strip().splitlines()[-1]
+
+    to_file = _cellrt("trace", run_id, "--db", db, "--out", str(out))
+    to_stdout = _cellrt("trace", run_id, "--db", db, "--clock", "sim")
+
+    assert to_file.returncode == 0, to_file.stderr
+    text = out.read_text(encoding="utf-8")
+    trace = json.loads(text)
+    assert trace["otherData"]["run_id"] == run_id
+    assert trace["otherData"]["clock"] == "wall"
+    spans = _names(trace, "X")
+    assert spans[0] == run_id
+    assert {"insert_scripted", "insert_act", "planner call 1"} <= set(spans)
+    assert "monitor_verdict: UNKNOWN" in _names(trace, "i")
+    # Only the log goes in: no paths, no environment. JSON escapes a Windows path's backslashes.
+    assert str(tmp_path) not in text and json.dumps(str(tmp_path))[1:-1] not in text
+    assert to_stdout.returncode == 0, to_stdout.stderr
+    sim = json.loads(to_stdout.stdout)
+    assert sim["otherData"]["clock"] == "sim"
+    [run_span] = [e for e in sim["traceEvents"] if e["ph"] == "X" and e["name"] == run_id]
+    assert run_span["dur"] == 10_050_000
+
+
+def test_trace_of_unknown_run_fails_clearly(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.sqlite"
+    db = tmp_path / "cli.sqlite"
+    with EventStore(db):
+        pass
+
+    for store in (missing, db):
+        trace = _cellrt("trace", "nope/A/0/a1", "--db", str(store))
+
+        assert trace.returncode == 1
+        assert "no events for run nope/A/0/a1" in trace.stderr
+        assert trace.stdout == ""
+        assert "Traceback" not in trace.stderr
+    assert not missing.exists()
+
+
+def test_trace_of_a_run_with_an_infinite_time_fails_clearly(tmp_path: Path) -> None:
+    db = tmp_path / "cli.sqlite"
+    out = tmp_path / "trace.json"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=math.inf, payload=payload))
+
+    trace = _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(out))
+
+    assert trace.returncode == 1
+    assert "run r/A/0/a1 has a time that is not a finite number" in trace.stderr
+    assert "Traceback" not in trace.stderr
+    assert not out.exists()
+
+
+def test_trace_never_writes_over_the_event_store(tmp_path: Path) -> None:
+    db = tmp_path / "cli.sqlite"
+    with EventStore(db) as store:
+        payload = SkillStarted(skill="approach", attempt=1)
+        store.append(Event(run_id="r/A/0/a1", seq=1, ts=0.0, wall_ts=1.0, payload=payload))
+
+    trace = _cellrt("trace", "r/A/0/a1", "--db", str(db), "--out", str(db))
+
+    assert trace.returncode == 1
+    assert "--out is the event store itself; no trace written" in trace.stderr
+    with EventStore(db) as store:
+        assert len(store.events("r/A/0/a1")) == 1

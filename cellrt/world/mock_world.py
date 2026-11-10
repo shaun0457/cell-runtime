@@ -7,7 +7,8 @@ bottom of the port with friction that grows with speed.
 
 Faults change this model: timed faults (controller stall, sensor dropout) by world time, the
 others when the plug reaches them (an obstacle at a depth, a tight section, a wedge from a yaw
-mismatch, a port that shifts as the plug descends past a height). See `world/faults.py`.
+mismatch, a damaged port that jams the plug at its entrance, a port that shifts as the plug
+descends past a height). See `world/faults.py`.
 """
 
 from __future__ import annotations
@@ -25,7 +26,15 @@ from cellrt.world.base import (
     UnsupportedCommand,
     Velocity,
 )
-from cellrt.world.faults import Fault, Obstacle, PoseShift, TightFit, TimedFault, YawMismatch
+from cellrt.world.faults import (
+    DamagedPort,
+    Fault,
+    Obstacle,
+    PoseShift,
+    TightFit,
+    TimedFault,
+    YawMismatch,
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,7 @@ class MockWorld:
         self._tight_fits = [f for f in faults if isinstance(f, TightFit)]
         self._pose_shifts = [f for f in faults if isinstance(f, PoseShift)]
         self._yaw_mismatches = [f for f in faults if isinstance(f, YawMismatch)]
+        self._damaged_ports = [f for f in faults if isinstance(f, DamagedPort)]
         self._active: set[str] = set()
         self._descents: dict[str, int] = {}  # descents past each pose shift's trigger height
         self._entries = 0  # insertions so far: the plug tip going from above the port to inside
@@ -139,6 +149,10 @@ class MockWorld:
                 if self._target_height <= -yaw.stall_depth_mm and -yaw.stall_depth_mm > floor:
                     self._wedge(yaw)
                     return
+            for port in self._damaged_ports:
+                if self._target_height <= -port.stall_depth_mm and -port.stall_depth_mm > floor:
+                    self._jam(port)
+                    return
             for tight in self._tight_fits:
                 if vz < 0 and self._target_height < -tight.onset_depth_mm:
                     self._creep(tight, previous_height, vz, floor, dt)
@@ -188,6 +202,15 @@ class MockWorld:
         self._force = yaw.force_n
         # The port twists the plug towards alignment: the torque's sign says which way.
         self._torque = math.copysign(yaw.torque_nm, self._yaw_error(yaw))
+
+    def _jam(self, port: DamagedPort) -> None:
+        """Damaged port: the plug stops at the stall depth on every attempt. As in a yaw wedge,
+        the wrist compliance takes up the push, but force and torque stay low and no motion
+        frees the plug: the fault stays active for the rest of the run."""
+        self._engage(port)
+        self._height = self._target_height = -port.stall_depth_mm
+        self._force = port.force_n
+        self._torque = port.torque_nm
 
     def _yaw_error(self, yaw: YawMismatch) -> float:
         return yaw.yaw_deg - self._plug_yaw_deg

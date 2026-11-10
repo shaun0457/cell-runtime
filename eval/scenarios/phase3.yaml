@@ -1,0 +1,31 @@
+# Phase 3 scenarios (ADR 019). Two UNKNOWN failures whose right answers differ, so a planner
+# has to read the evidence: yaw_mismatch is fixed by switching to insert_act, damaged_port by
+# nothing (the right decision is to stop early). Both are designed by us.
+# baseline and yaw_mismatch are copied from phase0.yaml unchanged; phase0.yaml stays as it is,
+# so Phase 0's results and its committed baseline do not change.
+scenarios:
+  - id: baseline
+    description: Nominal insertion, no injected fault.
+
+  - id: yaw_mismatch
+    description: >-
+      The plug is rotated against the port and wedges half-way: moderate force, high torque.
+      No Monitor rule describes it, so it is classified UNKNOWN. Twisting the plug into line
+      frees it; insert_scripted does not twist, insert_act does.
+    faults:
+      - kind: yaw_mismatch
+        stall_depth_mm: [3.0, 5.0]
+        force_n: [6.0, 9.0]
+        torque_nm: [0.4, 0.8]
+        yaw_deg: [5.0, 15.0]
+
+  - id: damaged_port
+    description: >-
+      The port is damaged at its entrance: the plug stops at a shallow depth under low force
+      and low torque, on every attempt and with every insert skill. The stall rule classifies
+      it UNKNOWN. Nothing frees it, so the right decision is to stop early.
+    faults:
+      - kind: damaged_port
+        stall_depth_mm: [0.5, 1.5]
+        force_n: [2.0, 4.0]  # below the Monitor's 10 N stuck threshold
+        torque_nm: [0.0, 0.05]  # below insert_act's 0.1 Nm twist threshold

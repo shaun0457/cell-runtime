@@ -57,10 +57,11 @@ _PATTERNS = [
 _OPAQUE = re.compile(r"[A-Za-z0-9+/_-]{40,}={0,2}")
 
 
-def scrub(text: str) -> str:
-    """The first MAX_SCRUB_CHARS of `text` with secrets redacted and unsafe characters
-    replaced by "?"."""
-    text = text[:MAX_SCRUB_CHARS]
+def scrub(text: str, *, max_chars: int = MAX_SCRUB_CHARS) -> str:
+    """The first `max_chars` of `text` with secrets redacted and unsafe characters replaced by
+    "?". The default suits text from outside; a caller that stores more (a planner prompt) says
+    how much, and still gets a bounded scan."""
+    text = text[:max_chars]
     # Bearer first: "Authorization: Bearer x" would otherwise lose only the word "Bearer".
     text = _BEARER.sub(lambda m: f"{m.group(1)}{REDACTED}", text)
     text = _KEYED.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)

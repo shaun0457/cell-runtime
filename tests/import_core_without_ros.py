@@ -12,11 +12,17 @@ import sys
 
 from ros_boundary import CORE_DIR, is_banned
 
+# A provider's SDK is an optional extra: a client may import it lazily, the core never at
+# import time.
+_VENDOR_SDKS = frozenset({"openai", "anthropic"})
+
 
 class _BlockRos(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):  # type: ignore[no-untyped-def]
         if is_banned(fullname):
             raise ImportError(f"ROS-free core imported {fullname!r}")
+        if fullname.split(".", 1)[0] in _VENDOR_SDKS:
+            raise ImportError(f"the core imported a vendor SDK at import time: {fullname!r}")
         return None
 
 

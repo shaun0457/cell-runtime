@@ -23,7 +23,7 @@ from py_trees.common import Status
 from cellrt.executor.behaviours import ExecEnv, PlannerBehaviour, SkillBehaviour
 from cellrt.monitor.classifier import FailureClass
 from cellrt.planner.base import FailureContext, Planner
-from cellrt.planner.schemas import Abort, Retry, SwitchSkill
+from cellrt.planner.schemas import PRECONDITIONS_NOT_MET, Abort, Escalate, Retry, SwitchSkill
 from cellrt.runtime.events import RecoveryStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
@@ -182,7 +182,9 @@ class Recovering(py_trees.composites.Composite):
         self._queue: list[py_trees.behaviour.Behaviour] = []
         self._consulted: SkillBehaviour | None = None  # the failure the planner is asked about
         self.failure_reason: str | None = None
-        self.aborted = False  # the planner aborted, or its output was rejected
+        # The planner stopped the run (abort or escalate), timed out, or its output was
+        # rejected.
+        self.aborted = False
 
     def tick(self) -> Iterator[py_trees.behaviour.Behaviour]:
         if self.status != Status.RUNNING:
@@ -218,10 +220,15 @@ class Recovering(py_trees.composites.Composite):
                 self.stop(Status.FAILURE)
                 yield self
                 return
-            again = self._slow_for.get(node, node) if plan.slow else node
-            self._queue = [*(self._helpers[name] for name in plan.before), again, *self._queue[1:]]
+            self._recover(node, plan)
         self.stop(Status.SUCCESS)
         yield self
+
+    def _recover(self, node: SkillBehaviour, plan: Plan) -> None:
+        """Queue the plan's helpers, then the failed skill again (its slow variant for a
+        slow plan), in place of the step's current node."""
+        again = self._slow_for.get(node, node) if plan.slow else node
+        self._queue = [*(self._helpers[name] for name in plan.before), again, *self._queue[1:]]
 
     def _consult(self, node: SkillBehaviour) -> bool:
         """Hand a failure to the planner: only in setting C, only an UNKNOWN from the Monitor
@@ -251,6 +258,8 @@ class Recovering(py_trees.composites.Composite):
                 planner_calls_left=config.planner_budget - state.planner_calls,
                 recoveries_left=config.total_budget - state.recoveries_total,
                 catalogue=self._planner.catalogue(),
+                options=tuple(sorted(self._planner.options - {skill})),  # never the failed one
+                descriptions=self._planner.descriptions(),
             )
         )
         self._consulted = node
@@ -263,14 +272,37 @@ class Recovering(py_trees.composites.Composite):
         assert failed is not None
         skill = failed.skill.name
         decision = planner.decision
+        if planner.preempted is not None:
+            # The Monitor won during the wait (ADR 020): recover as if the failed skill had
+            # failed with the verdict's class, within that class's budgets.
+            failed.failure = planner.preempted.failure_class.value
+            failed.failure_source = "monitor"
+            failed.verdict = planner.preempted
+            plan = self._plan_for(failed)
+            if plan is None:
+                return False
+            self._recover(failed, plan)
+            return True
         if planner.status != Status.SUCCESS or decision is None:
             self.aborted = True
-            self.failure_reason = f"{skill} failed: UNKNOWN (planner output rejected)"
+            if planner.timed_out:
+                why = "planner timed out"
+            elif planner.rejection and planner.rejection.errors == (PRECONDITIONS_NOT_MET,):
+                why = "planner answer no longer applies"  # valid, but about an old state
+            else:
+                why = "planner output rejected"
+            self.failure_reason = f"{skill} failed: UNKNOWN ({why})"
             return False
         match decision:
             case Abort(reason=reason):
                 self.aborted = True
                 self.failure_reason = f"{skill} failed: UNKNOWN (planner aborted: {reason})"
+                return False
+            case Escalate(reason=reason):
+                # Handed to a person: the run ends aborted, so outcomes and metrics keep their
+                # three values (ADR 018).
+                self.aborted = True
+                self.failure_reason = f"{skill} failed: UNKNOWN (planner escalated: {reason})"
                 return False
             case Retry():
                 again, action = failed, "retry"

@@ -152,7 +152,8 @@ configures the model node only on its first trial).
 ## Consequences
 
 - In the AIC cell (Phase 1), Option A of question 6: a unit is one goal of an engine run: scenario
-  `<session>/goal<N>/<task id>`, setting A, seed 0. `CELLRT_SESSION` names the engine config, so
+  `<session>/goal<N>/<task id>`, the setting `CELLRT_SETTING` names (default A; only A before
+  #59), seed 0. `CELLRT_SESSION` names the engine config, so
   running it again gives new attempts of the same units. The engine sends no trial id, and in
   its sample config every trial's task is `task_1`; keyed by task id alone, the three trials
   would be three attempts of one unit. The cell never reruns a unit by itself. Two limits:

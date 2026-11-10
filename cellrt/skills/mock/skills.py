@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import ClassVar
 
 from cellrt.monitor.profiles import MonitorProfile
 from cellrt.runtime.state import RunState
@@ -19,6 +20,7 @@ def _clamp(value: float, limit: float) -> float:
 class Approach:
     """Descend to a hover height above the port."""
 
+    description: ClassVar[str] = "Moves the plug to a point above the port."
     name: str = "approach"
     monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
@@ -50,6 +52,9 @@ class Align:
     """Center the plug over the port with P control on the measured XY offset, at hover height:
     a plug below it (resting on the rim after a missed insertion) first rises back up."""
 
+    description: ClassVar[str] = (
+        "Moves the plug sideways until it is centred over the port (corrects XY)."
+    )
     name: str = "align"
     monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 5.0
@@ -92,6 +97,7 @@ class Align:
 class Retract:
     """Pull the plug back out to a height above the port."""
 
+    description: ClassVar[str] = "Lifts the plug back up, away from the port."
     name: str = "retract"
     monitor_profile: MonitorProfile = "unload"
     timeout_s: float = 4.0
@@ -118,6 +124,9 @@ class Retract:
 class WaitSensor:
     """Hold still until the force/torque sensor reports valid data again, for at most a while."""
 
+    description: ClassVar[str] = (
+        "Holds still until the wrist force/torque sensor reports valid data again."
+    )
     name: str = "wait_sensor"
     monitor_profile: MonitorProfile = "sensor_wait"
     timeout_s: float = 12.0  # a backstop: the wait itself is bounded by max_wait_s
@@ -152,6 +161,10 @@ class WaitSensor:
 class InsertScripted:
     """Descend at a fixed speed until the plug reaches the expected depth (CheatCode-like)."""
 
+    description: ClassVar[str] = (
+        "Descends straight down at a fixed speed until the plug is in. "
+        "It does not twist the plug or correct XY."
+    )
     name: str = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
     timeout_s: float = 15.0
@@ -186,6 +199,11 @@ class InsertAct:
     the torque is gone, which frees a yaw mismatch. It does not correct XY.
     """
 
+    description: ClassVar[str] = (
+        "Learned insert policy (a stand-in in the mock): descends at half speed and twists "
+        "the plug while it meets torque, which frees a plug rotated against the port. "
+        "It does not correct XY."
+    )
     name: str = "insert_act"
     monitor_profile: MonitorProfile = "insertion"
     timeout_s: float = 20.0
@@ -224,6 +242,7 @@ class InsertAct:
 class Verify:
     """Hold still briefly, then check the plug is seated at full depth."""
 
+    description: ClassVar[str] = "Checks that the plug is seated at the expected depth."
     name: str = "verify"
     monitor_profile: MonitorProfile = "motion"
     timeout_s: float = 2.0

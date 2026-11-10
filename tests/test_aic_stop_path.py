@@ -122,9 +122,9 @@ def test_a_monitor_preemption_holds_the_arm(store: EventStore) -> None:
 
 
 def test_a_skill_timeout_holds_the_arm(store: EventStore) -> None:
-    # Every step reports 0.11 s of sim time: approach's 100 steps would take 11 s, past its
-    # 10 s timeout.
-    node = FakeNode(task=TASK, sim_per_sleep_s=0.11)
+    # Every step reports 0.22 s of sim time: approach's 100 steps would take 22 s, past its
+    # 20 s timeout (twice its 5 s at half speed, #59).
+    node = FakeNode(task=TASK, sim_per_sleep_s=0.22)
 
     assert run_goal(node, TASK, store) is False
 
