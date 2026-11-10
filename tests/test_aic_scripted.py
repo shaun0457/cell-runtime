@@ -26,7 +26,7 @@ from adapters.aic.skills import (
     AicVerify,
     descent_offsets,
 )
-from adapters.aic.world import AicWorld
+from adapters.aic.world import AicWorld, Geometry
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
 from cellrt.runtime.events import (
     Event,
@@ -168,6 +168,65 @@ def test_insertion_pushes_a_plug_on_until_it_rests_on_its_seat(store: EventStore
     assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
 
 
+@dataclass
+class _SpringsBack(FakeNode):
+    """While the tip would be 0-0.5 mm above the port frame, it reads `lift_m` higher: the
+    connector pushing back against the insertion for one step."""
+
+    lift_m: float = 0.00065
+
+    @property
+    def plug(self) -> Pose:
+        plug = super().plug
+        x, y, z = plug.position
+        if 0.0 < z - self.port.position[2] <= 0.0005:
+            return Pose(position=(x, y, z + self.lift_m), orientation=plug.orientation)
+        return plug
+
+
+def test_a_plug_that_rose_since_the_last_step_is_not_resting_on_its_seat(
+    store: EventStore,
+) -> None:
+    # As in the test above, the tip is in the seated band from step 10, at 0.8 mm. At step 11
+    # it would be at 0.3 mm but springs back to 0.95 mm: in the band, but 0.15 mm higher than
+    # a step ago, so still moving. Insertion goes on and ends on the seat as before.
+    node = _SpringsBack(task=TASK, plug_below_tcp_m=0.0021, seat_height_m=-0.00098)
+
+    assert run_goal(node, TASK, store) is True
+
+    started, finished = _skill(store, "insert_scripted")
+    assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
+    assert finished.ts - started.ts == pytest.approx(16 * 0.05)
+
+
+def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A retract is not a descent step: a height measured before it says nothing about whether
+    # the plug is still going down under insertion. The plug is pressed onto its seat far under
+    # the TCP, so it stays there while the arm rises 5 mm; the second insertion sends one step,
+    # sees the plug has not moved, and ends, recorded a tick later.
+    def insert_retract_insert(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        names = ["approach", "align", "insert_scripted", "retract", "insert_scripted"]
+        children = [SkillBehaviour(registry.get(name), env) for name in names]
+        return py_trees.composites.Sequence(name="insert", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", insert_retract_insert)
+    node = FakeNode(task=TASK)
+
+    assert run_goal(node, TASK, store) is True
+
+    events = _events(store)
+    started = [e for e in events if isinstance(e.payload, SkillStarted)][-1]
+    finished = [e for e in events if isinstance(e.payload, SkillFinished)][-1]
+    assert started.payload.skill == finished.payload.skill == "insert_scripted"
+    assert finished.payload.detail == {"height_mm": 0.0, "seated": True}
+    assert finished.ts - started.ts == pytest.approx(2 * 0.05)
+
+
 def test_a_plug_that_never_rests_on_a_seat_gets_the_whole_descent_and_fails_verify(
     store: EventStore,
 ) -> None:
@@ -290,23 +349,33 @@ def test_a_plug_on_its_seat_height_but_off_the_port_axis_fails_verify(
 # --- timeouts --------------------------------------------------------------------------------
 
 
+def _unread_geometry() -> Geometry:
+    raise AssertionError("not read for a timeout")
+
+
 @pytest.mark.parametrize(
-    ("skill", "nominal_s", "slowest"),
+    ("name", "full_speed_s", "half_speed_s"),
     [
-        (AicApproach, 100 * 0.05, 0.5),
-        (AicAlign, 380 * 0.05, 0.5),
-        (AicInsertScripted, 50 * 0.05, 0.5),
-        (AicVerify, 5.0, 1.0),
-        (AicRetract, 10 * 0.05, 1.0),
+        ("approach", 10.0, 20.0),
+        ("align", 38.0, 76.0),
+        ("insert_scripted", 5.0, 10.0),
+        ("verify", 10.0, 10.0),
+        ("retract", 1.0, 1.0),
     ],
 )
-def test_each_skills_timeout_is_twice_its_nominal_duration_at_its_slowest(
-    skill: type, nominal_s: float, slowest: float
+def test_each_skills_timeout_is_twice_its_nominal_duration_at_the_speed_it_runs(
+    name: str, full_speed_s: float, half_speed_s: float
 ) -> None:
-    # A recovery may run approach, align and insert at half speed (#59); verify only waits,
-    # and retract never runs slowed.
-    assert skill.timeout_s == pytest.approx(2 * nominal_s / slowest)
+    # At full speed approach takes 5 s, align 19 s and insertion 2.5 s, as CheatCode; a
+    # recovery may run them at half speed (#59), which takes twice as long. Verify only waits,
+    # and retract never runs slowed. A full-speed run does not wait out the slow timeout.
+    skill = aic_run.aic_registry(_unread_geometry).get(name)
+
+    assert skill.timeout_s == pytest.approx(full_speed_s)
+    assert skill.timeout_for({}) == pytest.approx(full_speed_s)
+    assert skill.timeout_for({"speed_scale": 0.5}) == pytest.approx(half_speed_s)
     assert skill.config()["timeout_s"] == skill.timeout_s
+    assert skill.config()["timeout_scales_with_speed"] is (half_speed_s != full_speed_s)
 
 
 def test_insertion_runs_under_the_monitors_insertion_rules() -> None:
@@ -349,6 +418,36 @@ def test_align_that_never_gets_within_1_mm_times_out(store: EventStore) -> None:
         if isinstance(e.payload, SkillStarted) and e.payload.skill == "align"
     ]
     assert end.duration - align.ts == pytest.approx(AicAlign.timeout_s, abs=0.1)
+
+
+def test_a_slowed_align_gets_twice_the_time_before_it_times_out(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same plug that never comes within 1 mm, under an align a recovery slowed to half
+    # speed: it times out at 76 s, not at the full-speed 38 s.
+    def slow_align(world: AicWorld, env: ExecEnv, goal: object) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry)
+        children = [
+            SkillBehaviour(registry.get("approach"), env),
+            SkillBehaviour(registry.get("align"), env, params={"speed_scale": 0.5}),
+        ]
+        return py_trees.composites.Sequence(name="slow", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", slow_align)
+    node = FakeNode(task=TASK, plug_xy_offset_m=(0.02, 0.0))
+
+    assert run_goal(node, TASK, store) is False
+
+    end = _end(store)
+    assert (end.outcome, end.reason) == ("failed", "align failed: TIMEOUT")
+    (verdict,) = [e.payload for e in _events(store) if isinstance(e.payload, MonitorVerdict)]
+    assert verdict.evidence["timeout_s"] == pytest.approx(76.0)
+    (align,) = [
+        e
+        for e in _events(store)
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "align"
+    ]
+    assert end.duration - align.ts == pytest.approx(76.0, abs=0.1)
 
 
 # --- retract ---------------------------------------------------------------------------------
@@ -449,3 +548,16 @@ def test_a_failing_feedback_call_does_not_stop_the_run(store: EventStore) -> Non
     node = FakeNode(task=TASK, fail_feedback=True)
 
     assert run_goal(node, TASK, store) is True
+
+
+def test_every_aic_skill_tells_the_planner_what_it_does() -> None:
+    # The model planner chooses by these descriptions; in the sim it was sent empty ones.
+    def no_geometry() -> Geometry:
+        raise AssertionError("not read when the registry is built")
+
+    registry = aic_run.aic_registry(no_geometry)
+
+    for name in registry.names():
+        description = getattr(registry.get(name), "description", "")
+        assert isinstance(description, str), name
+        assert description.strip(), name

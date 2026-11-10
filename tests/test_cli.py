@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from cellrt.runtime.events import Event, SkillStarted
 from cellrt.runtime.store import EventStore
@@ -72,6 +75,23 @@ def test_replay_of_unknown_run_fails_clearly(tmp_path: Path) -> None:
 
     assert replay.returncode != 0
     assert "no events for run nope/A/0/a1" in replay.stderr
+
+
+@pytest.mark.parametrize("command", ["replay", "trace"])
+def test_a_database_that_is_not_an_event_store_is_refused_and_left_alone(
+    tmp_path: Path, command: str
+) -> None:
+    db = tmp_path / "other.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE notes (text TEXT)")
+    conn.close()
+    before = db.read_bytes()
+
+    done = _cellrt(command, "r/A/0/a1", "--db", str(db))
+
+    assert done.returncode == 1
+    assert done.stderr == f"cannot read the event store at {db} (OperationalError)\n"
+    assert db.read_bytes() == before
 
 
 def test_a_setting_b_run_shows_its_recovery_in_the_replay(tmp_path: Path) -> None:

@@ -1,11 +1,13 @@
 """Approve a validated candidate, and load approved rules into an eval (ADR 021, ticket T3).
 
 `approve` reads a report `cellrt promote validate --out` wrote. It refuses a report unless all
-four gates passed with no failing window, the report was made under the Monitor configuration
-in use now, and the candidate in it still has the hash the report names. The approved file
-`eval/promoted/<NAME>.json` holds the rule, its plan, both hashes, that configuration and who
-approved it. An eval loads only these files: a promoted plan runs in settings B and C without
-the planner, and counts against the UNKNOWN class budget and the task budget.
+four gates passed with no failing window, gate 1 asked the group for at least the default
+number of windows, the report was made under the Monitor configuration in use now, and the
+candidate in it still has the hash the report names. The approved file
+`eval/promoted/<NAME>.json` holds its format version, the rule, its plan, both hashes, that
+configuration, the group size and who approved it. An eval loads only these files: a promoted
+plan runs in settings B and C without the planner, and counts against the UNKNOWN class budget
+and the task budget.
 
 Trust: the hashes catch a candidate edited after its report, or a configuration changed since,
 by accident. They are not signatures: anyone who can write the report or the approval directory
@@ -20,7 +22,7 @@ import dataclasses
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -29,11 +31,20 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
-from cellrt.monitor.promoted import Candidate, CandidateRefused, PromotedPlan, PromotedRule
+from cellrt.monitor.promoted import (
+    Candidate,
+    CandidateRefused,
+    PromotedPlan,
+    PromotedRule,
+    rules_overlap,
+)
+from cellrt.promotion.groups import DEFAULT_MIN_SIZE, MAX_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
-from cellrt.promotion.validate import REPORT_VERSION, check_registry
+from cellrt.promotion.validate import REPORT_VERSION, parse_checked
 from cellrt.skills.registry import SkillRegistry
 
+# The approved file's format. A file of another version is refused, never read as this one.
+ADOPTED_VERSION = 1
 APPROVER = re.compile(r"[A-Za-z][A-Za-z0-9 ._-]{0,63}")
 MAX_REPORT_CHARS = 3_000_000  # a report lists every run it replayed (20,000 at most)
 MAX_ADOPTED_CHARS = 20_000
@@ -65,6 +76,7 @@ class Adopted(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    adopted_version: int = Field(ge=ADOPTED_VERSION, le=ADOPTED_VERSION)
     rule: PromotedRule
     plan: PromotedPlan
     candidate_hash: str = Field(pattern=_HASH)
@@ -72,6 +84,8 @@ class Adopted(BaseModel):
     group: str = Field(min_length=1, max_length=MAX_GROUP_CHARS)
     # The replay configuration (Monitor inputs) the gates were checked under.
     config_parts: dict[str, str] = Field(max_length=MAX_CONFIG_PARTS)
+    # The windows gate 1 asked the group for: never fewer than the default.
+    min_size: int = Field(ge=DEFAULT_MIN_SIZE, le=MAX_MIN_SIZE)
     approved_by: str = Field(pattern=f"^{APPROVER.pattern}$")
 
     def candidate(self) -> Candidate:
@@ -89,10 +103,17 @@ class Promoted:
 
 
 def approve(
-    report: str, by: str, registry: SkillRegistry, parts: Mapping[str, str] | None = None
+    report: str,
+    by: str,
+    registry: SkillRegistry,
+    parts: Mapping[str, str] | None = None,
+    *,
+    approved: Iterable[PromotedRule] = (),
 ) -> Adopted:
     """The approved rule for a report whose gates all passed, approved by `by`. `parts` is the
-    replay configuration in use now (the mock's by default)."""
+    replay configuration in use now (the mock's by default). A candidate that can fire on the
+    same sample as one of the `approved` rules is refused; one with the same name is left to
+    `write_adopted`, which never replaces it."""
     expected = dict(ReplayConfig.mock().parts if parts is None else parts)
     if not APPROVER.fullmatch(by):
         raise ApprovalRefused("approver_invalid")
@@ -111,19 +132,28 @@ def approve(
     _check_gates(data.get("gates"))
     if data.get("config_parts") != expected:
         raise ApprovalRefused("config_stale")
+    # `--min-size 1` lets gate 1 pass on one window: a rule needs the evidence the default asks.
+    min_size = data.get("min_size")
+    if type(min_size) is not int or not DEFAULT_MIN_SIZE <= min_size <= MAX_MIN_SIZE:
+        raise ApprovalRefused("min_size")
     candidate = _checked(json.dumps(data.get("candidate")), registry)
     if candidate.digest() != data.get("candidate_hash"):
         raise ApprovalRefused("candidate_hash_mismatch")
     group = data.get("group")
     if not isinstance(group, str) or not 0 < len(group) <= MAX_GROUP_CHARS:
         raise ApprovalRefused("group_invalid")
+    rule = candidate.rule
+    if any(r.name != rule.name and rules_overlap(r, rule) for r in approved):
+        raise ApprovalRefused("rules_overlap")
     return Adopted(
+        adopted_version=ADOPTED_VERSION,
         rule=candidate.rule,
         plan=candidate.plan,
         candidate_hash=candidate.digest(),
         report_hash=hashlib.sha256(report.encode("utf-8")).hexdigest()[:16],
         group=group,
         config_parts=expected,
+        min_size=min_size,
         approved_by=by,
     )
 
@@ -183,6 +213,10 @@ def load_promoted(
         _checked(candidate.canonical(), registry)
         rules.append(adopted.rule)
         plans[adopted.rule.name] = adopted.plan
+    # Approval checks a candidate against the rules approved before it; a file copied in, or one
+    # approved before that check existed, meets the check only here.
+    if any(rules_overlap(a, b) for i, a in enumerate(rules) for b in rules[i + 1 :]):
+        raise ApprovalRefused("rules_overlap")
     # By name as a string, the same on every platform: the order is part of the Monitor's hash.
     rules.sort(key=lambda r: r.name)
     return Promoted(tuple(rules), MappingProxyType(plans))
@@ -227,14 +261,17 @@ def _read_adopted(path: Path) -> Adopted:
         raise ApprovalRefused("adopted_too_long")
     try:
         return Adopted.model_validate_json(raw)
-    except (ValidationError, ValueError, RecursionError):
+    except ValidationError as e:
+        # Missing (written before the version existed) or another one: not read as this one.
+        if any(err["loc"][:1] == ("adopted_version",) for err in e.errors()):
+            raise ApprovalRefused("adopted_version") from None
+        raise ApprovalRefused("adopted_invalid") from None
+    except (ValueError, RecursionError):
         raise ApprovalRefused("adopted_invalid") from None
 
 
 def _checked(raw: str, registry: SkillRegistry) -> Candidate:
     try:
-        candidate = Candidate.parse(raw)
-        check_registry(candidate, registry)
+        return parse_checked(raw, registry)
     except CandidateRefused:
         raise ApprovalRefused("candidate_refused") from None
-    return candidate

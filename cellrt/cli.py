@@ -65,7 +65,7 @@ from cellrt.promotion.groups import (
 )
 from cellrt.promotion.propose import PROPOSE_DEADLINE_S, PROPOSE_MAX_TOKENS, propose
 from cellrt.promotion.replay import ReplayConfig
-from cellrt.promotion.validate import GroupNotFound, check_registry, validate
+from cellrt.promotion.validate import GroupNotFound, parse_checked, validate
 from cellrt.replay import replay_lines
 from cellrt.runtime.events import Event
 from cellrt.runtime.store import EventStore
@@ -279,17 +279,35 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def _is_store_file(path: Path, db: Path) -> bool:
+    """`path` is the store or one of the files SQLite keeps beside a live one."""
+    siblings = (db.with_name(db.name + s) for s in ("-wal", "-shm", "-journal"))
+    return _same_file(path, db) or any(_same_file(path, s) for s in siblings)
+
+
 def _write_whole(path: Path, text: str, *, what: str) -> None:
     """Write `text` to `path` through a temporary file beside it, so an interrupted or failed
-    write leaves the old file whole. A failure names `what` and the error type only."""
-    tmp = path.with_name(path.name + ".tmp")
+    write leaves the old file whole. The temporary file has a name no other file has, so the
+    write touches nothing but `path`. A failure names `what` and the error type only."""
+    tmp: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text, encoding="utf-8", newline="\n")
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp = Path(f.name)
+            f.write(text)
         os.replace(tmp, path)
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
         _fail(f"cannot write {what} {path} ({type(exc).__name__})")
 
 
@@ -507,14 +525,18 @@ def promote_validate(
     the rule, not its plan; the report says so. Exits 1 unless every gate passes."""
     if not db.is_file():  # never create a store that is not there
         _fail(f"no event store at {db}")
+    # Before the replay: the report would replace what it was made from, the store for good.
+    if out is not None and _is_store_file(out, db):
+        _fail("--out is the event store itself; no report written")
+    if out is not None and _same_file(out, candidate):
+        _fail("--out is the candidate itself; no report written")
     try:
         with candidate.open(encoding="utf-8") as f:
             raw = f.read(MAX_CANDIDATE_CHARS + 1)  # the parser refuses anything longer
     except (OSError, UnicodeDecodeError) as exc:
         _fail(f"cannot read the candidate at {candidate} ({type(exc).__name__})")
     try:
-        parsed = Candidate.parse(raw)
-        check_registry(parsed, mock_registry())
+        parsed = parse_checked(raw, mock_registry())
         report = validate(
             _runs_of("store", db), parsed, group, ReplayConfig.mock(), min_size=min_size
         )
@@ -523,10 +545,7 @@ def promote_validate(
     for line in report.lines():
         typer.echo(line)
     if out is not None:
-        try:
-            out.write_text(json.dumps(report.as_dict(), indent=2) + "\n", encoding="utf-8")
-        except OSError as exc:
-            _fail(f"cannot write the report at {out} ({type(exc).__name__})")
+        _write_whole(out, json.dumps(report.as_dict(), indent=2) + "\n", what="the report")
     if not report.passed:
         raise typer.Exit(code=1)
 
@@ -542,15 +561,20 @@ def promote_approve(
     ] = DEFAULT_PROMOTED,
 ) -> None:
     """Approve the candidate of a report whose gates all passed: write `<dir>/<NAME>.json`.
-    Refuses a report with a failed gate or whose candidate no longer has the hash it names,
-    and never replaces an approved rule (ADR 021)."""
+    Refuses a report with a failed gate or whose candidate no longer has the hash it names, a
+    rule that can fire on the same sample as one already approved, and never replaces an
+    approved rule (ADR 021)."""
     try:
         with report.open(encoding="utf-8") as f:
             raw = f.read(MAX_REPORT_CHARS + 1)  # approval refuses anything longer
     except (OSError, UnicodeDecodeError) as exc:
         _fail(f"cannot read the report at {report} ({type(exc).__name__})")
+    try:  # a refusal here is about a file already there, not about this report
+        approved = load_promoted(directory, mock_registry()).rules if directory.is_dir() else ()
+    except ApprovalRefused as exc:
+        _fail(f"approved rules in {directory}: {exc}")
     try:
-        adopted = approve(raw, by, mock_registry())
+        adopted = approve(raw, by, mock_registry(), approved=approved)
         path = write_adopted(adopted, directory)
     except ApprovalRefused as exc:
         _fail(str(exc))
@@ -593,7 +617,7 @@ def promote_propose(
     # the other would lose the record of the call.
     outputs = [("--out", out), *([("--candidate-out", candidate_out)] if candidate_out else [])]
     for i, (name, path) in enumerate(outputs):
-        if _same_file(path, db):
+        if _is_store_file(path, db):
             _fail(f"{name} is the event store itself; nothing sent")
         if any(_same_file(path, other) for _, other in outputs[:i]):
             _fail(f"{name} is the same file as --out; nothing sent")
@@ -607,7 +631,7 @@ def promote_propose(
         runs = survey(_runs_of("store", db), ReplayConfig.mock())
     except (StoreRefused, SurveyTooLarge) as exc:
         _fail(str(exc))
-    lines, passed = gate_0(runs)
+    lines, passed, _ = gate_0(runs)
     if not passed:  # groups from a store the replay cannot reproduce mean nothing
         _fail("\n".join(lines))
     groups = group_unknowns(runs)
@@ -654,7 +678,7 @@ def _runs_of(label: str, path: Path) -> Iterator[list[Event]]:
     while its runs are read. A store that cannot be read is refused by the error's type, never
     its text, which can quote the database."""
     try:
-        with EventStore(path) as store:
+        with EventStore(path, read_only=True) as store:
             for run in store.runs():
                 yield store.events(run.run_id)
     except (sqlite3.Error, OSError, ValueError) as exc:  # pydantic's ValidationError included
@@ -701,8 +725,12 @@ def _run_events(run_id: str, db: Path) -> list[Event]:
     """Every event of `run_id`, or exit with a fixed message. A missing store is not created."""
     if not db.exists():
         _fail(f"no events for run {run_id} (no event store at {db})")
-    with EventStore(db) as store:
-        events = store.events(run_id)
+    try:
+        with EventStore(db, read_only=True) as store:
+            events = store.events(run_id)
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pydantic's ValidationError included
+        # By type only: the error's text can quote the database.
+        _fail(f"cannot read the event store at {db} ({type(exc).__name__})")
     if not events:
         _fail(f"no events for run {run_id}")
     return events

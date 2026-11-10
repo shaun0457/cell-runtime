@@ -100,6 +100,35 @@ def test_an_approved_rule_is_not_replaced(passed_report: Path, tmp_path: Path) -
     assert "Shaun Chen" in (tmp_path / "PLUG_ROTATED.json").read_text(encoding="utf-8")
 
 
+def test_a_rule_that_overlaps_an_approved_one_is_refused(
+    passed_report: Path, phase3_store: Path, tmp_path: Path
+) -> None:
+    directory = tmp_path / "promoted"
+    assert _approve(passed_report, directory).returncode == 0
+    twin = _report(phase3_store, tmp_path, name="PLUG_TWISTED")  # the same conditions
+    assert json.loads(twin.read_text(encoding="utf-8"))["passed"] is True
+    done = _approve(twin, directory)
+    assert done.returncode == 1
+    assert "approval refused: rules_overlap" in done.stderr
+    assert not (directory / "PLUG_TWISTED.json").exists()
+
+
+def test_a_broken_file_already_in_the_directory_is_named_as_the_cause(
+    passed_report: Path, tmp_path: Path
+) -> None:
+    # An approved file gone stale (the Monitor changed since) refuses the next approval; the
+    # message points at the directory, not at the new report.
+    directory = tmp_path / "promoted"
+    assert _approve(passed_report, directory).returncode == 0
+    path = directory / "PLUG_ROTATED.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["config_parts"]["monitor"] = "0" * 16
+    path.write_text(json.dumps(data), encoding="utf-8")
+    done = _approve(passed_report, directory)
+    assert done.returncode == 1
+    assert f"approved rules in {directory}: approval refused: config_stale" in done.stderr
+
+
 def test_a_report_with_a_failed_gate_is_refused(phase3_store: Path, tmp_path: Path) -> None:
     report = _report(phase3_store, tmp_path, window_s=2.0)  # misses every window: gate 1 fails
     done = _approve(report, tmp_path / "promoted")

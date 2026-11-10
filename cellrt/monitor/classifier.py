@@ -65,8 +65,9 @@ class MonitorConfig:
             raise ValueError("promoted rules must have distinct names")
 
     def as_dict(self) -> dict[str, object]:
-        """Plain values, for `config_hash`. Promoted rules count only when there are any, so a
-        run without them keeps the hash it had before they existed."""
+        """Plain values, for `config_hash`. Promoted rules count only when there are any, so
+        without them this part of the hash is the one it was before they existed. The run's
+        whole hash still changed with them: it covers the code (ADR 010)."""
         out: dict[str, object] = {
             f.name: getattr(self, f.name) for f in fields(self) if f.name != "promoted"
         }

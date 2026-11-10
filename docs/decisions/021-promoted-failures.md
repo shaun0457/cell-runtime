@@ -66,7 +66,7 @@ and the task budget.
 ### 3. Where a promoted rule sits in the Monitor's order
 
 #### Option A — after the known-class rules, before `insert_stalled`
-Order: dropout, force limit, stuck, pose error, promoted rules (in file order), stalled.
+Order: dropout, force limit, stuck, pose error, promoted rules (in name order), stalled.
 - Pros: on the same sample a known class or a safety verdict always wins; a promoted rule only
   takes verdicts that would have been UNKNOWN or none.
 - Cons: a promoted rule can still fire on an earlier sample than a known rule would have; the
@@ -134,13 +134,22 @@ samples it replayed, and those came from one skill.
   `promoted: Mapping[str, PromotedPlan]`, keyed by rule name. Both enter their config's hash only
   when non-empty.
 - Approval is a file: `cellrt promote approve REPORT --by NAME` refuses a report unless all four
-  gates passed with no failing window, the report was made under the Monitor configuration in
-  use now, and its candidate still has the hash the report names. It writes
-  `eval/promoted/<NAME>.json` (rule, plan, candidate and report hashes, that configuration,
-  approver) and never replaces an approved rule. `cellrt eval --promoted DIR` loads at most 16
-  such files and checks each again (file name, configuration, hash, registered skills) before
-  the store is opened. A rule approved under other Monitor thresholds or mock parameters is
-  refused as `config_stale`: its gates vouched for a Monitor that no longer runs.
+  gates passed with no failing window, gate 1 asked the group for at least the default 3
+  windows (`validate --min-size 1` would let one window pass it), the report was made under the
+  Monitor configuration in use now, and its candidate still has the hash the report names. It
+  writes `eval/promoted/<NAME>.json` (format version, rule, plan, candidate and report hashes,
+  that configuration, the group size, approver) and never replaces an approved rule.
+  `cellrt eval --promoted DIR` loads at most 16 such files and checks each again (format
+  version, file name, configuration, hash, registered skills) before the store is opened.
+  A rule approved under other Monitor thresholds or mock parameters is refused as
+  `config_stale`: its gates vouched for a Monitor that no longer runs.
+- The name order is not a priority: it only makes the Monitor's hash the same on every
+  platform. So no two promoted rules may fire on the same sample. Approval refuses a candidate
+  that could (`rules_overlap`), and so does the load, for files approved before that check or
+  copied in. Two rules overlap when they watch the same skill and some reading meets every
+  condition of both, field by field; `progress_mm` separates two rules only when their windows
+  are the same, since it is the descent over each rule's own window. The check takes readings as
+  unbounded, so it may refuse a pair that only a force below 0 N would meet both of.
 - A model's proposal (`cellrt promote propose`, one call per group) is a candidate like a
   hand-written one: the same parser, registry check, gates and approval. The model sees the
   group's readings and the rule language, never run ids or fault labels (ADR 015), and the
@@ -158,8 +167,9 @@ samples it replayed, and those came from one skill.
 - Setting B gets the insert-skill alternatives it had no use for before, when a promoted plan
   switches skill, so a switch goes through the same option check as a planner's.
 - An `abort` or `escalate` plan ends the run as `aborted`, with the rule named in the reason; it
-  starts no recovery, so it spends no budget. The other plans emit `recovery_started` with the
-  action `promoted:<NAME>:<action>` and count against both budgets.
+  emits `promoted_stopped` (event schema 13) and starts no recovery, so it spends no budget.
+  The other plans emit `recovery_started` with the action `promoted:<NAME>:<action>` and count
+  against both budgets.
 - The log carries the rule on every verdict (`promoted:<NAME>`) and every promoted recovery. The
   eval reports do not yet group UNKNOWN by rule; that column is a follow-up.
 - A rule is removed by deleting its file under `eval/promoted/`; the runs made with it keep their

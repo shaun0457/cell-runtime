@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import TracebackType
 
 from cellrt.runtime.events import Event, parse_stored
@@ -65,26 +65,66 @@ RUNS_SQL = (
 )
 
 
+def read_only_uri(path: PurePath) -> str:
+    """The SQLite URI that opens the absolute `path` read-only. `as_uri()` escapes `?`, `#`
+    and `%`, so no part of a path becomes a URI parameter. It puts a UNC path's server in the
+    authority, which SQLite refuses; the form with an empty authority and the server in the
+    path (`file:////server/share/...`) names the same file."""
+    uri = path.as_uri()
+    if not uri.startswith("file:///"):
+        uri = "file:////" + uri.removeprefix("file://")
+    return f"{uri}?mode=ro"
+
+
+class ReadOnlyStore(RuntimeError):
+    """An append to a store opened read-only."""
+
+    def __init__(self) -> None:
+        super().__init__("the event store is open read-only: nothing was appended")
+
+
 class EventStore:
     """Writes are buffered: a non-signal event, or a full buffer, flushes everything pending.
 
     So a crash loses at most `buffer_limit` signal samples, never a decision event.
+
+    `read_only` is for the commands that only read a store (replay, trace, agent-report,
+    promote): SQLite opens the file with `mode=ro`, so a missing file is not created, the
+    tables are not added to a database that is not a store, and the journal mode is left as it
+    is; reading a table that is not there raises `sqlite3.Error`. Reading a store in WAL mode
+    may still create its `-shm` and `-wal` files beside it, which SQLite needs to read one.
     """
 
-    def __init__(self, path: Path | str, *, buffer_limit: int = DEFAULT_BUFFER_LIMIT) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        buffer_limit: int = DEFAULT_BUFFER_LIMIT,
+        read_only: bool = False,
+    ) -> None:
         if buffer_limit < 1:
             raise ValueError("buffer_limit must be at least 1")
         self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
+        self._read_only = read_only
+        if read_only:
+            self._conn = sqlite3.connect(read_only_uri(self._path.resolve()), uri=True)
+            # A file from elsewhere may hold views or triggers of its own: run none of their
+            # functions with side effects, and refuse any write at all.
+            self._conn.execute("PRAGMA trusted_schema=OFF")
+            self._conn.execute("PRAGMA query_only=ON")
+        else:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self._path)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.executescript(_SCHEMA)
         self._buffer: list[_Row] = []
         self._buffer_limit = buffer_limit
         self._crash_after = _crash_after_from_env()
         self._appended = 0
 
     def append(self, event: Event) -> None:
+        if self._read_only:
+            raise ReadOnlyStore()
         self._buffer.append(
             (
                 event.run_id,

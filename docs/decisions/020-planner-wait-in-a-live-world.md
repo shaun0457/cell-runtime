@@ -181,12 +181,27 @@ shortest.
   call short (`planner_preempted`).
 - The deadline is checked when a step returns. A world step that blocks is bounded by the world
   itself (`AicWorld` stops a run whose sim clock stalls), not by this check.
+- A blocking step also blocks the loop. With an async HTTP client a request could only move
+  while the loop was free, so each network round trip waited out a step, and sim latencies
+  included that (#64 review F4). The NIM client now makes the request on a thread of its own
+  (ADR 017): it goes on during a step, and only the answer waits, at most one step, for the
+  loop to read it. The world and the skills stay on the loop's one thread (ADR 003). A thread
+  cannot be cancelled: a cancelled call ends at once, its request runs on until it is answered
+  or the SDK's timeout ends it, and its answer is dropped. The sim latencies in
+  `docs/sim-results.md` were measured before this change.
 - Schema version 9: replay, trace export and the agent report read the new event and field. Rows
   of earlier versions still read.
 - Schema version 10 (`planner_decided.waited_sim_s`): replay and trace export show it. A
   refused stale answer is a `planner_output_rejected` with the code
   `skill: preconditions_not_met`; the agent report counts it as stale, not invalid, and the
   run ends "planner answer no longer applies". Like a rejection, it spends no recovery.
+- No registered skill has a precondition yet, so the recheck rejects nothing today (#64 review
+  F2). A precondition that fails ends the step with no failure class, so recovery has nothing to
+  act on, while a plug off the axis or a stale wrench is a Monitor verdict with a plan. A
+  precondition on AIC insertion (within 1 mm of the axis) would refuse the reruns that skip
+  align: after a FORCE_LIMIT retract, a sensor wait, a TIMEOUT retry. A like condition in the
+  mock took B's success from 0.619 to 0.571, so it was not kept. The recheck is for a skill whose
+  start needs a state the Monitor does not classify.
 - ADR 016's "Open: AIC" is closed by this ADR, and ADR 016 still holds for the mock. Of its
   three to-dos: a cancel is now seen within a step; the time limit ends a run during a call, but
   the call's deadline is not yet set below the time left; hold behaviour during a long call is

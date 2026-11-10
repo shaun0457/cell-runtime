@@ -30,7 +30,7 @@ from cellrt.monitor.classifier import FailureClass
 from cellrt.monitor.promoted import NAME_PATTERN, PROMOTED_PREFIX, PromotedPlan
 from cellrt.planner.base import FailureContext, Planner
 from cellrt.planner.schemas import PRECONDITIONS_NOT_MET, Abort, Escalate, Retry, SwitchSkill
-from cellrt.runtime.events import RecoveryStarted
+from cellrt.runtime.events import PromotedStopped, RecoveryStarted
 from cellrt.runtime.recorder import Recorder
 from cellrt.skills.registry import SkillRegistry
 
@@ -110,8 +110,9 @@ class RecoveryConfig:
 
     def as_dict(self) -> dict[str, object]:
         """Every parameter but the planner budget, which counts only where there is a planner.
-        Promoted plans count only when there are any, so a run without them keeps the hash it
-        had before they existed."""
+        Promoted plans count only when there are any, so without them this part of the hash is
+        the one it was before they existed. The run's whole hash still changed with them: it
+        covers the code (ADR 010)."""
         data: dict[str, object] = {
             f.name: getattr(self, f.name)
             for f in dataclasses.fields(self)
@@ -269,7 +270,8 @@ class Recovering(py_trees.composites.Composite):
         step fails or the run stops."""
         skill = node.skill.name
         unknown = FailureClass.UNKNOWN.value
-        if plan.action in ("abort", "escalate"):
+        if plan.action == "abort" or plan.action == "escalate":
+            self._env.recorder.emit(PromotedStopped(skill=skill, rule=name, action=plan.action))
             self.aborted = True  # the run ends aborted, as a planner's abort or escalation does
             self.failure_reason = f"{skill} failed: UNKNOWN (promoted {name}: {plan.action})"
             return False
@@ -486,11 +488,7 @@ def _planner_for(
     if registry.get(step).monitor_profile != "insertion" or (planner is None and not switches):
         return None, {}
     slow_scale = config.slow_speed_scale
-    others = [
-        n
-        for n in sorted(registry.names())
-        if n != step and registry.get(n).monitor_profile == "insertion"
-    ]
+    others = [n for n in registry.insertion_skills() if n != step]
     alternatives = {
         n: (
             SkillBehaviour(registry.get(n), env, name=f"{n}@{step}"),

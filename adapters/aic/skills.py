@@ -25,7 +25,8 @@ what CheatCode does.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import ClassVar
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
 from adapters.aic.geometry import XYIntegrator, gripper_target, xy_integrator_at, z_offset_at
@@ -40,42 +41,88 @@ from cellrt.skills.base import SkillContext, SkillResult
 APPROACH_STEPS = 100
 APPROACH_HEIGHT_M = 0.2
 # The slowest a recovery may run a skill (`RecoveryConfig.slow_speed_scale`, 0.5 by default).
-# A skill that moves gets twice its duration at this speed as its timeout.
+# A skill's timeout is twice its duration at the speed it runs (`_AicSkill.timeout_for`).
 SLOWEST_SCALE = 0.5
 
 
 def speed_scale(ctx: SkillContext) -> float:
-    """The `speed_scale` a recovery's slow variant passes (1.0 otherwise). Slower than
-    SLOWEST_SCALE the skill would run into its timeout, so that is refused."""
-    scale = float(ctx.params.get("speed_scale", 1.0))
+    """The `speed_scale` a recovery's slow variant passes (1.0 otherwise)."""
+    return _scale_of(ctx.params)
+
+
+def _scale_of(params: Mapping[str, object]) -> float:
+    """The `speed_scale` in `params`, 1.0 without one. Anything but a number from
+    SLOWEST_SCALE to 1 raises ValueError: the same bound `run_goal` checks a recovery's slow
+    speed against before anything runs."""
+    raw = params.get("speed_scale", 1.0)
+    scale = float(raw) if isinstance(raw, int | float | str) else math.nan
     if not SLOWEST_SCALE <= scale <= 1.0:
         raise ValueError("speed_scale out of range")
     return scale
 
 
-class AicApproach:
-    """Move to CheatCode's approach pose above the port (z_offset 0.2), aligned with it."""
+class _AicSkill:
+    name: str
+    monitor_profile: MonitorProfile
+    timeout_s: float  # twice the skill's duration at full speed
+    # Whether a recovery may slow the skill down (`speed_scale`), so its time grows with it.
+    scales_with_speed: ClassVar[bool] = False
 
-    name = "approach"
-    monitor_profile: MonitorProfile = "motion"
-    timeout_s = 2 * 5.0 / SLOWEST_SCALE  # twice CheatCode's 5 s, at the slowest speed
+    def preconditions(self, state: RunState) -> bool:
+        """Every AIC skill can start in any state a run reaches. A precondition that fails ends
+        the step with no failure class, so recovery has nothing to act on; a plug off the axis or
+        a stale wrench is the Monitor's to classify (POSE_ERROR, SENSOR_DROPOUT, after their
+        0.2 s), and recovery has a plan for each. The slow rerun after a FORCE_LIMIT retract, the
+        rerun after a sensor wait and a TIMEOUT retry start insertion without align, and its
+        descent corrects XY on the way down. (#64 review F2 tried insertion within 1 mm of the
+        axis: it would refuse those reruns, and in the mock a like condition, with align's
+        0.3 mm, took B's success from 0.619 to 0.571.)"""
+        return True
 
-    def __init__(self, geometry: Callable[[], Geometry]) -> None:
-        self._geometry = geometry
+    def timeout_for(self, params: Mapping[str, object]) -> float:
+        """The timeout of a run with these params: twice its duration at the speed it runs,
+        so `timeout_s` over `speed_scale` for a skill that slows down. A scale the run itself
+        refuses (`speed_scale`) keeps `timeout_s`."""
+        if not self.scales_with_speed:
+            return self.timeout_s
+        try:
+            return self.timeout_s / _scale_of(params)
+        except ValueError:
+            return self.timeout_s
 
     @classmethod
     def config(cls) -> dict[str, object]:
         """What defines the skill's behaviour, for the run's config hash."""
         return {
             "type": cls.__qualname__,
-            "steps": APPROACH_STEPS,
-            "height_m": APPROACH_HEIGHT_M,
             "timeout_s": cls.timeout_s,
+            "timeout_scales_with_speed": cls.scales_with_speed,
             "monitor_profile": cls.monitor_profile,
+            **cls._parameters(),
         }
 
-    def preconditions(self, state: RunState) -> bool:
-        return True
+    @classmethod
+    def _parameters(cls) -> dict[str, object]:
+        return {}
+
+
+class AicApproach(_AicSkill):
+    """Move to CheatCode's approach pose above the port (z_offset 0.2), aligned with it."""
+
+    description: ClassVar[str] = (
+        "Moves the plug to a point 20 cm above the port, turned to line up with it."
+    )
+    name = "approach"
+    monitor_profile: MonitorProfile = "motion"
+    timeout_s = 2 * 5.0  # twice CheatCode's 5 s
+    scales_with_speed = True
+
+    def __init__(self, geometry: Callable[[], Geometry]) -> None:
+        self._geometry = geometry
+
+    @classmethod
+    def _parameters(cls) -> dict[str, object]:
+        return {"steps": APPROACH_STEPS, "height_m": APPROACH_HEIGHT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         steps = round(APPROACH_STEPS / speed_scale(ctx))
@@ -117,8 +164,9 @@ VERIFY_SETTLE_S = 5.0  # CheatCode's wait for the connector to settle
 SEATED_MAX_HEIGHT_MM = 1.0
 SEATED_MIN_HEIGHT_MM = -3.0
 SEATED_MAX_XY_MM = 2.0
-# Insertion stops at the seat: in the band and no longer going down, by less than this since
-# the previous command (one commanded step is 0.5 mm). A plug still going down is pushed on.
+# Insertion stops at the seat: in the band and no longer moving, by less than this either way
+# since the previous command (one commanded step is 0.5 mm). A plug still going down, or
+# springing back up, is pushed on.
 SEATED_STILL_MM = 0.1
 SEATED = {
     "max_height_mm": SEATED_MAX_HEIGHT_MM,
@@ -179,7 +227,8 @@ class Descent:
 
     def __init__(self) -> None:
         self.integrator = XYIntegrator()
-        self.last_height_mm: float | None = None  # the tip's height at the last command
+        # The tip's height at the last descent command; None after a retract, which is not one.
+        self.last_height_mm: float | None = None
         self.z_offset_m: float | None = None  # the last z_offset commanded
         self._unbroken = True  # every descent run so far ran to its end, and no retract
 
@@ -194,8 +243,11 @@ class Descent:
         self._unbroken = True
 
     def interrupt(self) -> None:
-        """A retract moved the arm off the descent: the next run goes on from where it is."""
+        """A retract moved the arm off the descent: the next run goes on from where it is, and
+        judges whether the plug is still from its own first step, not from a height measured
+        before the retract."""
         self._unbroken = False
+        self.last_height_mm = None
 
     def command(self, ctx: SkillContext, g: Geometry, z_offset_m: float) -> None:
         self.last_height_mm, _ = plug_to_port_mm(g.port, g.plug)
@@ -226,36 +278,18 @@ def seated(g: Geometry) -> tuple[bool, float]:
     return in_band and math.hypot(dx, dy) <= SEATED_MAX_XY_MM, height_mm
 
 
-class _AicSkill:
-    name: str
-    monitor_profile: MonitorProfile
-    timeout_s: float
-
-    def preconditions(self, state: RunState) -> bool:
-        return True
-
-    @classmethod
-    def config(cls) -> dict[str, object]:
-        """What defines the skill's behaviour, for the run's config hash."""
-        return {
-            "type": cls.__qualname__,
-            "timeout_s": cls.timeout_s,
-            "monitor_profile": cls.monitor_profile,
-            **cls._parameters(),
-        }
-
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
-        return {}
-
-
 class AicAlign(_AicSkill):
     """Descend to 10 mm above the port (z_offset 0.01) with CheatCode's XY correction, then
     keep correcting there until the plug is within 1 mm of the port axis."""
 
+    description: ClassVar[str] = (
+        "Descends to 10 mm above the port while correcting XY, then holds there until the "
+        "plug is within 1 mm of the port axis."
+    )
     name = "align"
     monitor_profile: MonitorProfile = "motion"
-    timeout_s = 2 * ALIGN_STEPS * STEP_S / SLOWEST_SCALE
+    timeout_s = 2 * ALIGN_STEPS * STEP_S
+    scales_with_speed = True
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry
@@ -285,9 +319,14 @@ class AicInsertScripted(_AicSkill):
     as the plug rests on its seat (seated, and no longer going down). Pushing on would only
     press it into the seat, which the Monitor cannot tell from a jam (#28)."""
 
+    description: ClassVar[str] = (
+        "Descends into the port in 0.5 mm steps, still correcting XY, and stops once the plug "
+        "rests on its seat. It does not twist the plug."
+    )
     name = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
-    timeout_s = 2 * INSERT_STEPS * STEP_S / SLOWEST_SCALE
+    timeout_s = 2 * INSERT_STEPS * STEP_S
+    scales_with_speed = True
 
     def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
         self._geometry = geometry
@@ -310,7 +349,7 @@ class AicInsertScripted(_AicSkill):
             g = self._geometry()
             on_seat, height_mm = seated(g)
             before = self._descent.last_height_mm
-            if on_seat and before is not None and before - height_mm < SEATED_STILL_MM:
+            if on_seat and before is not None and abs(before - height_mm) < SEATED_STILL_MM:
                 self._descent.finished()
                 detail = {"height_mm": round(height_mm, 3), "seated": True}
                 return SkillResult(ok=True, detail=detail)
@@ -326,6 +365,9 @@ class AicVerify(_AicSkill):
     """Wait for the connector to settle (the arm holds: the executor sent HOLD when insertion
     ended), then check from ground truth that the plug tip is seated in the port."""
 
+    description: ClassVar[str] = (
+        "Holds for 5 s while the connector settles, then checks that the plug is seated."
+    )
     name = "verify"
     monitor_profile: MonitorProfile = "motion"
     timeout_s = 2 * VERIFY_SETTLE_S
@@ -358,6 +400,7 @@ class AicRetract(_AicSkill):
     different things. Given the descent, it marks it interrupted, so the next align or insert
     goes on down from where the arm is measured after the retract."""
 
+    description: ClassVar[str] = "Lifts the plug 5 mm straight up from where it is."
     name = "retract"
     monitor_profile: MonitorProfile = "unload"
     timeout_s = 2 * RETRACT_STEPS * STEP_S

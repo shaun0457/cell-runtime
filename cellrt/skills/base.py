@@ -36,6 +36,9 @@ class Skill(Protocol):
 
     It may block only on the clock (one sleep at a time) and must not start tasks of its own:
     the main loop's lockstep relies on both (see `TaskTracker`).
+
+    A skill whose run time depends on its params (a recovery may slow it down) may also define
+    `timeout_for(params) -> float`; the executor then uses it in place of `timeout_s`.
     """
 
     @property
@@ -47,6 +50,11 @@ class Skill(Protocol):
     @property
     def monitor_profile(self) -> MonitorProfile:
         """Which Monitor rules apply while the skill runs (see `MonitorProfile`)."""
+        ...
+
+    @property
+    def description(self) -> str:
+        """What the skill does, in one or two sentences: a model planner chooses by it."""
         ...
 
     def preconditions(self, state: RunState) -> bool: ...

@@ -26,7 +26,10 @@ uv run cellrt replay baseline/A/0/a1                         # every step; add -
 uv run cellrt trace yaw_mismatch/C/0/a1 --out runs/yaw.json  # the run as a trace for Perfetto
 ```
 
-Events go to `runs/cellrt.sqlite` by default (`--db` to change).
+Events go to `runs/cellrt.sqlite` by default (`--db` to change). The commands that only read a
+store (`replay`, `trace`, `agent-report`, `promote`) open it read-only: they never create one,
+and refuse a database that is not one without changing it. SQLite may still create a store's
+`-shm` and `-wal` files beside it to read it.
 
 `cellrt trace` writes Chrome trace event JSON (stdout without `--out`); open it in
 <https://ui.perfetto.dev> or `chrome://tracing`. It has spans for the run, each skill run and
@@ -133,7 +136,10 @@ with a candidate rule (a JSON file: a rule in a small, bounded language and its 
 checks four gates: the replay
 reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
 other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
-passed under the Monitor configuration in use now, with the approver's name. `eval --promoted
+passed under the Monitor configuration in use now, with the approver's name. It refuses a
+report validated with `--min-size` below the default 3 windows, a rule that could fire on the
+same sample as one already approved (`rules_overlap`), and any approval while a file already in
+`--dir` no longer loads (the message names the directory). `eval --promoted
 DIR` runs with the approved rules, whose plans run in B and C without the planner:
 
 ```sh
@@ -220,8 +226,8 @@ the verdict is UNKNOWN. A descent run that starts after a broken one (stopped, t
 after a retract), such as a retry, goes on from where the arm is measured to be, so it does not
 jump to the targets lost in the dropout. The next target still jumps when the link comes back
 inside a run, or after a run that ran to its end while its commands were lost (align, then
-insert_scripted). `onset_height_mm` is at most 40, so a slow retry from where the plug hangs
-fits in insert_scripted's timeout. The onset
+insert_scripted). `onset_height_mm` is at most 30, so a retry from where the plug hangs fits in
+insert_scripted's timeout, also on sim steps longer than 50 ms. The onset
 is keyed to height, not to a skill, because the plug seats during align in the sim. The fault
 is recorded as `fault_injected` and `fault_cleared` and is part of the run's configuration
 hash. A bad value in any of these variables refuses every

@@ -10,7 +10,7 @@ import pytest
 from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import load_scenarios
 from cellrt.monitor.classifier import MonitorConfig
-from cellrt.monitor.promoted import PromotedRule
+from cellrt.monitor.promoted import CandidateRefused, PromotedRule
 from cellrt.promotion.replay import ReplayConfig, replay_run
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
@@ -348,6 +348,14 @@ PRESSING = PromotedRule.model_validate_json(
     '{"field": "force_n", "op": ">", "value": 2.0},'
     ' {"field": "progress_mm", "op": "<", "value": 0.2}]}'
 )
+
+
+def test_a_candidate_named_like_a_promoted_rule_is_refused_as_a_candidate() -> None:
+    # The Monitor refuses two rules of one name; a candidate's refusal says where, as the
+    # parser's do, instead of the Monitor's bare ValueError.
+    config = ReplayConfig.mock(monitor=MonitorConfig(promoted=(PRESSING,)))
+    with pytest.raises(CandidateRefused, match=r"rule\.name: same_as_a_promoted_rule"):
+        replay_run([], config, candidate=PRESSING)
 
 
 @pytest.mark.parametrize(

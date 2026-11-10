@@ -15,6 +15,7 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
 from cellrt.monitor.promoted import Candidate
 from cellrt.promotion.adopt import (
+    ADOPTED_VERSION,
     MAX_ADOPTED_CHARS,
     MAX_GROUP_CHARS,
     MAX_PROMOTED_RULES,
@@ -27,7 +28,9 @@ from cellrt.promotion.adopt import (
     with_promoted,
     write_adopted,
 )
+from cellrt.promotion.groups import DEFAULT_MIN_SIZE, MAX_MIN_SIZE
 from cellrt.promotion.replay import ReplayConfig
+from cellrt.promotion.validate import REPORT_VERSION
 from cellrt.skills.mock import mock_registry
 
 RULE: dict[str, Any] = {
@@ -57,11 +60,12 @@ def _report(validated: Candidate | None = None, **over: Any) -> str:
     """A report as `cellrt promote validate --out` writes it (the fields approval reads)."""
     validated = validated or _candidate()
     data: dict[str, Any] = {
-        "report_version": 1,
+        "report_version": REPORT_VERSION,
         "candidate": validated.model_dump(mode="json"),
         "candidate_hash": validated.digest(),
         "group": "insert_scripted/insert_stalled force <10 N torque >=0.1 Nm",
         "config_parts": dict(ReplayConfig.mock().parts),
+        "min_size": DEFAULT_MIN_SIZE,
         "gates": GATES,
         "passed": True,
     }
@@ -77,6 +81,11 @@ def test_a_passed_report_is_approved_by_a_named_person() -> None:
     assert adopted.approved_by == "Shaun Chen"
     assert adopted.candidate_hash == _candidate().digest()
     assert len(adopted.report_hash) == 16
+    assert adopted.min_size == DEFAULT_MIN_SIZE
+
+
+def test_a_report_checked_against_a_larger_group_is_approved() -> None:
+    assert approve(_report(min_size=10), "Shaun", mock_registry()).min_size == 10
 
 
 @pytest.mark.parametrize(
@@ -96,8 +105,13 @@ def test_a_passed_report_is_approved_by_a_named_person() -> None:
         ({"gates": {"0": True}}, "gates_invalid"),
         ({"gates": [*GATES[:3], [3, True]]}, "gates_invalid"),
         ({"candidate_hash": "0" * 16}, "candidate_hash_mismatch"),
-        ({"report_version": 2}, "report_version"),
+        ({"report_version": 1}, "report_version"),  # before reports recorded their min size
         ({"report_version": True}, "report_version"),
+        # Gate 1 passed for a group smaller than the default asks for.
+        ({"min_size": DEFAULT_MIN_SIZE - 1}, "min_size"),
+        ({"min_size": MAX_MIN_SIZE + 1}, "min_size"),
+        ({"min_size": float(DEFAULT_MIN_SIZE)}, "min_size"),
+        ({"min_size": None}, "min_size"),
         ({"candidate": {"rule": {"name": "x"}, "plan": {}}}, "candidate_refused"),
         ({"config_parts": {**ReplayConfig.mock().parts, "monitor": "0" * 16}}, "config_stale"),
         ({"config_parts": None}, "config_stale"),
@@ -188,9 +202,17 @@ def _adopt(tmp_path: Path, **rule: Any) -> None:
     write_adopted(approve(_report(_candidate(**rule)), "Shaun", mock_registry()), tmp_path)
 
 
+def _band(i: int) -> list[dict[str, Any]]:
+    """Conditions no other band's rule meets on the same sample: torque in [i, i + 1) Nm."""
+    return [
+        {"field": "torque_nm", "op": ">=", "value": float(i)},
+        {"field": "torque_nm", "op": "<", "value": float(i + 1)},
+    ]
+
+
 def test_approved_rules_load_in_name_order(tmp_path: Path) -> None:
-    _adopt(tmp_path, name="ZED_RULE")
-    _adopt(tmp_path, name="ALPHA_RULE")
+    _adopt(tmp_path, name="ZED_RULE", conditions=_band(0))
+    _adopt(tmp_path, name="ALPHA_RULE", conditions=_band(1))
     promoted = load_promoted(tmp_path, mock_registry())
     assert [r.name for r in promoted.rules] == ["ALPHA_RULE", "ZED_RULE"]
     assert set(promoted.plans) == {"ALPHA_RULE", "ZED_RULE"}
@@ -199,9 +221,41 @@ def test_approved_rules_load_in_name_order(tmp_path: Path) -> None:
 def test_the_load_order_is_the_names_as_strings_on_every_platform(tmp_path: Path) -> None:
     # Windows paths compare case-folded, which puts "_" before letters; strings do not.
     names = ["A_B_RULE", "AB_RULE", "ABC"]
-    for name in names:
-        _adopt(tmp_path, name=name)
+    for i, name in enumerate(names):
+        _adopt(tmp_path, name=name, conditions=_band(i))
     assert [r.name for r in load_promoted(tmp_path, mock_registry()).rules] == sorted(names)
+
+
+def test_rules_that_can_fire_on_the_same_sample_are_not_loaded(tmp_path: Path) -> None:
+    # The load order would pick between them, and the order is only the names (ADR 021).
+    _adopt(tmp_path, name="PLUG_ROTATED")
+    _adopt(tmp_path, name="PLUG_TWISTED", conditions=[RULE["conditions"][0]])
+    with pytest.raises(ApprovalRefused, match="rules_overlap"):
+        load_promoted(tmp_path, mock_registry())
+
+
+def test_a_candidate_that_overlaps_an_approved_rule_is_refused(tmp_path: Path) -> None:
+    _adopt(tmp_path)
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    report = _report(_candidate(name="PLUG_TWISTED", conditions=_band(0)))  # 0.3 Nm meets both
+    with pytest.raises(ApprovalRefused, match="rules_overlap"):
+        approve(report, "Shaun", mock_registry(), approved=approved)
+
+
+def test_a_candidate_apart_from_the_approved_rules_is_approved(tmp_path: Path) -> None:
+    _adopt(tmp_path, conditions=_band(0))
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    report = _report(_candidate(name="PLUG_TWISTED", conditions=_band(1)))
+    assert approve(report, "Shaun", mock_registry(), approved=approved).rule.name == "PLUG_TWISTED"
+
+
+def test_the_same_rule_again_is_left_to_the_write(tmp_path: Path) -> None:
+    # Not an overlap with itself: the write refuses to replace it, with its own code.
+    _adopt(tmp_path)
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    adopted = approve(_report(), "Shaun", mock_registry(), approved=approved)
+    with pytest.raises(ApprovalRefused, match="already_adopted"):
+        write_adopted(adopted, tmp_path)
 
 
 def test_only_files_ending_in_lower_case_json_are_read(tmp_path: Path) -> None:
@@ -236,6 +290,16 @@ def test_a_rule_approved_under_another_monitor_configuration_is_refused(tmp_path
         load_promoted(tmp_path, mock_registry())
 
 
+@pytest.mark.parametrize("min_size", [DEFAULT_MIN_SIZE - 1, MAX_MIN_SIZE + 1])
+def test_a_file_whose_group_size_was_edited_out_of_range_is_refused(
+    tmp_path: Path, min_size: int
+) -> None:
+    _adopt(tmp_path)
+    _rewrite(tmp_path / "PLUG_ROTATED.json", min_size=min_size)
+    with pytest.raises(ApprovalRefused, match="adopted_invalid"):
+        load_promoted(tmp_path, mock_registry())
+
+
 def test_a_consistent_file_naming_an_unregistered_skill_is_refused(tmp_path: Path) -> None:
     # Edited by hand with its hash recomputed: the registry check on load still stops it.
     _adopt(tmp_path)
@@ -243,6 +307,27 @@ def test_a_consistent_file_naming_an_unregistered_skill_is_refused(tmp_path: Pat
     edited = Candidate.parse(json.dumps({"rule": RULE, "plan": plan}))
     _rewrite(tmp_path / "PLUG_ROTATED.json", plan=plan, candidate_hash=edited.digest())
     with pytest.raises(ApprovalRefused, match="candidate_refused"):
+        load_promoted(tmp_path, mock_registry())
+
+
+def test_an_approved_file_records_its_format_version(tmp_path: Path) -> None:
+    _adopt(tmp_path)
+    data = json.loads((tmp_path / "PLUG_ROTATED.json").read_text(encoding="utf-8"))
+    assert data["adopted_version"] == ADOPTED_VERSION
+
+
+@pytest.mark.parametrize("version", [None, ADOPTED_VERSION + 1, True, float(ADOPTED_VERSION)])
+def test_an_approved_file_of_another_format_is_refused(tmp_path: Path, version: Any) -> None:
+    # Written before the file had a version (None: no field), or by a newer cellrt. The code
+    # says which, instead of `adopted_invalid`.
+    _adopt(tmp_path)
+    path = tmp_path / "PLUG_ROTATED.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("adopted_version", None)
+    if version is not None:
+        data["adopted_version"] = version
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ApprovalRefused, match="adopted_version"):
         load_promoted(tmp_path, mock_registry())
 
 

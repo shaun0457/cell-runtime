@@ -24,17 +24,21 @@ from adapters.aic.faults import (
     FaultSpec,
 )
 from adapters.aic.run import PolicySetupError, fault_setup, run_goal
-from adapters.aic.skills import DESCENT_STEP_M
+from adapters.aic.skills import DESCENT_STEP_M, AicInsertScripted
 from cellrt.planner.base import FailureContext
 from cellrt.runtime.events import (
     Event,
     FaultCleared,
     FaultInjected,
+    HoldChecked,
     MonitorVerdict,
     PlannerCalled,
+    PlannerOutputRejected,
     RunFinished,
     RunStarted,
     SignalSampled,
+    SkillFinished,
+    SkillStarted,
 )
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -106,6 +110,9 @@ def test_a_dropout_loses_every_command_for_its_duration_then_lets_them_through(
     gaps = [b - a for a, b in zip(node.sent_at, node.sent_at[1:], strict=False) if a < cleared_at]
     assert max(gaps) == pytest.approx(3.0, abs=0.11)
     assert sum(a > cleared_at for a in node.sent_at) > 10
+    # The link was back when the run ended, so its HOLD reached the arm and is confirmed.
+    (hold,) = _payloads(store, HoldChecked)
+    assert hold.result == "hold_confirmed"
 
 
 def test_setting_a_ends_on_the_unknown_of_a_long_dropout(store: EventStore) -> None:
@@ -124,6 +131,21 @@ def test_setting_a_ends_on_the_unknown_of_a_long_dropout(store: EventStore) -> N
     )
     assert _end(store).reason == "insert_scripted failed: UNKNOWN"
     assert _payloads(store, FaultCleared) == []  # the run ended while the link was down
+
+
+def test_a_run_that_ends_while_the_link_is_down_does_not_confirm_a_hold(
+    store: EventStore,
+) -> None:
+    # The run's HOLD is lost with every other command, so the arm stays at its last target.
+    # It may well be still there, but nothing the run sent stopped it: the stop is not
+    # confirmed, and the check does not wait for one.
+    node = FakeNode(task=TASK)
+
+    assert run_goal(node, TASK, store, setting="A", fault=_dropout(30.0)) is False
+
+    assert _payloads(store, FaultCleared) == []
+    (hold,) = _payloads(store, HoldChecked)
+    assert (hold.result, hold.samples, hold.waited_s) == ("hold_unconfirmed", 0, 0.0)
 
 
 def test_setting_c_asks_the_planner_about_it(store: EventStore) -> None:
@@ -226,6 +248,62 @@ def test_a_retry_after_a_dropout_goes_on_down_from_where_the_arm_is(
     assert max(at[2] - to[2] for at, to in moves) <= DESCENT_STEP_M + 1e-9
 
 
+def test_a_retry_from_the_highest_onset_fits_its_timeout_on_longer_steps(
+    store: EventStore,
+) -> None:
+    # A sim step is at least 50 ms, and longer when a camera frame is late. With every step
+    # 20% longer (60 ms), the full-speed retry from the highest onset seats the plug with a
+    # fifth of insert_scripted's timeout to spare (3.7 s of 5 s; from 40 mm it took 4.9 s).
+    node = FakeNode(task=TASK, sim_per_sleep_s=0.03)
+    planner = _RetriesAfter(node, 8.0)
+
+    fault = _dropout(15.0, MAX_ONSET_HEIGHT_MM)
+    ok = run_goal(node, TASK, store, setting="C", planner=planner, fault=fault)
+
+    assert ok is True
+    assert [v.failure_class for v in _payloads(store, MonitorVerdict)] == ["UNKNOWN"]
+    events = _events(store)
+    retry = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "insert_scripted"
+    ][-1]
+    done = next(e for e in events[retry:] if isinstance(e.payload, SkillFinished))
+    assert done.ts - events[retry].ts <= 0.8 * AicInsertScripted.timeout_s
+
+
+@dataclass
+class _SlipsThenRetries(_RetriesAfter):
+    """While the model thinks, the plug slips `slip_m` off the TCP axis in the gripper; the
+    answer is still retry."""
+
+    slip_m: float = 0.0015
+
+    async def triage(self, ctx: FailureContext) -> object:
+        self.node.plug_xy_offset_m = (self.slip_m, 0.0)
+        return await super().triage(ctx)
+
+
+def test_a_retry_whose_plug_slipped_off_the_axis_still_runs(store: EventStore) -> None:
+    # The plug slips 1.5 mm in the gripper while the model thinks. Insertion has no
+    # precondition on the axis: a refused start would end the step with no failure class, and
+    # the reruns that skip align (after a FORCE_LIMIT retract, a sensor wait, a TIMEOUT) need it
+    # to start. So the retry is accepted on arrival and insertion runs again.
+    node = FakeNode(task=TASK)
+    planner = _SlipsThenRetries(node, 8.0)
+
+    run_goal(node, TASK, store, setting="C", planner=planner, fault=_dropout(15.0))
+
+    events = _events(store)
+    assert not [e for e in events if isinstance(e.payload, PlannerOutputRejected)]
+    called = next(i for i, e in enumerate(events) if isinstance(e.payload, PlannerCalled))
+    assert [
+        e
+        for e in events[called:]
+        if isinstance(e.payload, SkillStarted) and e.payload.skill == "insert_scripted"
+    ]
+
+
 def test_a_retry_after_a_dropout_does_not_throw_the_arm_sideways(store: EventStore) -> None:
     # While the link is down the XY integrator adds the plug's 0.8 mm error with every lost
     # command, up to its limit: 7.5 mm of correction the arm never got. The retry starts the
@@ -314,7 +392,7 @@ def test_without_goals_every_goal_gets_the_fault() -> None:
         '{"kind": "command_dropout", "duration_s": 0.04}',
         '{"kind": "command_dropout", "duration_s": 120.01}',
         '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 0.99}',
-        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 40.01}',
+        '{"kind": "command_dropout", "duration_s": 1, "onset_height_mm": 30.01}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": [0]}',
         '{"kind": "command_dropout", "duration_s": 1, "goals": ' + str(list(range(1, 102))) + "}",
         '{"kind": "command_dropout", "duration_s": 1, "extra": "sk-not-a-key"}',
@@ -341,7 +419,7 @@ def test_a_bad_fault_is_refused_with_a_fixed_message(raw: str) -> None:
     "fields",
     [
         {"duration_s": 0.05, "onset_height_mm": 1.0},
-        {"duration_s": 120.0, "onset_height_mm": 40.0, "goals": list(range(1, 101))},
+        {"duration_s": 120.0, "onset_height_mm": 30.0, "goals": list(range(1, 101))},
     ],
 )
 def test_a_fault_at_its_bounds_is_taken(fields: dict[str, object]) -> None:

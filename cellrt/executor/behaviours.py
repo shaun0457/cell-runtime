@@ -221,6 +221,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self._task: asyncio.Task[SkillResult] | None = None
         self._lease: CommandLease | None = None
         self._started_ns = 0
+        self._timeout_s = skill.timeout_s  # this run's, set again when it starts
         self._progress_mark = 0.0
         self.failure: str | None = None
         self.failure_source: Literal["monitor", "skill"] | None = None
@@ -273,8 +274,8 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             self._cancel("preempted")
             return Status.FAILURE
         elapsed_ns = self._env.clock.now_ns() - self._started_ns
-        if elapsed_ns >= to_ns(self.skill.timeout_s):
-            verdict = self._env.monitor.classify_timeout(elapsed_ns / 1e9, self.skill.timeout_s)
+        if elapsed_ns >= to_ns(self._timeout_s):
+            verdict = self._env.monitor.classify_timeout(elapsed_ns / 1e9, self._timeout_s)
             self._record_verdict(verdict)
             self._cancel("timeout")
             return Status.FAILURE
@@ -337,6 +338,7 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
         self.attempt = attempt
         env.recorder.emit(SkillStarted(skill=self.skill.name, attempt=attempt, params=self._params))
         self._started_ns = env.clock.now_ns()
+        self._timeout_s = self._run_timeout_s()
         env.monitor.reset(self.skill.monitor_profile, skill=self.skill.name)
         skill = self.skill.name
         self._lease = CommandLease(
@@ -353,6 +355,14 @@ class SkillBehaviour(py_trees.behaviour.Behaviour):
             params=self._params,
         )
         self._task = env.tracker.spawn(self.skill.run(ctx), name=self.skill.name)
+
+    def _run_timeout_s(self) -> float:
+        """This run's timeout: the skill's `timeout_for(params)` if it has one (its run time
+        depends on them, as a slowed skill's does), else its `timeout_s`."""
+        timeout_for = getattr(self.skill, "timeout_for", None)
+        if callable(timeout_for):
+            return float(timeout_for(self._params))
+        return self.skill.timeout_s
 
     def _progress(self, fraction: float) -> None:
         """Record progress at most once per `PROGRESS_STEP`, plus completion."""

@@ -17,7 +17,15 @@ from cellrt.runtime.events import SCHEMA_VERSION, Event, RunStarted
 from cellrt.runtime.state import RunState, apply, state_at
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
-from cellrt.skills.mock import Align, Approach, InsertScripted, Retract, Verify, WaitSensor
+from cellrt.skills.mock import (
+    Align,
+    Approach,
+    InsertScripted,
+    Retract,
+    Verify,
+    WaitSensor,
+    mock_registry,
+)
 from cellrt.skills.registry import SkillRegistry
 from cellrt.world.base import Signals
 from cellrt.world.mock_world import MockParams
@@ -482,6 +490,13 @@ def test_the_force_trigger_must_fall_inside_the_aic_budget(trigger_s: float) -> 
 def test_a_misspelt_monitor_profile_is_refused_when_the_skill_is_registered() -> None:
     with pytest.raises(ValueError, match="monitor_profile"):
         SkillRegistry([InsertScripted(monitor_profile="insert")])  # type: ignore[arg-type]
+
+
+def test_the_registry_names_its_insertion_skills_by_profile_in_name_order() -> None:
+    # Registered as insert_scripted, then insert_act; the profile decides, not the name.
+    assert mock_registry().insertion_skills() == ("insert_act", "insert_scripted")
+    as_motion = SkillRegistry([Approach(), Align(), InsertScripted(monitor_profile="motion")])
+    assert as_motion.insertion_skills() == ()
 
 
 def test_skill_parameters_are_part_of_the_config_hash(tmp_path: Path) -> None:

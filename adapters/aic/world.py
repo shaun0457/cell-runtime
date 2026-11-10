@@ -141,6 +141,10 @@ class AicWorld:
     def take_fault_transitions(self) -> list[FaultTransition]:
         return [] if self._dropout is None else self._dropout.take_transitions()
 
+    def commands_dropped(self) -> bool:
+        """Whether an injected dropout loses every command now, a HOLD included."""
+        return self._dropout is not None and self._dropout.active
+
     def final_fault_transitions(self) -> list[FaultTransition]:
         """At the end of a run: the transitions decided at its last sample, which no step
         reported."""

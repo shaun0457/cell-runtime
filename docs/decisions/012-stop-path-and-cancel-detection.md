@@ -163,8 +163,10 @@ Weakness: the cancel check depends on an internal attribute of aic_model.
   cancel after the node's execute loop has marked the goal canceled.
 - `hold_checked` (schema version 5) is recorded just before `run_finished` and does not change
   the outcome. After `sim_clock_stalled`, `sim_time_reset` or `node_error` it is recorded as
-  unconfirmed without waiting, since the clock cannot be trusted to move. The check waits on
-  sim time only and reads no TF, so a run stopped for missing ground truth is still confirmed.
+  unconfirmed without waiting, since the clock cannot be trusted to move. So it is when an
+  injected command dropout (#60) is still active at the end: the HOLD was lost with every other
+  command, so nothing the run sent stopped the arm (#64 review F8). The check waits on sim time
+  only and reads no TF, so a run stopped for missing ground truth is still confirmed.
 - A run that stops while the world is being built (`aic_goal_handle_unavailable`, or a failing
   first read) has sent no command, so it neither holds nor records `hold_checked`.
 - `run_finished.duration` leaves out the check, so it means the same as for a mock run. The

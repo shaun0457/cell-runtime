@@ -14,7 +14,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NamedTuple
 
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
 from cellrt.promotion.replay import Judged, ReplayConfig, RunReplay, replay_run
@@ -170,7 +170,7 @@ def render_survey(
 ) -> tuple[list[str], bool]:
     """The lines `cellrt promote group` prints, and whether gate 0 passed. When it did not, no
     group is shown: a group is only as good as the replay behind it."""
-    lines, passed = gate_0(runs)
+    lines, passed, _ = gate_0(runs)
     if not passed:
         return lines, False
     lines.append(f"UNKNOWN groups, at least {min_size} verdicts:")
@@ -181,13 +181,27 @@ def render_survey(
     return lines, True
 
 
-def gate_0(runs: Sequence[SurveyedRun]) -> tuple[list[str], bool]:
+class Gate0(NamedTuple):
+    lines: list[str]  # how many runs were replayed and with what status, then gate 0's line
+    passed: bool
+    summary: str  # gate 0's line without its "gate 0 <state>: "
+
+
+# Statuses gate 0 refuses outright: the replay does not reproduce what the run recorded.
+REFUSED_STATUSES = frozenset({"mismatch", "config_mismatch"})
+
+
+def gate_0(runs: Sequence[SurveyedRun]) -> Gate0:
     """How many runs were replayed and with what status, and gate 0: no run fails to replay,
     and at least one replayed."""
     counts = Counter(r.replay.status for r in runs)
     shown = ", ".join(f"{s} {counts[s]}" for s in _STATUS_ORDER if s == "ok" or counts[s])
     lines = [f"replayed {len(runs)} runs: {shown}"]
-    refused = [r.replay for r in runs if r.replay.status in ("mismatch", "config_mismatch")]
+
+    def result(state: str, passed: bool, summary: str) -> Gate0:
+        return Gate0([*lines, f"gate 0 {state}: {summary}"], passed, summary)
+
+    refused = [r.replay for r in runs if r.replay.status in REFUSED_STATUSES]
     if refused:
         first = refused[0]
         if first.mismatch is not None:
@@ -195,20 +209,19 @@ def gate_0(runs: Sequence[SurveyedRun]) -> tuple[list[str], bool]:
             why = f"event {m.seq}: recorded {m.recorded}, replayed {m.replayed}"
         else:
             why = f"its {first.detail} configuration is not the one replayed with"
-        lines.append(
-            f"gate 0 refused: {len(refused)} run(s) do not replay; first {first.run_id}, {why}"
+        return result(
+            "refused", False, f"{len(refused)} run(s) do not replay; first {first.run_id}, {why}"
         )
-        return lines, False
     if not counts["ok"]:
-        lines.append("gate 0 not run: no run in the store could be replayed")
-        return lines, False
+        return result("not run", False, "no run in the store could be replayed")
     verdicts = sum(1 for r in runs for j in r.replay.judged if j.outcome == "recorded")
     timeouts = sum(r.replay.timeouts for r in runs)
-    lines.append(
-        f"gate 0 passed: every recorded verdict reproduced ({verdicts} verdicts in "
-        f"{counts['ok']} runs; {timeouts} skill timeouts, decided by the clock)"
+    return result(
+        "passed",
+        True,
+        f"every recorded verdict reproduced ({verdicts} verdicts in {counts['ok']} runs; "
+        f"{timeouts} skill timeouts, decided by the clock)",
     )
-    return lines, True
 
 
 _STATUS_ORDER = ("ok", "mismatch", "config_mismatch", "unfinished", "unjudgeable")

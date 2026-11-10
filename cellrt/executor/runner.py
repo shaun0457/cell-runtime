@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Iterable
 
 import py_trees
 from py_trees.common import Status
@@ -33,8 +34,9 @@ from cellrt.runtime.events import (
     FaultInjected,
     Outcome,
 )
+from cellrt.runtime.recorder import Recorder
 from cellrt.runtime.task import Task
-from cellrt.world.base import WorldStopped
+from cellrt.world.base import FaultTransition, WorldStopped
 
 MAX_DRAIN_YIELDS = 100
 # Wall time a cancelled planner call gets to finish its cleanup (closing a connection) once the
@@ -175,12 +177,13 @@ async def _finish(env: ExecEnv) -> None:
         raise DrainError(f"tasks still alive after the run ended: {', '.join(leftover)}")
 
 
-def _record_faults(env: ExecEnv) -> None:
-    if env.fault_source is None:
-        return
-    for t in env.fault_source.take_fault_transitions():
+def record_fault_transitions(recorder: Recorder, transitions: Iterable[FaultTransition]) -> None:
+    """Record each transition as `fault_injected` or `fault_cleared`, with its ground-truth
+    label. The runner records them after every step; an adapter whose world decides one at the
+    run's last sample, which no step reports, records that one itself."""
+    for t in transitions:
         event_type = FaultInjected if t.active else FaultCleared
-        env.recorder.emit(
+        recorder.emit(
             event_type(
                 fault_id=t.fault.fault_id,
                 kind=t.fault.kind,
@@ -188,6 +191,11 @@ def _record_faults(env: ExecEnv) -> None:
                 params=dict(t.fault.params),
             )
         )
+
+
+def _record_faults(env: ExecEnv) -> None:
+    if env.fault_source is not None:
+        record_fault_transitions(env.recorder, env.fault_source.take_fault_transitions())
 
 
 def _record_signal(env: ExecEnv, step: int) -> None:

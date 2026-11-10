@@ -5,6 +5,7 @@ rotated plug)."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import cellrt.promotion.validate as validate_module
 from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import load_scenarios
 from cellrt.monitor.classifier import MonitorConfig
@@ -178,6 +180,30 @@ def test_a_store_made_with_other_thresholds_fails_gate_0_and_nothing_else_runs(
     assert not report.passed
 
 
+def test_after_a_run_gate_0_refuses_no_run_is_replayed_with_the_candidate(
+    tmp_path: Path, phase0_runs: Runs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Gate 0 fails on the first run it refuses, and no other gate runs: replaying the rest
+    # with the candidate would be work nobody reads.
+    [scenario] = [s for s in load_scenarios(PHASE0) if s.id == "yaw_mismatch"]
+    with EventStore(tmp_path / "other.sqlite") as store:
+        run_unit(scenario, "A", 0, store, monitor=MonitorConfig(stall_window_s=0.8))
+        refused = [store.events(r.run_id) for r in store.runs()]
+    with_candidate = 0
+    real = validate_module.replay_run
+
+    def counted(*args: Any, candidate: Any = None, **kw: Any) -> Any:
+        nonlocal with_candidate
+        with_candidate += candidate is not None
+        return real(*args, candidate=candidate, **kw)
+
+    monkeypatch.setattr(validate_module, "replay_run", counted)
+    report = _validate([*refused, *phase0_runs[:5]], _candidate())
+
+    assert report.gates[0].passed is False
+    assert with_candidate == 0
+
+
 def test_a_store_without_clean_runs_cannot_pass_gate_2(phase0_runs: Runs) -> None:
     faulted = [r for r in phase0_runs if any(isinstance(e.payload, FaultInjected) for e in r)]
     gate = _gate(_validate(faulted, _candidate()), 2)
@@ -189,6 +215,11 @@ def test_a_group_under_the_minimum_size_fails_gate_1(phase0_runs: Runs) -> None:
     gate = _gate(_validate(phase0_runs, _candidate(), min_size=3 * SEEDS + 1), 1)
     assert gate.passed is False
     assert gate.summary == f"the group has {3 * SEEDS} windows, under {3 * SEEDS + 1}"
+
+
+def test_the_report_records_the_group_size_gate_1_asked_for(phase0_runs: Runs) -> None:
+    # Approval refuses a report checked against fewer windows than the default.
+    assert _validate(phase0_runs, _candidate(), min_size=5).as_dict()["min_size"] == 5
 
 
 def test_a_validation_stops_at_its_run_limit(phase0_runs: Runs) -> None:
@@ -405,6 +436,72 @@ def test_validate_prints_the_gates_and_writes_the_report(
         "gate 3 passed",
     ]
     assert lines[-2:] == ["passed", f"note: {NOT_CHECKED}"]
+    assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
+
+
+@pytest.mark.parametrize("target", ["event store", "candidate"])
+def test_the_report_is_never_written_over_what_it_was_made_from(
+    phase0_store: Path, tmp_path: Path, target: str
+) -> None:
+    db = tmp_path / "copy.sqlite"  # a copy: a write over the module's store would end the module
+    shutil.copyfile(phase0_store, db)
+    candidate = _write(tmp_path, _candidate())
+    out = db if target == "event store" else candidate
+    before = out.read_bytes()
+    done = _cli(str(candidate), "--group", ROTATED, "--db", str(db), "--out", str(out))
+    assert done.returncode == 1
+    assert f"--out is the {target} itself; no report written" in done.stderr
+    assert out.read_bytes() == before
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_the_report_is_never_written_over_the_stores_own_files(
+    phase0_store: Path, tmp_path: Path, suffix: str
+) -> None:
+    # SQLite keeps part of a live store beside it: replacing that file loses the log too.
+    db = tmp_path / "copy.sqlite"
+    shutil.copyfile(phase0_store, db)
+    out = db.with_name(db.name + suffix)
+    done = _cli(str(_write(tmp_path, _candidate())), "--group", ROTATED, "--db", str(db),
+                "--out", str(out))  # fmt: skip
+    assert done.returncode == 1
+    assert "--out is the event store itself; no report written" in done.stderr
+    assert not out.exists()
+
+
+def test_a_report_that_cannot_be_written_leaves_the_old_one_whole(
+    phase0_store: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "report.json"
+    out.mkdir()  # a directory in its place: the report cannot replace it
+    (out / "kept.txt").write_text("old\n", encoding="utf-8")
+    done = _cli(
+        str(_write(tmp_path, _candidate())),
+        "--group",
+        ROTATED,
+        "--db",
+        str(phase0_store),
+        "--out",
+        str(out),
+    )
+    assert done.returncode == 1
+    assert "cannot write the report" in done.stderr
+    assert (out / "kept.txt").read_text(encoding="utf-8") == "old\n"
+    # and no temporary file is left beside it
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["candidate.json", "report.json"]
+
+
+def test_a_file_beside_the_report_is_never_touched_by_its_write(
+    phase0_store: Path, tmp_path: Path
+) -> None:
+    # The temporary file has a name of its own, never `<out>.tmp`, which may be someone's file.
+    beside = tmp_path / "report.json.tmp"
+    beside.write_text("mine\n", encoding="utf-8")
+    out = tmp_path / "report.json"
+    done = _cli(str(_write(tmp_path, _candidate())), "--group", ROTATED,
+                "--db", str(phase0_store), "--out", str(out))  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    assert beside.read_text(encoding="utf-8") == "mine\n"
     assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
 
 

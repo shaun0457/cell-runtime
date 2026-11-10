@@ -1,7 +1,8 @@
 """Validate a candidate rule by replay (ADR 022, gates 0-3; ticket T2).
 
 Gate 0 comes first: without the candidate, the replay reproduces every recorded verdict
-(`groups.gate_0`). Then each run is replayed again with the candidate, and the first verdict of
+(`groups.gate_0`). Then each run is replayed again with the candidate (none once gate 0 has
+refused a run, since no other gate runs then), and the first verdict of
 each watch window (a skill attempt, or a hold) is compared with the first verdict the run
 recorded in it. That verdict ended the window; what the candidate would have changed after an
 earlier verdict of its own is not in the log, so only first verdicts are compared.
@@ -31,6 +32,7 @@ from cellrt.monitor.promoted import Candidate, CandidateRefused
 from cellrt.promotion.groups import (
     DEFAULT_MIN_SIZE,
     MAX_SURVEY_RUNS,
+    REFUSED_STATUSES,
     Group,
     SurveyedRun,
     SurveyTooLarge,
@@ -44,7 +46,7 @@ from cellrt.runtime.events import Event
 from cellrt.skills.registry import SkillRegistry
 
 MAX_CASES = 5  # failing windows kept per gate
-REPORT_VERSION = 1
+REPORT_VERSION = 2  # 2: the report records the group size gate 1 asked for
 NOT_CHECKED = (
     "replay checks the rule, not the plan: the recorded runs never ran the plan, so only a new "
     "eval run with the rule adopted shows whether it works"
@@ -100,6 +102,7 @@ class Report:
     skipped: Mapping[str, int]  # runs not replayed, by status
     replayed: tuple[str, ...]  # gate 0's lines: what was replayed
     gates: tuple[Gate, ...]
+    min_size: int = DEFAULT_MIN_SIZE  # the windows gate 1 asked the group for
 
     @property
     def passed(self) -> bool:
@@ -125,6 +128,7 @@ class Report:
             "candidate_hash": self.candidate.digest(),
             "group": self.group,
             "config_parts": dict(self.parts),
+            "min_size": self.min_size,
             "runs": list(self.runs),
             "skipped": dict(self.skipped),
             "gates": [
@@ -146,10 +150,12 @@ def check_registry(candidate: Candidate, registry: SkillRegistry) -> None:
     """The rule watches a registered insertion skill, and a switch goes to another one. The
     refusal names the field and a code, never the value (it comes from a model)."""
 
+    insertion_skills = registry.insertion_skills()
+
     def insertion(name: str, where: str) -> None:
         if name not in registry:
             raise CandidateRefused(f"candidate refused: {where}: not_registered")
-        if registry.get(name).monitor_profile != "insertion":
+        if name not in insertion_skills:
             raise CandidateRefused(f"candidate refused: {where}: not_an_insertion_skill")
 
     insertion(candidate.rule.skill, "rule.skill")
@@ -159,6 +165,14 @@ def check_registry(candidate: Candidate, registry: SkillRegistry) -> None:
         insertion(plan.skill, "plan.skill")
         if plan.skill == candidate.rule.skill:
             raise CandidateRefused("candidate refused: plan.skill: same_as_rule_skill")
+
+
+def parse_checked(raw: str, registry: SkillRegistry) -> Candidate:
+    """A candidate from its JSON, checked by the parser and against `registry`. Raises
+    `CandidateRefused`; the message is a field and a code."""
+    candidate = Candidate.parse(raw)
+    check_registry(candidate, registry)
+    return candidate
 
 
 def validate(
@@ -171,20 +185,24 @@ def validate(
     max_runs: int = MAX_SURVEY_RUNS,
 ) -> Report:
     """Gates 0-3 for `candidate` against the group labelled `group`, over every run in `runs`
-    (read once; each run is replayed without and with the candidate)."""
+    (read once). Each run is replayed without the candidate, and with it until gate 0 refuses a
+    run: after that no other gate runs, so no later run is replayed with the candidate."""
     surveyed: list[SurveyedRun] = []
     with_candidate: dict[str, RunReplay] = {}
+    refused = False  # gate 0 has refused a run: no other gate runs
     for events in runs:
         if len(surveyed) >= max_runs:
             raise SurveyTooLarge(f"more than {max_runs} runs in one survey")
         [run] = survey([events], config)
         surveyed.append(run)
-        if run.replay.status == "ok":
+        refused = refused or run.replay.status in REFUSED_STATUSES
+        if refused:
+            with_candidate.clear()  # nobody reads these any more
+        elif run.replay.status == "ok":
             with_candidate[run.replay.run_id] = replay_run(events, config, candidate=candidate.rule)
 
-    replayed, passed = gate_0(surveyed)
+    replayed, passed, gate_0_summary = gate_0(surveyed)
     statuses = Counter(r.replay.status for r in surveyed)
-    gate_0_summary = replayed[-1].split(": ", 1)[-1]
 
     def report(*gates: Gate) -> Report:
         return Report(
@@ -195,6 +213,7 @@ def validate(
             skipped={s: n for s, n in sorted(statuses.items()) if s != "ok"},
             replayed=tuple(replayed),
             gates=gates,
+            min_size=min_size,
         )
 
     if not passed:
@@ -289,8 +308,8 @@ class _Gates:
         changed = len(self._cases[3])
         g3 = self._gate(
             3,
-            f"{changed} of {self._other + changed} other windows with a verdict changed their "
-            "first verdict",
+            f"{changed} of {self._other + changed} other windows with a verdict, recorded or "
+            "replayed, changed their first verdict",
         )
         return g1, g2, g3
 
