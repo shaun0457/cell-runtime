@@ -181,3 +181,7 @@ period.
   sent no command, so it neither holds nor records `hold_checked` (ADR 012). Wrench readings
   drained during the wait are not summed into the time over 20 N (ADR 013). Whether 10 s is
   enough on the VM is to be checked there (#28).
+- One thing may outlive a goal (#64 review F4): a model request's thread. The NIM client makes
+  each request on a daemon thread, so it goes on while `step` blocks the loop (ADR 020). A call
+  the run cancels ends at once, but its request runs on until it is answered or the SDK's
+  timeout ends it, and its answer is dropped. The goal does not wait for it.

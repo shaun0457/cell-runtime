@@ -181,6 +181,14 @@ shortest.
   call short (`planner_preempted`).
 - The deadline is checked when a step returns. A world step that blocks is bounded by the world
   itself (`AicWorld` stops a run whose sim clock stalls), not by this check.
+- A blocking step also blocks the loop. With an async HTTP client a request could only move
+  while the loop was free, so each network round trip waited out a step, and sim latencies
+  included that (#64 review F4). The NIM client now makes the request on a thread of its own
+  (ADR 017): it goes on during a step, and only the answer waits, at most one step, for the
+  loop to read it. The world and the skills stay on the loop's one thread (ADR 003). A thread
+  cannot be cancelled: a cancelled call ends at once, its request runs on until it is answered
+  or the SDK's timeout ends it, and its answer is dropped. The sim latencies in
+  `docs/sim-results.md` were measured before this change.
 - Schema version 9: replay, trace export and the agent report read the new event and field. Rows
   of earlier versions still read.
 - Schema version 10 (`planner_decided.waited_sim_s`): replay and trace export show it. A

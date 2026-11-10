@@ -49,8 +49,8 @@ def completion(
 
 @dataclass
 class FakeCreate:
-    """Stands in for `AsyncOpenAI().chat.completions.create`: answers in order and records the
-    keyword arguments of every call."""
+    """Stands in for the async create call `connect_openai` builds: answers in order and
+    records the keyword arguments of every call."""
 
     responses: list[object]
     calls: list[dict[str, Any]] = field(default_factory=list)

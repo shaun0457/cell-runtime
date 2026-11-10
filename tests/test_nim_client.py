@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 import types
 from collections.abc import Mapping
 from pathlib import Path
@@ -39,6 +40,7 @@ from cellrt.planner.nim import (
     MAX_BASE_URL_CHARS,
     MAX_MODEL_CALLS_LIMIT,
     MISSING_KEY,
+    REQUEST_THREAD,
     SDK_ENV_VARS,
     BaseUrlRefused,
     LlmExtraMissing,
@@ -567,55 +569,93 @@ def test_the_call_budget_precheck_counts_one_task_plan_call_per_unit_planned() -
 # --- the default factory, with a stand-in `openai` module ----------------------------------
 
 
-class _FakeAsyncOpenAI:
-    """Records how the client is built and whether it was closed."""
+class APITimeoutError(Exception):
+    """Stands in for the SDK's own timeout, raised when a network phase runs past it."""
 
-    built: ClassVar[list[_FakeAsyncOpenAI]] = []
+
+class _FakeOpenAI:
+    """The SDK's sync client: records how it is built, on which thread its request ran and
+    whether it was closed (`exited` is set then). With `hang` its request waits for `release`,
+    as a slow network call does."""
+
+    built: ClassVar[list[_FakeOpenAI]] = []
     fail_with: ClassVar[BaseException | None] = None
     hang: ClassVar[bool] = False
+    release: ClassVar[threading.Event] = threading.Event()
+    exited: ClassVar[threading.Event] = threading.Event()
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.closed = False
+        self.thread: int | None = None
         self.sent: dict[str, Any] = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
-        _FakeAsyncOpenAI.built.append(self)
+        _FakeOpenAI.built.append(self)
 
-    async def _create(self, **kwargs: Any) -> object:
+    def _create(self, **kwargs: Any) -> object:
         self.sent = kwargs
-        if _FakeAsyncOpenAI.fail_with is not None:
-            raise _FakeAsyncOpenAI.fail_with
-        if _FakeAsyncOpenAI.hang:
-            await asyncio.Event().wait()
+        self.thread = threading.get_ident()
+        if _FakeOpenAI.fail_with is not None:
+            raise _FakeOpenAI.fail_with
+        if _FakeOpenAI.hang:
+            assert _FakeOpenAI.release.wait(timeout=5.0)
         return _completion()
 
-    async def __aenter__(self) -> _FakeAsyncOpenAI:
+    def __enter__(self) -> _FakeOpenAI:
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.closed = True
+        _FakeOpenAI.exited.set()
 
 
 @pytest.fixture
-def fake_openai(monkeypatch: pytest.MonkeyPatch) -> type[_FakeAsyncOpenAI]:
+def fake_openai(monkeypatch: pytest.MonkeyPatch) -> type[_FakeOpenAI]:
     module = types.ModuleType("openai")
-    module.AsyncOpenAI = _FakeAsyncOpenAI  # type: ignore[attr-defined]
+    module.OpenAI = _FakeOpenAI  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openai", module)
-    monkeypatch.setattr(_FakeAsyncOpenAI, "built", [])
-    monkeypatch.setattr(_FakeAsyncOpenAI, "fail_with", None)
-    monkeypatch.setattr(_FakeAsyncOpenAI, "hang", False)
-    return _FakeAsyncOpenAI
+    monkeypatch.setattr(_FakeOpenAI, "built", [])
+    monkeypatch.setattr(_FakeOpenAI, "fail_with", None)
+    monkeypatch.setattr(_FakeOpenAI, "hang", False)
+    monkeypatch.setattr(_FakeOpenAI, "release", threading.Event())
+    monkeypatch.setattr(_FakeOpenAI, "exited", threading.Event())
+    return _FakeOpenAI
+
+
+@pytest.fixture
+def thread_errors(monkeypatch: pytest.MonkeyPatch) -> list[BaseException | None]:
+    """Exceptions that escaped a thread, which would otherwise only be printed."""
+    seen: list[BaseException | None] = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: seen.append(args.exc_value))
+    return seen
+
+
+def _join_requests() -> None:
+    """Wait for every request thread to end, so what it did last is done."""
+    for thread in threading.enumerate():
+        if thread.name == REQUEST_THREAD:
+            thread.join(timeout=5.0)
+            assert not thread.is_alive()
+
+
+async def _turns(n: int) -> None:
+    """Let other tasks run `n` times, without a timer."""
+    loop = asyncio.get_running_loop()
+    for _ in range(n):
+        turn = loop.create_future()
+        loop.call_soon(turn.set_result, None)
+        await turn
 
 
 def test_the_default_factory_builds_the_sdk_client_without_retries(
-    fake_openai: type[_FakeAsyncOpenAI],
+    fake_openai: type[_FakeOpenAI],
 ) -> None:
     create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=12.5)
 
     response = asyncio.run(create(model=NIM_MODEL, messages=[]))
     asyncio.run(create(model=NIM_MODEL, messages=[]))
 
-    first, second = fake_openai.built  # one SDK client per call: each unit has its own loop
+    first, second = fake_openai.built  # one SDK client per call
     assert first.kwargs == {
         "base_url": DEFAULT_BASE_URL,
         "api_key": FAKE_KEY,
@@ -625,17 +665,41 @@ def test_the_default_factory_builds_the_sdk_client_without_retries(
     assert first.sent == {"model": NIM_MODEL, "messages": []}
     assert response.choices[0].finish_reason == "tool_calls"
     assert first.closed and second.closed
+    assert first.thread != threading.get_ident()  # off the loop's thread
 
 
-def test_the_sdk_client_is_closed_when_the_call_fails_or_is_cancelled(
-    fake_openai: type[_FakeAsyncOpenAI],
+def test_the_request_goes_on_while_a_world_step_blocks_the_loop(
+    fake_openai: type[_FakeOpenAI],
 ) -> None:
+    # In a live sim AicWorld.step blocks the loop for a step of wall time (ADR 020). The request
+    # runs on a thread of its own, so it is answered meanwhile, not one network round trip per
+    # step; the loop reads the answer when it is back.
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+    fake_openai.hang = True
+
+    async def call_across_a_blocking_step() -> object:
+        task = asyncio.ensure_future(create(model=NIM_MODEL, messages=[]))
+        await _turns(3)  # the call is sent
+        fake_openai.release.set()  # from here the loop blocks, as in a world step
+        assert fake_openai.exited.wait(timeout=5.0)
+        return await task
+
+    response = asyncio.run(call_across_a_blocking_step())
+
+    assert response.choices[0].finish_reason == "tool_calls"  # type: ignore[attr-defined]
+
+
+def test_the_sdk_client_is_closed_when_the_call_fails_or_times_out(
+    fake_openai: type[_FakeOpenAI],
+) -> None:
+    # Errors reach the caller as they are, the SDK's own timeout included: the request's thread
+    # ends no later than that timeout.
     create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
     fake_openai.fail_with = APIConnectionError("down")
     with pytest.raises(APIConnectionError):
         asyncio.run(create(model=NIM_MODEL, messages=[]))
-    fake_openai.fail_with = asyncio.CancelledError()
-    with pytest.raises(asyncio.CancelledError):
+    fake_openai.fail_with = APITimeoutError("read timed out")
+    with pytest.raises(APITimeoutError):
         asyncio.run(create(model=NIM_MODEL, messages=[]))
 
     assert [c.closed for c in fake_openai.built] == [True, True]
@@ -694,28 +758,54 @@ def test_no_setup_or_cap_message_holds_the_key(monkeypatch: pytest.MonkeyPatch) 
     assert all(FAKE_KEY not in m for m in messages)
 
 
-def test_a_call_cancelled_while_it_waits_closes_the_sdk_client(
-    fake_openai: type[_FakeAsyncOpenAI],
+def test_a_call_cancelled_mid_request_ends_at_once_and_drops_the_late_answer(
+    fake_openai: type[_FakeOpenAI], thread_errors: list[BaseException | None]
 ) -> None:
+    # A thread cannot be cancelled: the call ends at once, and the request runs on until it is
+    # answered or the SDK's timeout ends it. Its answer is dropped, and its client closed.
     create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
     fake_openai.hang = True
 
-    async def cancel_mid_wait() -> None:
+    async def cancel_mid_request() -> None:
         task = asyncio.ensure_future(create(model=NIM_MODEL, messages=[]))
-        loop = asyncio.get_running_loop()
-        for _ in range(3):  # let the call reach its wait, without a timer
-            turn = loop.create_future()
-            loop.call_soon(turn.set_result, None)
-            await turn
+        await _turns(3)
         assert not task.done()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        fake_openai.release.set()  # the request is answered after the call ended
+        _join_requests()
+        await _turns(3)  # the late answer reaches the loop, and is dropped
+        assert asyncio.all_tasks() == {asyncio.current_task()}
 
-    asyncio.run(cancel_mid_wait())
+    asyncio.run(cancel_mid_request())
 
     [client] = fake_openai.built
     assert client.closed
+    assert thread_errors == []
+
+
+def test_an_answer_that_comes_after_the_run_ended_is_dropped(
+    fake_openai: type[_FakeOpenAI], thread_errors: list[BaseException | None]
+) -> None:
+    # The run's loop is closed by the time the request is answered: nobody waits any more.
+    create = connect_openai(base_url=DEFAULT_BASE_URL, api_key=FAKE_KEY, timeout_s=1.0)
+    fake_openai.hang = True
+
+    async def cancel_and_end() -> None:
+        task = asyncio.ensure_future(create(model=NIM_MODEL, messages=[]))
+        await _turns(3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_and_end())  # returns without waiting for the request
+    fake_openai.release.set()
+    _join_requests()
+
+    [client] = fake_openai.built
+    assert client.closed
+    assert thread_errors == []
 
 
 # --- what a reply may hold -----------------------------------------------------------------

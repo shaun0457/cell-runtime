@@ -42,18 +42,18 @@ import os
 from types import SimpleNamespace
 
 
-class AsyncOpenAI:
+class OpenAI:
     def __init__(self, **settings):
         self._key = settings["api_key"]
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
-    async def __aenter__(self):
+    def __enter__(self):
         return self
 
-    async def __aexit__(self, *exc_info):
+    def __exit__(self, *exc_info):
         return None
 
-    async def _create(self, **arguments):
+    def _create(self, **arguments):
         with open(os.environ["FAKE_OPENAI_LOG"], "a", encoding="utf-8") as log:
             log.write(arguments["tools"][0]["function"]["name"] + "\\n")
         echo = os.environ.get("FAKE_ECHO")

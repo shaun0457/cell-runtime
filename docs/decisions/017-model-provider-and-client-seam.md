@@ -106,8 +106,10 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   the same client.
 - **Seam:** the core's own `ChatClient` (seam A). `NimChatClient` (`cellrt/planner/nim.py`)
   takes the SDK's `create` call as an argument. Only `connect_openai` imports `openai`, inside
-  the function. It builds one `AsyncOpenAI` per call, with `max_retries=0`, and closes it on
-  every exit path.
+  the function. It builds one SDK client per call, with `max_retries=0`, and closes it on
+  every exit path. Since #64's review (F4) that is the sync `OpenAI`, called on a thread of its
+  own, so a request goes on while a live world step blocks the loop (ADR 020); it was
+  `AsyncOpenAI` before.
 - **One deadline:** the planner's `deadline_s` (ADR 016, default 30 s, at most 120 s) is also
   the SDK's timeout; there is no second setting. The SDK applies its timeout to each network
   phase (connect, each read), so it is not a bound on the whole call: that bound is the
@@ -153,8 +155,8 @@ Shaun chose NVIDIA NIM through the `openai` SDK on 2026-11-09.
   mapping is tested against a fake. A framework would add retries and state that hide the
   deadline, the cap and the audit trail, which are what this project sets out to show.
 - **One SDK client per call:** each eval unit runs in its own event loop (`asyncio.run`), and
-  an HTTP connection pool must not outlive the loop that opened it. One TLS handshake per call
-  is small next to a model's latency.
+  an HTTP connection pool must not outlive the loop that opened it; on a thread, the client
+  belongs to its request alone. One TLS handshake per call is small next to a model's latency.
 - **No retries in the SDK:** a hidden retry doubles the wait and the cost without the runtime
   knowing. The runtime decides what follows a failed call: under ADR 008 it is a rejection.
 - **Key from the environment only:** the usual practice. It keeps the key out of the repo, the

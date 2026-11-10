@@ -1,7 +1,8 @@
 """A chat client for NVIDIA NIM's OpenAI-compatible API (ADR 017).
 
-`NimChatClient` implements the core's `ChatClient`. It is handed the SDK's create call
-(`AsyncOpenAI().chat.completions.create`, or a test's fake) and maps a `ChatRequest` to that
+`NimChatClient` implements the core's `ChatClient`. It is handed an async create call
+(`connect_openai`'s, which runs the SDK's `OpenAI().chat.completions.create` on a thread, or a
+test's fake) and maps a `ChatRequest` to that
 call's keyword arguments and the SDK's response back to a `ChatReply`. Only `connect_openai`
 imports `openai`, inside the function: the SDK is the optional extra `llm`, and the core imports
 without it.
@@ -13,8 +14,11 @@ from the SDK propagate unchanged, and the runtime records only their type name.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
+import threading
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -33,6 +37,7 @@ MAX_BASE_URL_CHARS = 512
 MAX_MODEL_CALLS_LIMIT = 10_000  # the largest cap an eval may set
 ToolChoice = Literal["auto", "required"]
 TOOL_CHOICES: tuple[str, ...] = ("auto", "required")
+REQUEST_THREAD = "nim-request"  # the name of each request's thread (`connect_openai`)
 
 BASE_URL_REFUSED = "the base URL must be https, or http to localhost, 127.0.0.1 or ::1"
 MISSING_KEY = f"{KEY_ENV} is not set: export your NVIDIA API key in it to use the model planner"
@@ -168,22 +173,48 @@ def check_tool_choice(tool_choice: str) -> None:
 
 
 def connect_openai(*, base_url: str, api_key: str, timeout_s: float) -> CreateFn:
-    """The SDK's create call, through `openai.AsyncOpenAI` with no retries and `timeout_s` as
-    its timeout. The SDK applies that to each network phase (connect, each read), not to the
-    whole call: the bound on the whole call is the runtime's deadline (ADR 016). The only place
-    `openai` is imported; without it, a fixed message says to install the `llm` extra."""
+    """The SDK's create call, through the sync `openai.OpenAI` with no retries and `timeout_s`
+    as its timeout, made on a thread of its own. The only place `openai` is imported; without
+    it, a fixed message says to install the `llm` extra.
+
+    The thread lets the request go on while the loop is blocked in a world step: a live sim's
+    `AicWorld.step` blocks it for a step of wall time, and an async request could only move
+    while the loop was free, so each network round trip waited out a step (ADR 020). The loop
+    reads the answer when it is back. The world stays single-threaded (ADR 003): only the HTTP
+    request runs on the thread, and its result reaches the loop through `call_soon_threadsafe`.
+
+    A thread cannot be cancelled. A cancelled call ends at once; its request runs on until it
+    is answered or the SDK's timeout ends it, and its answer is dropped. The SDK applies that
+    timeout to each network phase (connect, each read), not to the whole call: the bound on
+    the wait is the runtime's deadline (ADR 016). The thread is a daemon, so a run whose loop
+    has closed, or the process, does not wait for it."""
     try:
         import openai  # the optional `llm` extra (ADR 017); never at the core's import time
     except ImportError:
         raise LlmExtraMissing() from None
 
     async def create(**arguments: Any) -> Any:
-        # One SDK client per call, closed on every exit path: an eval runs each unit in its own
-        # event loop, and an HTTP connection pool must not outlive the loop that opened it.
-        async with openai.AsyncOpenAI(
-            base_url=base_url, api_key=api_key, max_retries=0, timeout=timeout_s
-        ) as client:
-            return await client.chat.completions.create(**arguments)
+        loop = asyncio.get_running_loop()
+        answer: asyncio.Future[Any] = loop.create_future()
+
+        def deliver(outcome: Callable[[Any], None], value: Any) -> None:
+            if not answer.done():  # a cancelled call's answer is dropped
+                outcome(value)
+
+        def request() -> None:
+            # One SDK client per call, closed on every exit path: the request's thread owns it.
+            try:
+                with openai.OpenAI(
+                    base_url=base_url, api_key=api_key, max_retries=0, timeout=timeout_s
+                ) as client:
+                    result = (answer.set_result, client.chat.completions.create(**arguments))
+            except Exception as exc:  # handed to the caller as it is, as the SDK raised it
+                result = (answer.set_exception, exc)
+            with contextlib.suppress(RuntimeError):  # the loop is closed: nobody waits
+                loop.call_soon_threadsafe(deliver, *result)
+
+        threading.Thread(target=request, name=REQUEST_THREAD, daemon=True).start()
+        return await answer
 
     return create
 
