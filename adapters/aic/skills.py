@@ -1,3 +1,12 @@
+# Third-party code, modified for cell-runtime. Notices: THIRD_PARTY_NOTICES.md.
+#
+# AicApproach, descent_offsets, AicAlign, AicInsertScripted and AicVerify's settle wait: adapted
+# from the approach, descent and settle steps of CheatCode's insert_cable in AIC
+# (https://github.com/intrinsic-dev/aic), aic_example_policies/aic_example_policies/ros/
+# CheatCode.py; modified by splitting them into separate skills.
+#   Copyright (C) 2026 Intrinsic Innovation LLC
+#   Licensed under the Apache License, Version 2.0 (see LICENSE).
+
 """Scripted skills for the AIC cell, ported from CheatCode (`aic_example_policies/ros/
 CheatCode.py` @ `3ab0653`). They command position targets (ADR 014) computed from ground-truth
 poses (`AicWorld.geometry`), which they get at construction: the executor hands skills only
