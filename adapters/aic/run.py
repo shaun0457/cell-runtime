@@ -5,8 +5,9 @@ own asyncio loop (`asyncio.run`), its own `SimClock` starting at 0 and its own r
 store: the setting asked for (A by default), seed 0, the next attempt number, and the scenario
 the caller names (by default the task id). `RuntimePolicy` names one per goal with
 `goal_scenario_id`: aic_engine sends no trial id, and in its sample config every trial's task
-is `task_1`, and it takes the setting and the planner from the environment (`policy_setup`), and the
-fault to inject, if any, from `CELLRT_FAULT` (`fault_setup`, #60).
+is `task_1`, and it takes the setting, the planner and the model planner's token budget and
+reasoning from the environment (`policy_setup`), and the fault to inject, if any, from
+`CELLRT_FAULT` (`fault_setup`, #60).
 
 Settings B and C build the same trees as the mock, from the AIC skills plus a wait for the
 F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop while a planner
@@ -70,6 +71,7 @@ from cellrt.executor.trees import SETTINGS, Setting, build_tree
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import Planner
 from cellrt.planner.factory import PLANNER_KINDS, build_planner
+from cellrt.planner.llm import DEFAULT_MAX_TOKENS, MAX_TOKENS_LIMIT, REASONING_MODES, Reasoning
 from cellrt.planner.nim import Connect, LlmSetupError, connect_openai
 from cellrt.planner.rule_planner import RulePlanner
 from cellrt.runtime.clock import SimClock
@@ -91,6 +93,9 @@ DEFAULT_SETTING: Setting = "A"  # no recovery: every verdict ends the task, visi
 DEFAULT_PLANNER = "rule"
 SETTING_ENV = "CELLRT_SETTING"
 PLANNER_ENV = "CELLRT_PLANNER"
+MAX_TOKENS_ENV = "CELLRT_MAX_TOKENS"
+REASONING_ENV = "CELLRT_REASONING"
+_MAX_TOKENS = re.compile(r"[0-9]{1,5}")  # ASCII digits only, and short enough to read as an int
 PLANNER_WAIT: PlannerWait = "live"  # the sim does not stop while a planner thinks (ADR 020)
 SEED = 0
 GEOMETRY_SOURCE = "ground_truth"
@@ -111,22 +116,45 @@ def policy_setup(
     environ: Mapping[str, str], *, connect: Connect = connect_openai
 ) -> tuple[Setting, Planner | None]:
     """The setting (`CELLRT_SETTING`: A, B or C, default A) and the planner (`CELLRT_PLANNER`:
-    rule, fixed or llm, default rule) that `environ` names. The planner is built for setting C
-    only, so A and B need no key; `llm` reads its key from `NVIDIA_API_KEY` in `environ` and
-    hands it to the SDK only. Raises PolicySetupError with a fixed message, which never repeats
-    the value it refuses."""
+    rule, fixed or llm, default rule) that `environ` names, with the model planner's tokens per
+    call (`CELLRT_MAX_TOKENS`: 1 to 8192, default 1024) and reasoning (`CELLRT_REASONING`:
+    default or off). Every variable is checked in every setting, so a typo shows at once; the
+    last two are unset when blank. The planner is built for setting C only, so A and B need no
+    key; `llm` reads its key from `NVIDIA_API_KEY` in `environ` and hands it to the SDK only.
+    Raises PolicySetupError with a fixed message, which never repeats the value it refuses."""
     setting = environ.get(SETTING_ENV, DEFAULT_SETTING)
     if setting not in SETTINGS:
         raise PolicySetupError(f"{SETTING_ENV} must be one of: {', '.join(SETTINGS)}")
     kind = environ.get(PLANNER_ENV, DEFAULT_PLANNER)
     if kind not in PLANNER_KINDS:
         raise PolicySetupError(f"{PLANNER_ENV} must be one of: {', '.join(PLANNER_KINDS)}")
+    max_tokens, reasoning = _model_settings(environ)
     if setting != "C":
         return cast(Setting, setting), None
     try:
-        return "C", build_planner(kind, env=environ, connect=connect)
+        planner = build_planner(
+            kind, max_tokens=max_tokens, reasoning=reasoning, env=environ, connect=connect
+        )
     except LlmSetupError as exc:  # fixed texts, the key in none of them
         raise PolicySetupError(str(exc)) from None
+    return "C", planner
+
+
+def _model_settings(environ: Mapping[str, str]) -> tuple[int, Reasoning]:
+    """`CELLRT_MAX_TOKENS` and `CELLRT_REASONING`, checked; the defaults where blank or unset."""
+    raw = environ.get(MAX_TOKENS_ENV, "")
+    max_tokens = DEFAULT_MAX_TOKENS
+    if raw.strip():
+        if not _MAX_TOKENS.fullmatch(raw) or not 0 < int(raw) <= MAX_TOKENS_LIMIT:
+            raise PolicySetupError(
+                f"{MAX_TOKENS_ENV} must be a whole number from 1 to {MAX_TOKENS_LIMIT}"
+            )
+        max_tokens = int(raw)
+    given = environ.get(REASONING_ENV, "")
+    reasoning = given if given.strip() else "default"  # exact, as CELLRT_MAX_TOKENS
+    if reasoning not in REASONING_MODES:
+        raise PolicySetupError(f"{REASONING_ENV} must be one of: {', '.join(REASONING_MODES)}")
+    return max_tokens, cast(Reasoning, reasoning)
 
 
 def fault_setup(environ: Mapping[str, str]) -> FaultSpec | None:

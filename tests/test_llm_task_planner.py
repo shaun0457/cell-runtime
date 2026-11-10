@@ -353,14 +353,24 @@ def test_replay_shows_the_model_call_and_the_plan_from_the_log_alone(store: Even
 def test_the_model_settings_and_prompt_version_count_in_the_tree_part(store: EventStore) -> None:
     runs = [
         run_unit(_sc(), "A", 0, store, tree=_planner(ScriptedClient([_reply()]), **settings))
-        for settings in ({}, {}, {"temperature": 0.5})
+        for settings in ({}, {}, {"temperature": 0.5}, {"reasoning": "off"})
     ]
 
     parts = [store.events(r.run_id)[0].payload for r in runs]
     assert all(isinstance(p, RunStarted) for p in parts)
     trees = [p.config_parts["tree"] for p in parts]  # type: ignore[union-attr]
     assert trees[0] == trees[1] != trees[2]
+    assert len({json.dumps(t, sort_keys=True) for t in trees}) == 3
     assert _planner(ScriptedClient([])).describe()["prompt_version"]
+
+
+def test_the_plan_request_carries_the_token_budget_and_reasoning(store: EventStore) -> None:
+    client = ScriptedClient([_reply()])
+
+    run_unit(_sc(), "A", 0, store, tree=_planner(client, max_tokens=4096, reasoning="off"))
+
+    [request] = client.requests
+    assert (request.max_tokens, request.reasoning) == (4096, "off")
 
 
 def test_the_task_planner_answers_through_its_tool_only() -> None:

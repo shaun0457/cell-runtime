@@ -14,7 +14,7 @@ from typing import Literal
 
 from cellrt.planner.base import DEFAULT_PLANNER_DEADLINE_S, Planner
 from cellrt.planner.fixed_planner import FixedPlanner
-from cellrt.planner.llm import LlmPlanner, LlmPlannerConfig
+from cellrt.planner.llm import DEFAULT_MAX_TOKENS, LlmPlanner, LlmPlannerConfig, Reasoning
 from cellrt.planner.llm_task import LlmTaskPlanner
 from cellrt.planner.nim import (
     DEFAULT_BASE_URL,
@@ -82,11 +82,12 @@ def build_planner(
     *,
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
-    max_tokens: int = 1_024,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 0.0,
     mode: Literal["tool", "json"] = "tool",
     deadline_s: float = DEFAULT_PLANNER_DEADLINE_S,
     tool_choice: ToolChoice = "auto",
+    reasoning: Reasoning = "default",
     cap: ModelCallCap | None = None,
     max_model_calls: int = DEFAULT_MAX_MODEL_CALLS,
     env: Mapping[str, str] | None = None,
@@ -110,6 +111,7 @@ def build_planner(
         mode=mode,
         deadline_s=deadline_s,
         tool_choice=tool_choice,
+        reasoning=reasoning,
         cap=cap if cap is not None else model_call_cap(max_model_calls),
         env=env,
         connect=connect,
@@ -120,13 +122,18 @@ def build_planner(
 def build_llm_task_planner(
     *,
     model: str = DEFAULT_MODEL,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    reasoning: Reasoning = "default",
     cap: ModelCallCap,
     env: Mapping[str, str] | None = None,
     connect: Connect = connect_openai,
 ) -> LlmTaskPlanner:
-    """The model task planner on NIM (ADR 023), with the model planner's default settings. Its
-    one call per run counts against `cap`, the same cap as the UNKNOWN planner's calls."""
-    client, config = llm_client_and_config(model=model, cap=cap, env=env, connect=connect)
+    """The model task planner on NIM (ADR 023): the model planner's default settings but the
+    model, the token budget and the reasoning, which a command sets for both. Its one call per
+    run counts against `cap`, the same cap as the UNKNOWN planner's calls."""
+    client, config = llm_client_and_config(
+        model=model, max_tokens=max_tokens, reasoning=reasoning, cap=cap, env=env, connect=connect
+    )
     return LlmTaskPlanner(client, config)
 
 
@@ -134,11 +141,12 @@ def llm_client_and_config(
     *,
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
-    max_tokens: int = 1_024,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 0.0,
     mode: Literal["tool", "json"] = "tool",
     deadline_s: float = DEFAULT_PLANNER_DEADLINE_S,
     tool_choice: ToolChoice = "auto",
+    reasoning: Reasoning = "default",
     cap: ModelCallCap,
     env: Mapping[str, str] | None = None,
     connect: Connect = connect_openai,
@@ -152,6 +160,7 @@ def llm_client_and_config(
             temperature=temperature,
             mode=mode,
             deadline_s=deadline_s,
+            reasoning=reasoning,
         )
         client = nim_client(
             cap=cap,

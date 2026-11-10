@@ -30,6 +30,7 @@ from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import FailureContext
 from cellrt.planner.fixed_planner import FixedPlanner
+from cellrt.planner.llm import LlmPlanner
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
@@ -350,6 +351,9 @@ def test_the_setting_and_planner_count_in_the_config_hash(tmp_path: Path) -> Non
 
 # --- the setting and planner from the environment ------------------------------------------
 
+MAX_TOKENS_REFUSED = "CELLRT_MAX_TOKENS must be a whole number from 1 to 8192"
+FULL_WIDTH_1024 = "".join(chr(0xFF10 + int(d)) for d in "1024")  # digits to str.isdigit()
+
 
 def test_the_policy_runs_setting_a_by_default() -> None:
     assert policy_setup({}) == ("A", None)
@@ -367,6 +371,23 @@ def test_the_policy_runs_setting_a_by_default() -> None:
         (
             {"CELLRT_SETTING": "A", "CELLRT_PLANNER": "nim"},
             "CELLRT_PLANNER must be one of: rule, fixed, llm",
+        ),
+        *(
+            ({"CELLRT_SETTING": "C", "CELLRT_MAX_TOKENS": bad}, MAX_TOKENS_REFUSED)
+            for bad in ("0", "8193", "-1", "4k", "1e3", " 1024", FULL_WIDTH_1024, "9" * 5000)
+        ),
+        ({"CELLRT_SETTING": "A", "CELLRT_MAX_TOKENS": "0"}, MAX_TOKENS_REFUSED),  # not used in A
+        (
+            {"CELLRT_SETTING": "C", "CELLRT_REASONING": "on"},
+            "CELLRT_REASONING must be one of: default, off",
+        ),
+        (
+            {"CELLRT_SETTING": "B", "CELLRT_REASONING": "OFF"},
+            "CELLRT_REASONING must be one of: default, off",
+        ),
+        (
+            {"CELLRT_SETTING": "C", "CELLRT_REASONING": " off"},
+            "CELLRT_REASONING must be one of: default, off",
         ),
     ],
 )
@@ -395,6 +416,26 @@ def _connect(create: FakeCreate) -> Any:
         return create
 
     return connect
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ({}, (1024, "default")),
+        ({"CELLRT_MAX_TOKENS": "", "CELLRT_REASONING": "  "}, (1024, "default")),  # blank: unset
+        ({"CELLRT_MAX_TOKENS": "1", "CELLRT_REASONING": "default"}, (1, "default")),
+        ({"CELLRT_MAX_TOKENS": "8192", "CELLRT_REASONING": "off"}, (8192, "off")),
+    ],
+)
+def test_the_model_planners_token_budget_and_reasoning_come_from_the_environment(
+    given: dict[str, str], expected: tuple[int, str]
+) -> None:
+    environ = {"CELLRT_SETTING": "C", "CELLRT_PLANNER": "llm", "NVIDIA_API_KEY": FAKE_KEY, **given}
+
+    _, planner = policy_setup(environ, connect=_connect(FakeCreate([])))
+
+    assert isinstance(planner, LlmPlanner)
+    assert (planner.config.max_tokens, planner.config.reasoning) == expected
 
 
 def test_the_model_planner_without_a_key_is_refused_and_says_where_the_key_goes() -> None:

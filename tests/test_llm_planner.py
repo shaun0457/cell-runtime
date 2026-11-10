@@ -340,9 +340,11 @@ def test_the_model_configuration_counts_in_the_config_hash(store: EventStore) ->
     same = run_with(model="model-a")
     other_model = run_with(model="model-b")
     other_tokens = run_with(model="model-a", max_tokens=99)
+    no_reasoning = run_with(model="model-a", reasoning="off")
 
     assert first.config_hash == same.config_hash
-    assert len({first.config_hash, other_model.config_hash, other_tokens.config_hash}) == 3
+    runs = (first, other_model, other_tokens, no_reasoning)
+    assert len({run.config_hash for run in runs}) == 4
     assert other_model.config_parts["planner"] != first.config_parts["planner"]
     assert other_model.config_parts["world"] == first.config_parts["world"]
 
@@ -362,8 +364,20 @@ def test_replay_shows_the_trace_and_never_calls_a_model(tmp_path: Path) -> None:
     assert len(client.requests) == 1  # replay asked nothing
 
 
+def test_the_reasoning_setting_goes_with_every_request(store: EventStore) -> None:
+    default = ScriptedClient([_tool_reply(SWITCH_TO_ACT)])
+    off = ScriptedClient([_tool_reply(SWITCH_TO_ACT)])
+
+    _run(store, YAW, planner=_planner(default))
+    _run(store, YAW, planner=_planner(off, reasoning="off"))
+
+    assert [r.reasoning for r in default.requests] == ["default"]
+    assert [r.reasoning for r in off.requests] == ["off"]
+
+
 def test_the_planner_config_is_bounded() -> None:
     LlmPlannerConfig(model="m" * MAX_MODEL_CHARS, max_tokens=MAX_TOKENS_LIMIT, temperature=2.0)
+    LlmPlannerConfig(model="m", max_tokens=1, reasoning="off")
     for bad in (
         {"model": ""},
         {"model": "m" * (MAX_MODEL_CHARS + 1)},
@@ -372,6 +386,8 @@ def test_the_planner_config_is_bounded() -> None:
         {"model": "m", "temperature": -0.1},
         {"model": "m", "temperature": MAX_TEMPERATURE + 0.1},
         {"model": "m", "mode": "yaml"},
+        {"model": "m", "reasoning": "on"},
+        {"model": "m", "reasoning": "Off"},
     ):
         with pytest.raises(ValueError):
             LlmPlannerConfig(**bad)  # type: ignore[arg-type]

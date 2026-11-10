@@ -14,18 +14,22 @@ from pathlib import Path
 import pytest
 from nim_fakes import FAKE_KEY
 
+from cellrt.planner.llm import MAX_TOKENS_LIMIT
 from cellrt.planner.nim import KEY_ENV, MISSING_KEY, SDK_ENV_VARS
 
 REPO = Path(__file__).resolve().parent.parent
 PHASE3 = REPO / "eval" / "scenarios" / "phase3.yaml"
 TASKS = REPO / "eval" / "scenarios" / "phase3-tasks.yaml"
 LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
+THINKING_OFF = {"chat_template_kwargs": {"enable_thinking": False}}
 
 # Answers through the tool it is offered: a switch to insert_act for `decide` (an UNKNOWN), a
 # plan that inserts with insert_act for `plan` (a task), or an empty plan when the model is
-# `fake/rejects`. Logs the model asked to FAKE_OPENAI_LOG.
+# `fake/rejects`. Logs the model asked to FAKE_OPENAI_LOG, and the token budget and the extra body
+# sent beside it.
 FAKE_OPENAI = '''
 """A stand-in for the openai SDK, for the CLI tests."""
+import json
 import os
 from types import SimpleNamespace
 
@@ -48,6 +52,9 @@ class OpenAI:
     def _create(self, **arguments):
         with open(os.environ["FAKE_OPENAI_LOG"], "a", encoding="utf-8") as log:
             log.write(arguments["model"] + "\\n")
+        sent = {"max_tokens": arguments["max_tokens"], "extra_body": arguments.get("extra_body")}
+        with open(os.environ["FAKE_OPENAI_LOG"] + ".args", "a", encoding="utf-8") as log:
+            log.write(json.dumps(sent) + "\\n")
         tools = arguments.get("tools") or [{"function": {"name": "decide"}}]
         name = tools[0]["function"]["name"]
         answer = ANSWERS[name]
@@ -94,6 +101,12 @@ class Cli:
     def calls(self) -> list[str]:
         return self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
 
+    def sent(self) -> list[dict[str, object]]:
+        """Each call's `max_tokens` and `extra_body`, in order."""
+        log = self.log.with_name(self.log.name + ".args")
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return [json.loads(line) for line in lines]
+
 
 @pytest.fixture
 def cli(tmp_path: Path) -> Cli:
@@ -128,9 +141,13 @@ def test_an_eval_with_the_model_planner_counts_its_calls(cli: Cli) -> None:
     assert done.returncode == 0, done.stderr
     calls = cli.calls()
     assert calls and set(calls) == {LIGHTNING}
-    assert f"planner for setting C: llm ({LIGHTNING})" in done.stderr
+    assert (
+        f"planner for setting C: llm ({LIGHTNING}, 1024 tokens, reasoning default)" in done.stderr
+    )
     assert f"model calls: {len(calls)} of 6" in done.stderr
     assert FAKE_KEY.encode() not in cli.db.read_bytes()  # nor in the event log
+    # By default: 1024 tokens a call, reasoning as the host sets it.
+    assert cli.sent() == [{"max_tokens": 1024, "extra_body": None}] * len(calls)
 
 
 def test_the_model_is_chosen_on_the_command_line(cli: Cli) -> None:
@@ -138,6 +155,32 @@ def test_the_model_is_chosen_on_the_command_line(cli: Cli) -> None:
 
     assert done.returncode == 0, done.stderr
     assert set(cli.calls()) == {"nvidia/other-model"}
+
+
+def test_the_token_budget_and_reasoning_are_chosen_on_the_command_line(cli: Cli) -> None:
+    done = _eval(cli.with_key(), "--max-tokens", "4096", "--reasoning", "off")
+
+    assert done.returncode == 0, done.stderr
+    sent = cli.sent()
+    assert sent and sent == [{"max_tokens": 4096, "extra_body": THINKING_OFF}] * len(sent)
+    # Two evals that differ only in these settings say so: the table does not.
+    assert f"llm ({LIGHTNING}, 4096 tokens, reasoning off)" in done.stderr
+
+
+@pytest.mark.parametrize("tokens", ["0", str(MAX_TOKENS_LIMIT + 1)])
+def test_a_token_budget_out_of_range_is_refused_before_any_run(cli: Cli, tokens: str) -> None:
+    done = _eval(cli.with_key(), "--max-tokens", tokens)
+
+    assert done.returncode == 2  # a usage error
+    assert not cli.db.exists() and cli.calls() == []
+
+
+def test_an_unknown_reasoning_setting_is_refused_before_any_run(cli: Cli) -> None:
+    done = _eval(cli.with_key(), "--reasoning", "on")
+
+    assert done.returncode == 1
+    assert done.stderr == "unknown reasoning 'on'; known: default, off\n"
+    assert not cli.db.exists() and cli.calls() == []
 
 
 def test_a_run_without_setting_c_needs_no_key(cli: Cli) -> None:
@@ -175,6 +218,14 @@ def test_a_run_with_the_model_task_planner_asks_the_model_once_before_it_moves(
     assert FAKE_KEY.encode() not in cli.db.read_bytes()
 
 
+def test_the_task_planner_takes_the_same_token_budget_and_reasoning(cli: Cli) -> None:
+    done = _run_tasks(cli.with_key(), "--setting", "B", "--max-tokens", str(MAX_TOKENS_LIMIT),
+                      "--reasoning", "off")  # fmt: skip
+
+    assert done.returncode == 0, done.stderr
+    assert cli.sent() == [{"max_tokens": MAX_TOKENS_LIMIT, "extra_body": THINKING_OFF}]
+
+
 def test_the_model_task_planner_without_a_key_fails_before_any_run(cli: Cli) -> None:
     done = _run_tasks(cli, "--setting", "A")
 
@@ -203,7 +254,7 @@ def test_an_eval_with_the_model_task_planner_counts_every_call_under_one_cap(cli
     assert done.returncode == 0, done.stderr
     calls = cli.calls()
     assert len(calls) == 2  # one plan per task, shared by its settings; no UNKNOWN triage
-    assert f"tree: llm ({LIGHTNING})" in done.stderr
+    assert f"tree: llm ({LIGHTNING}, 1024 tokens, reasoning default)" in done.stderr
     assert "model calls: 2 of 10" in done.stderr
     assert "task plans rejected: 0 of 6 runs" in done.stderr
 
@@ -230,6 +281,21 @@ def test_smoke_llm_prints_one_answer_as_json(cli: Cli) -> None:
     )
     assert (report["model"], report["prompt_tokens"]) == (LIGHTNING, 812)
     assert cli.calls() == [LIGHTNING]  # one call, no more
+
+
+def test_smoke_llm_takes_the_token_budget_and_reasoning(cli: Cli) -> None:
+    done = cli.with_key()("smoke-llm", "--max-tokens", "1", "--reasoning", "off")
+
+    assert done.returncode == 0, done.stderr
+    assert cli.sent() == [{"max_tokens": 1, "extra_body": THINKING_OFF}]
+
+
+def test_smoke_llm_refuses_an_unknown_reasoning_setting(cli: Cli) -> None:
+    done = cli.with_key()("smoke-llm", "--reasoning", "none")
+
+    assert done.returncode == 1
+    assert done.stderr == "unknown reasoning 'none'; known: default, off\n"
+    assert cli.calls() == []
 
 
 def test_smoke_llm_without_a_key_says_where_the_key_goes(cli: Cli) -> None:

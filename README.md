@@ -69,13 +69,16 @@ uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings B,C --plann
 `--model` to change). It needs the optional `llm` extra and a key in `NVIDIA_API_KEY`; the
 base install, the tests and CI need neither, and no network. Before an eval starts, it checks
 that setting C's units × the planner budget per task fit `--max-model-calls` (default 100), and
-refuses otherwise; stderr reports the calls made. `cellrt smoke-llm` sends one fixed failure to
-the model and prints how it answered, as JSON:
+refuses otherwise; stderr reports the calls made. `--max-tokens` (1 to 8192, default 1024)
+bounds each model call, reasoning included, and `--reasoning off` asks the host to answer
+without reasoning (default: as the host sets it); both count in the config hash and apply to
+every model call of the command, `--tree llm`'s too. `cellrt smoke-llm` sends one fixed
+failure to the model and prints how it answered, as JSON; it takes the same two options:
 
 ```sh
 uv sync --extra llm
 export NVIDIA_API_KEY=...   # never in a file of the repo
-uv run cellrt smoke-llm
+uv run cellrt smoke-llm --reasoning off
 uv run cellrt eval --scenarios eval/scenarios/phase3.yaml --settings C --seeds 3 --planner llm
 ```
 
@@ -220,8 +223,10 @@ z_offset 0.01, align first comes back up to it. `retract`
 always rises 5 mm: the mock's retract height above the port does not carry over, since the
 port frame sits at a different depth for each port type. Setting C asks the planner
 `CELLRT_PLANNER` names (`rule`, `fixed` or `llm`; default `rule`; `llm` reads its key from
-`NVIDIA_API_KEY` only). The executor runs in `live` mode (ADR 020): the sim does not stop
-while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching.
+`NVIDIA_API_KEY` only). `CELLRT_MAX_TOKENS` (1 to 8192) and `CELLRT_REASONING` (`default` or
+`off`) set the model planner's tokens per call and reasoning, as `--max-tokens` and
+`--reasoning` do; a bad value refuses every goal. The executor runs in `live` mode (ADR 020):
+the sim does not stop while a planner thinks, so the arm holds, the world steps and the Monitor keeps watching.
 `CELLRT_FAULT` injects a fault with a ground-truth label (#60), as JSON:
 `{"kind": "command_dropout", "onset_height_mm": 20, "duration_s": 15, "goals": [2]}` drops
 every motion command for 15 s of sim time from when the plug tip first comes within 20 mm of

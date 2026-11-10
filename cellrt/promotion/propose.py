@@ -39,14 +39,14 @@ from cellrt.monitor.promoted import (
     PromotedRule,
 )
 from cellrt.planner.base import MAX_STORED_PROMPT_CHARS, MAX_STORED_RESPONSE_CHARS
-from cellrt.planner.llm import ChatClient, ChatReply, ChatRequest, LlmPlannerConfig
+from cellrt.planner.llm import ChatClient, ChatReply, ChatRequest, LlmPlannerConfig, Reasoning
 from cellrt.planner.nim import ModelCallCapReached
 from cellrt.promotion.groups import Group
 from cellrt.promotion.validate import parse_checked
 from cellrt.runtime.scrub import scrub
 from cellrt.skills.registry import SkillRegistry
 
-PROPOSAL_VERSION = 1
+PROPOSAL_VERSION = 2  # 2: the call's reasoning setting
 TOOL_NAME = "propose"
 # A rule and its plan are a few hundred tokens; a reasoning model spends more before it answers.
 PROPOSE_MAX_TOKENS = 4_096
@@ -190,6 +190,7 @@ class Proposal:
     max_tokens: int  # the call's settings, as sent
     temperature: float
     deadline_s: float
+    reasoning: Reasoning
     reply_model: str | None  # as the provider named it, scrubbed and cut
     prompt: str  # the messages sent, as JSON, scrubbed and cut
     response: str | None  # the raw answer, scrubbed and cut
@@ -249,6 +250,7 @@ async def _propose(
         tool=tool,
         max_tokens=config.max_tokens,
         temperature=config.temperature,
+        reasoning=config.reasoning,
     )
     base = {
         "group": group.signature.label(),
@@ -257,6 +259,7 @@ async def _propose(
         "max_tokens": config.max_tokens,
         "temperature": config.temperature,
         "deadline_s": config.deadline_s,
+        "reasoning": config.reasoning,
         "prompt": scrub(json.dumps(messages), max_chars=MAX_STORED_PROMPT_CHARS),
         "prompt_version": prompt_version(insertion),
     }

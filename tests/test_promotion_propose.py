@@ -145,6 +145,18 @@ def test_a_valid_answer_is_a_candidate_the_replay_gates_pass(
     )
     # The call's settings go into the record, so a cut answer can be read against its budget.
     assert (proposal.max_tokens, proposal.temperature, proposal.deadline_s) == (2048, 0.0, 5.0)
+    assert proposal.as_dict()["reasoning"] == "default"
+    assert proposal.as_dict()["proposal_version"] == 2
+
+
+def test_the_record_says_whether_the_call_asked_for_reasoning_off(groups: list[Group]) -> None:
+    client = Scripted(_reply())
+    off = LlmPlannerConfig(model="fake-model", deadline_s=5.0, reasoning="off")
+
+    proposal = _ask(groups, client, off)
+
+    [request] = client.requests
+    assert request.reasoning == proposal.reasoning == "off"
 
 
 def test_the_request_holds_the_group_the_language_and_the_skills(groups: list[Group]) -> None:
