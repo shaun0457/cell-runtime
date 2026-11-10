@@ -1,7 +1,7 @@
 # 006: The Monitor decides failure classes and preempts the running skill
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -176,8 +176,8 @@ exceeds 1 s (`ScoringTier2.cc:870-900`); the sum never goes back down.
 
 ## Decision
 
-<!-- DRAFT by Claude from the 2026-11-08 grilling session. Shaun rewrites Decision and Why in
-his own words, then sets Status to accepted. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
 
 - **Authority.** The Monitor decides failure classes. A skill reports ok / not ok. If a skill
   also returns a class, it is used only when the Monitor gave no verdict, and the event records
@@ -210,9 +210,6 @@ his own words, then sets Status to accepted. -->
   `sensor_wait`, ...), not by a name list inside the Monitor.
 
 ## Why
-
-<!-- DRAFT by Claude: Shaun rewrites this in his own words, as he would explain it in an
-interview. -->
 
 One component owns the question "why did this fail", for three reasons:
 

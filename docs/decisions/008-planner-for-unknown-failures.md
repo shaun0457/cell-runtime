@@ -1,9 +1,7 @@
 # 008: How setting C hands unclassified failures to a planner
 
 Date: 2026-11-08
-Status: proposed
-
-<!-- DRAFT by Claude: Context, Options and Consequences only. Decision and Why are Shaun's. -->
+Status: accepted
 
 ## Context
 
@@ -113,11 +111,32 @@ Current shape:
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Planners return raw output (a dict or JSON text). The executor validates it into a
+   `Decision` (`switch_skill`, `retry`, `abort`) or a `Rejection` (Option A).
+2. A switch may only name one of the step's explicit options; in Phase 0 only insert steps have
+   options, namely the other insert skills (Option A).
+3. Invalid output aborts the run with a reason, recorded as `planner_output_rejected`
+   (Option A).
+4. Two budgets: 2 planner calls per task, and every retry or switch the planner starts counts
+   against the shared task recovery budget of 4 (Option A).
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+Principle 4 says LLM output is untrusted, and that only holds if no planner can skip
+validation. So the rule planner returns dicts the way an LLM would and goes through the same
+gate; the stub already tests the path the LLM will use in Phase 3.
+
+Explicit options keep the planner inside the task: it may choose how to insert, not decide to
+skip verification. Aborting on invalid output is strict on purpose. Asking again, or quietly
+falling back to B, would hide how often the planner is wrong, and that is exactly the number
+Phase 3 has to report. The budgets cap cost and time per task and stop a planner from looping.
+
+What Phase 0 does not show: the rule planner has one rule, so the C − B gap (14 points) is
+exactly the `yaw_mismatch` scenario. It shows that the gate and the budgets work, not that a
+planner adds value.
 
 ## Consequences
 

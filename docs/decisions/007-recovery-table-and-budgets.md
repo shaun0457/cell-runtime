@@ -1,7 +1,7 @@
 # 007: How setting B recovers known failure classes
 
 Date: 2026-11-08
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -107,8 +107,8 @@ persistence, and a yaw mismatch is not recovered in B at all.
 
 ## Decision
 
-<!-- DRAFT by Claude from the 2026-11-08 grilling session. Shaun rewrites Decision and Why in
-his own words, then sets Status to accepted. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
 
 - **Where.** A custom composite, `Recovering`, wraps each task step. The plan table is data in
   `RecoveryConfig`.
@@ -126,9 +126,6 @@ his own words, then sets Status to accepted. -->
   class and exceptions are not.
 
 ## Why
-
-<!-- DRAFT by Claude: Shaun rewrites this in his own words, as he would explain it in an
-interview. -->
 
 Known failures get a fixed, cheap, explainable answer: the class picks the plan from a table
 that reads like the kickoff's, and an LLM is never asked to guess at a case we already know.

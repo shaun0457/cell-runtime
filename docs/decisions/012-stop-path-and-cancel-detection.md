@@ -1,7 +1,7 @@
 # 012: The stop path, and how the policy learns that its goal was cancelled
 
 Date: 2026-11-09
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -117,11 +117,38 @@ Current shape (since #25, the plan's defaults):
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Cancel detection: read the goal handle aic_model stores on its node, at every step boundary
+   and while a step waits (Option A). If the handle cannot be read, the run fails fast as
+   `aic_goal_handle_unavailable`.
+2. One stop path: every reason becomes the runner's stop, which revokes the skill's command
+   lease and sends HOLD (Option A).
+3. A stop decided inside the tree keeps the core's outcome, `failed` with the class in the
+   reason; external stops end `aborted` with a reason code (Option A).
+4. The stop is confirmed at run end only: linear TCP speed under 5 mm/s for 3 samples within
+   1.0 s of sim time, recorded as `hold_confirmed` or `hold_unconfirmed` (Option A).
+   Confirmation between skills is deferred to Phase 2, with recovery.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+After a cancel, aic_model accepts the next goal while the old policy thread is still running.
+Relying on the time limit (option B) would leave two threads commanding one arm. Reading an
+internal attribute couples us to upstream internals, so it fails loudly when the attribute is
+missing instead of silently ignoring cancels. Patching aic_model (option C) would diverge from
+the submission environment.
+
+One stop path because the dangerous bug is a stop reason that forgets to revoke the lease. With
+one path there is one place to test that a late command from the old skill is dropped and HOLD
+is sent, whatever ended the run.
+
+Keeping the core's outcomes means `failed` means the same in the mock and the cell, a known
+failure, so success and recovery metrics need no cell-specific mapping. Confirming the stop at
+run end makes an arm that keeps moving visible in the log; doing it after every skill costs up
+to 1 s per skill and belongs with recovery tuning.
+
+Weakness: the cancel check depends on an internal attribute of aic_model.
 
 ## Consequences
 

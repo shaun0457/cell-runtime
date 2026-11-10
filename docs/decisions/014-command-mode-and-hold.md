@@ -1,7 +1,7 @@
 # 014: Command mode for scripted skills, and what HOLD means in each world
 
 Date: 2026-11-09
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -79,11 +79,33 @@ world says what it means.
 
 ## Decision
 
-<!-- Written by Shaun. -->
+<!-- Decision and Why drafted by Claude from the option the code took. Shaun delegated these
+sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
+
+1. Scripted skills command Cartesian position targets, with CheatCode's stiffness, damping and
+   feedback-gain defaults (Option A).
+2. HOLD in the cell is a position target at the measured TCP pose, `controller_state.tcp_pose`
+   (Option A). HOLD in the mock is unchanged.
+3. The command type is a core union, `Velocity | PoseTarget`. `PoseTarget` is ROS-free (millimetres
+   and a quaternion in the base frame); the mock rejects it with a typed error (Option A).
+4. Velocity is converted to the controller's velocity mode and tested now, for ACT in Phase 2.
 
 ## Why
 
-<!-- Written by Shaun: the reason in your own words, as you would explain it in an interview. -->
+The scripted skills are CheatCode's logic, and CheatCode passes all three sample tasks in
+position mode; porting it to velocity would mean re-tuning an expert that already works.
+
+Position mode is also the safer one to stop. In velocity mode the controller keeps the last
+twist, so a missed HOLD keeps the arm moving. A position target at the measured pose leaves
+nothing to continue, and using the measured pose rather than the last commanded target avoids a
+jump back toward where the arm was told to go.
+
+The union lives in the core because the recovery trees and the stop path are core code and must
+hold for both kinds of skill. Keeping it in millimetres and quaternions, with no ROS types,
+preserves principle 3.
+
+Weakness: the cell now has two command kinds. A switch from a position-mode insert to ACT in
+velocity mode needs a clean hand-over, which Phase 2 has to design.
 
 ## Consequences
 

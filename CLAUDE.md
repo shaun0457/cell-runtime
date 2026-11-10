@@ -65,7 +65,7 @@ cellrt/
 adapters/
   aic/         RuntimePolicy (an aic_model Policy plugin), AicWorld, skills on top of move_robot
 eval/scenarios/   *.yaml
-docs/decisions/   NNN-title.md (design decision records, written by Shaun)
+docs/decisions/   NNN-title.md (design decision records)
 tests/
 ```
 
@@ -186,8 +186,13 @@ you are reading before trusting a reference.
 
 - Start each phase in plan mode: propose the design, list the decisions and their trade-offs,
   and wait for approval before writing code.
-- For every non-trivial decision, draft `docs/decisions/NNN-title.md` with the options and
-  trade-offs only. Shaun writes the "Decision" and "Why" sections himself.
+- For every non-trivial decision, write `docs/decisions/NNN-title.md`: context, options and
+  trade-offs, then the Decision and Why for the option chosen in plan mode, with Status
+  `accepted`. Shaun delegated Decision and Why to Claude on 2026-11-09: keep the marker that
+  says Claude drafted them, list every new or changed decision in the PR description, and Shaun
+  accepts them by merging (he may rewrite any of it).
+- Flag in the PR description any decision that changes what the eval results mean (fault
+  channels, the held-out split, metric definitions), so Shaun reviews it before merging.
 - Prefer small, reviewable commits per step. Explain what changed and why in the summary.
 - Do not build ahead of the current phase.
 
@@ -196,8 +201,7 @@ you are reading before trusting a reference.
 Phase goals, exit criteria and the capability map are in `docs/roadmap.md`. Phase specs are
 cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
 
-- [x] Phase 0 — ROS-free runtime core + mock world + eval CLI (ADRs 001–010: Decision and
-  Why still to be confirmed by Shaun)
+- [x] Phase 0 — ROS-free runtime core + mock world + eval CLI
 - [ ] Phase 1 — AIC adapter and scripted skills; the 3 sample-config tasks end to end with no
   faults, recorded and replayable (`docs/briefs/phase-1-aic-adapter.md`)
 - [ ] Phase 2 — fault injection, ACT as `insert_act`, the A/B/C eval in Gazebo, reconciled with
