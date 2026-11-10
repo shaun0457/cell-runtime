@@ -610,7 +610,7 @@ def promote_propose(
         runs = survey(_runs_of("store", db), ReplayConfig.mock())
     except (StoreRefused, SurveyTooLarge) as exc:
         _fail(str(exc))
-    lines, passed = gate_0(runs)
+    lines, passed, _ = gate_0(runs)
     if not passed:  # groups from a store the replay cannot reproduce mean nothing
         _fail("\n".join(lines))
     groups = group_unknowns(runs)

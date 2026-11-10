@@ -15,6 +15,7 @@ from cellrt.promotion.groups import (
     SurveyedRun,
     SurveyTooLarge,
     band,
+    gate_0,
     group_unknowns,
     render_survey,
     survey,
@@ -108,6 +109,18 @@ def test_a_store_with_nothing_replayable_does_not_pass_gate_0() -> None:
         "replayed 1 runs: ok 0, unfinished 1",
         "gate 0 not run: no run in the store could be replayed",
     ]
+
+
+def test_gate_0_hands_back_its_summary_apart_from_its_line() -> None:
+    # The validation report shows the summary on its own; it is not parsed back from the line.
+    runs = [SurveyedRun(RunReplay("r1", "ok", timeouts=1), frozenset())]
+    result = gate_0(runs)
+    assert result.passed
+    assert result.summary == (
+        "every recorded verdict reproduced (0 verdicts in 1 runs; "
+        "1 skill timeouts, decided by the clock)"
+    )
+    assert result.lines[-1] == f"gate 0 passed: {result.summary}"
 
 
 def test_gate_0_counts_the_skill_timeouts_apart() -> None:

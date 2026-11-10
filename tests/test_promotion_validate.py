@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import cellrt.promotion.validate as validate_module
 from cellrt.eval.runner import run_eval, run_unit
 from cellrt.eval.scenarios import load_scenarios
 from cellrt.monitor.classifier import MonitorConfig
@@ -177,6 +178,30 @@ def test_a_store_made_with_other_thresholds_fails_gate_0_and_nothing_else_runs(
     ]
     assert "monitor" in report.gates[0].summary
     assert not report.passed
+
+
+def test_after_a_run_gate_0_refuses_no_run_is_replayed_with_the_candidate(
+    tmp_path: Path, phase0_runs: Runs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Gate 0 fails on the first run it refuses, and no other gate runs: replaying the rest
+    # with the candidate would be work nobody reads.
+    [scenario] = [s for s in load_scenarios(PHASE0) if s.id == "yaw_mismatch"]
+    with EventStore(tmp_path / "other.sqlite") as store:
+        run_unit(scenario, "A", 0, store, monitor=MonitorConfig(stall_window_s=0.8))
+        refused = [store.events(r.run_id) for r in store.runs()]
+    with_candidate = 0
+    real = validate_module.replay_run
+
+    def counted(*args: Any, candidate: Any = None, **kw: Any) -> Any:
+        nonlocal with_candidate
+        with_candidate += candidate is not None
+        return real(*args, candidate=candidate, **kw)
+
+    monkeypatch.setattr(validate_module, "replay_run", counted)
+    report = _validate([*refused, *phase0_runs[:5]], _candidate())
+
+    assert report.gates[0].passed is False
+    assert with_candidate == 0
 
 
 def test_a_store_without_clean_runs_cannot_pass_gate_2(phase0_runs: Runs) -> None:
