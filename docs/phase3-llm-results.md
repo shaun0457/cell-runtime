@@ -9,6 +9,12 @@ model picked the right skill every time it answered on the fixable fault, and ne
 early on the unfixable one. About 1 call in 4 gave no usable answer: 17 came back empty and 6
 were cut at the deadline.
 
+**Update, 2026-11-10:** a smaller follow-up run with the token budget and reasoning as settings
+([Token budget and reasoning](#token-budget-and-reasoning-2026-11-10)): with 4096 tokens no
+answer was cut at the limit and the decisions stayed the same; with reasoning off every call was
+fast and valid, but the first answer was usually `retry`, which fits neither fault. The numbers
+below are #52's and are unchanged.
+
 Read this with three limits in mind:
 
 - **The scenarios are ours.** `eval/scenarios/phase3.yaml` (ADR 019) holds two UNKNOWN faults
@@ -154,6 +160,97 @@ Two changes would make the next run a fairer test of the model:
 - **A clear statement of what we will not change.** The prompt could say more about when to stop,
   but writing the answer to `damaged_port` into the prompt would turn the eval into a test of the
   prompt. We keep the prompt as it is, so the result stays a result about the model.
+
+## Token budget and reasoning (2026-11-10)
+
+The 17 empty answers above all stopped at exactly 1024 completion tokens. Since `2d52365` the
+token budget and the reasoning are settings of the command (`--max-tokens`, `--reasoning`, ADR
+017). This smaller run puts three settings side by side on the same scenarios: #52's, a budget of
+4096 tokens, and reasoning switched off (NIM's `enable_thinking: false`).
+
+| | |
+|---|---|
+| Code | `2d52365` (branch `feat/planner-settings`) |
+| Model | the same Nemotron 3.5 Lightning on hosted NIM; tool mode, tool choice `auto`, deadline 30 s, planner budget 2 calls per task |
+| Variants | C-1024: `max_tokens` 1024, reasoning as the host sets it (#52's setting); C-4096: 4096 tokens; C-off: 1024 tokens, reasoning off |
+| Units | 3 scenarios x seeds 0-4 = 15 per variant, one eval each (not three repeats, as above) |
+| Model calls | 48 (15, 15 and 18), capped at 30 per eval; C-4096 and C-off printed their counts, C-1024's are counted from its store (below) |
+
+```sh
+S=eval/scenarios/phase3.yaml
+C="--scenarios $S --settings C --planner llm --seeds 5 --k 1 --max-model-calls 30"
+uv run cellrt eval $C --db runs/C-1024.sqlite
+uv run cellrt eval $C --max-tokens 4096 --db runs/C-4096.sqlite
+uv run cellrt eval $C --reasoning off --db runs/C-off.sqlite
+uv run cellrt agent-report --db C-1024=runs/C-1024.sqlite --db C-4096=runs/C-4096.sqlite \
+  --db C-off=runs/C-off.sqlite
+```
+
+C-1024's first process was cut off after its 15 units had finished, before it printed its
+summary. Running the same command again resumed the store with no model calls ("ran 0 units, 15
+already finished"), so its 15 calls are counted from the store and its wall time was not
+measured. The key came from each process's environment only; none of the outputs or stores
+contain it. The stores are kept outside the repository.
+
+```text
+variant  setting  runs  success  wasted_s  wasted_steps  calls/run  invalid  errors  timeouts  preempted  stale  p50_s  p95_s  prompt/call  compl/call  plans/run  plan_p50_s  plan_p95_s  plan_prompt  plan_compl
+C-1024   C          15    66.7%      1.68           1.6       1.00    13.3%       0         0          0      0   9.36  12.41         1181         762       0.00           -           -            -           -
+C-4096   C          15    66.7%      1.68           1.6       1.00     6.7%       0         1          0      0   8.71  18.96         1181         948       0.00           -           -            -           -
+C-off    C          15    60.0%      2.10           2.0       1.20     0.0%       0         0          0      0   0.79   1.23         1181          32       0.00           -           -            -           -
+
+decisions (valid ones, by kind):
+  C-1024: switch_skill 13
+  C-4096: switch_skill 13
+  C-off: retry 9, switch_skill 9
+```
+
+Successful runs:
+
+| scenario | C-1024 | C-4096 | C-off |
+|---|---|---|---|
+| baseline | 5/5 | 5/5 | 5/5 |
+| yaw_mismatch (fixable) | 5/5 | 5/5 | 4/5 |
+| damaged_port (unfixable) | 0/5 | 0/5 | 0/5 |
+
+What each setting changed:
+
+- **4096 tokens removed the cut answers, not the misses.**
+  - No answer stopped at the budget. In C-1024, 2 of 15 did (`finish_reason: length` at 1024
+    tokens, both on `damaged_port`), as 17 of 89 did in #52. The longest C-4096 answer used 2088
+    completion tokens.
+  - The decisions were C-1024's: `insert_act` on every yaw mismatch, and switching skills on
+    `damaged_port` until the budget ran out.
+  - Two `damaged_port` runs still ended on a failed call. One was cut at the 30 s deadline. The
+    other answered `escalate`, the stop the scenario was built for, but its reason was longer
+    than the 200 characters the schema allows, so validation refused it
+    (`escalate.reason: string_too_long`).
+  - The cost is time: p95 latency went from 12.4 s to 19.0 s, and the eval took 188 s of wall
+    time.
+- **Reasoning off made every call fast and valid, and the first answer was usually `retry`.**
+  - Every call came back as a valid tool call, in at most 1.23 s and 39 completion tokens:
+    about 12 times faster than C-1024 at the median (0.79 s against 9.36 s).
+  - Its first answer was `retry` in 8 of 10 runs. With reasoning on, the first answer was
+    `switch_skill` to `insert_act` in all 20 runs.
+  - A retry fixes neither fault. On `yaw_mismatch`, 2 runs switched at once, 2 retried and then
+    switched, and 1 retried twice and failed. On its first call that is C-fixed's policy, which
+    retries without reading the evidence.
+- **No setting stopped early on `damaged_port`.** The one stop the model tried was the refused
+  `escalate`.
+
+What follows from it:
+
+- **The sim rerun uses 4096 tokens with reasoning on** (`docs/sim-results.md`, "Rerun with a
+  4096-token budget"). In the sim, 5 of 6 calls were cut at 1024 tokens. Switching reasoning off
+  would replace the cut answers with first answers that are mostly `retry`.
+- **Reasoning costs time on a cell.** A call is about 950 completion tokens and up to about 19 s,
+  and the arm holds for all of it. The p95 rose to 19.0 s, so a larger budget moves the slowest
+  calls closer to the 30 s deadline. One call timed out at 4096 tokens; that rate (1 of 15) is
+  the same as #52's 6 of 89 at 1024, and the sample is too small to tell them apart.
+- **Limits:** 15 units per variant, one eval each. One run (60.0% against 66.7%) is noise at
+  this size. The clearer signal is the pattern of first answers: retry 8 times in 10 with
+  reasoning off, and never with it on. The refused `escalate` shows the model running past a
+  limit the schema states. It is left as it is: raising the limit or adding to the prompt would
+  change what the eval tests.
 
 ## Trace
 
