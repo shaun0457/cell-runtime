@@ -288,6 +288,32 @@ def test_an_eval_stops_at_the_cap_and_keeps_the_units_it_finished(store: EventSt
     assert finished == [True, True, False]
 
 
+def test_settings_that_reuse_a_model_plan_keep_no_trace_of_their_own(store: EventStore) -> None:
+    client = ScriptedClient([_reply()])  # one answer: a second call would fail the test
+
+    a, b = run_eval([_sc()], ["A", "B"], 1, store, tree=_planner(client)).run_ids
+
+    assert len(client.requests) == 1
+    assert len(_of(store.events(a), TaskPlanResponded)) == 1
+    assert _of(store.events(b), TaskPlanResponded) == []
+    [planned] = _of(store.events(b), TaskPlanned)
+    assert planned.reused_from == a
+
+
+def test_a_resumed_eval_reuses_a_model_plan_recorded_after_its_trace(store: EventStore) -> None:
+    # The plan is the third event (after run_started and task_plan_responded): the resume reads
+    # that far, so it does not ask again.
+    client = ScriptedClient([_reply()])
+    tree = _planner(client)
+
+    [a] = run_eval([_sc()], ["A"], 1, store, tree=tree).run_ids
+    again = run_eval([_sc()], ["A", "B"], 1, store, tree=tree)
+
+    assert len(client.requests) == 1 and again.unfinished == []
+    [planned] = _of(store.events(again.run_ids[1]), TaskPlanned)
+    assert planned.reused_from == a
+
+
 def test_secrets_in_the_answer_or_an_error_never_reach_the_log(store: EventStore) -> None:
     leaky = '{"steps": ["approach"], "note": "api_key=sk-live0123456789abcdef"}'
     first = run_unit(_sc(), "A", 0, store, tree=_planner(ScriptedClient([_reply(leaky)])))

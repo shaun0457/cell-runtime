@@ -409,3 +409,116 @@ def test_a_rejected_unit_is_finished_and_skipped_when_the_eval_resumes(
     again = run_eval([baseline], ["A", "B"], 2, store, tree=tree)
 
     assert (first.ran, again.ran, again.skipped, again.gave_up) == (4, 0, 4, [])
+
+
+# --- one plan per (scenario, seed) in an eval (#63 review F1) -------------------------------
+
+
+@dataclass
+class Counting:
+    """Answers with `steps` and counts its calls."""
+
+    steps: Sequence[str] = SKILL_SEQUENCE
+    name: str = "counting"
+    calls: int = 0
+
+    async def plan(self, task: Task, registry: SkillRegistry) -> Iterable[str]:
+        self.calls += 1
+        return self.steps
+
+    def describe(self) -> Mapping[str, object]:
+        return {"steps": list(self.steps)}
+
+
+def _plan_of(store: EventStore, run_id: str) -> TaskPlanned | TaskPlanRejected:
+    [plan] = [
+        e.payload
+        for e in store.events(run_id)
+        if isinstance(e.payload, TaskPlanned | TaskPlanRejected)
+    ]
+    return plan
+
+
+def test_every_setting_of_a_seed_runs_the_plan_of_one_call(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting()
+
+    runs = run_eval([baseline], ["A", "B", "C"], 2, store, tree=tree)
+
+    assert tree.calls == 2
+    reused = list(replay_lines(store.events("baseline/B/0/a1")))[1]
+    assert reused.endswith("(reused from baseline/A/0/a1)")
+    assert "reused" not in list(replay_lines(store.events("baseline/A/0/a1")))[1]
+    for seed in (0, 1):
+        origin = f"baseline/A/{seed}/a1"
+        assert _plan_of(store, origin).reused_from is None
+        for setting in ("B", "C"):
+            plan = _plan_of(store, f"baseline/{setting}/{seed}/a1")
+            assert isinstance(plan, TaskPlanned)
+            assert (plan.reused_from, plan.steps) == (origin, list(SKILL_SEQUENCE))
+    assert len(runs.run_ids) == 6
+
+
+def test_a_rejected_plan_is_shared_and_ends_every_setting_of_its_seed_aborted(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting(steps=("verify",))
+
+    a, b = run_eval([baseline], ["A", "B"], 1, store, tree=tree).run_ids
+
+    assert tree.calls == 1
+    rejected = _plan_of(store, b)
+    assert isinstance(rejected, TaskPlanRejected)
+    assert (rejected.reused_from, rejected.errors) == (a, _plan_of(store, a).errors)
+    finished = store.events(b)[-1].payload
+    assert isinstance(finished, RunFinished) and finished.outcome == "aborted"
+    assert _skills_started(store.events(b)) == []
+
+
+def test_a_resumed_eval_reuses_a_finished_run_s_plan_naming_the_run_that_asked(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Counting()
+
+    run_eval([baseline], ["A"], 1, store, tree=tree)
+    run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+    a, b, c = run_eval([baseline], ["A", "B", "C"], 1, store, tree=tree).run_ids
+
+    assert tree.calls == 1
+    assert (_plan_of(store, b).reused_from, _plan_of(store, c).reused_from) == (a, a)
+
+
+def test_a_plan_made_under_another_tree_configuration_is_not_reused(
+    store: EventStore, baseline: Scenario
+) -> None:
+    run_eval([baseline], ["A"], 1, store, tree=Counting(name="one"))
+    other = Counting(name="other")
+
+    [b] = run_eval([baseline], ["B"], 1, store, tree=other).run_ids
+
+    assert other.calls == 1 and _plan_of(store, b).reused_from is None
+
+
+def test_a_failed_plan_call_is_made_once_for_every_setting_of_its_seed(
+    store: EventStore, baseline: Scenario
+) -> None:
+    tree = Flaky(failures=1)
+
+    first = run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+    again = run_eval([baseline], ["A", "B"], 1, store, tree=tree)
+
+    assert first.unfinished == ["baseline/A/0", "baseline/B/0"]
+    assert _plan_of(store, "baseline/B/0/a1").reused_from == "baseline/A/0/a1"
+    assert tree.calls == 2
+    a, b = again.run_ids
+    assert a.endswith("/a2") and _plan_of(store, b).reused_from == a
+
+
+def test_run_unit_asks_its_planner_every_time(store: EventStore, baseline: Scenario) -> None:
+    tree = Counting()
+
+    run_unit(baseline, "A", 0, store, tree=tree)
+    run_unit(baseline, "B", 0, store, tree=tree)
+
+    assert tree.calls == 2

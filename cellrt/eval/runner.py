@@ -8,8 +8,8 @@ import functools
 import hashlib
 import json
 import random
-from collections import Counter
-from collections.abc import Sequence
+from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +23,7 @@ from cellrt.monitor.classifier import MonitorConfig
 from cellrt.planner.base import Planner, planner_deadline
 from cellrt.planner.nim import ModelCallCapReached
 from cellrt.planner.rule_planner import RulePlanner
-from cellrt.planner.task_plan import CAP_REACHED, TaskPlanner, plan_task
+from cellrt.planner.task_plan import CAP_REACHED, PlanResult, TaskPlanner, plan_task
 from cellrt.runtime.clock import SimClock
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
@@ -52,6 +52,12 @@ ADAPTERS_ROOT = PACKAGE_ROOT.parent / "adapters"
 LOCK_FILE = PACKAGE_ROOT.parent / "uv.lock"
 # `run_finished.reason` of a run whose task plan was rejected (ADR 023).
 PLAN_REJECTED = "task plan rejected"
+# A run's plan event comes after `run_started` and its call's trace: a resumed eval reads at most
+# this many events of a finished run to reuse its plan.
+PLAN_EVENT_LIMIT = 3
+# The parts a task plan cannot depend on: how the run recovers. Two runs that differ only in
+# these share a plan in an eval (#63 review F1).
+NOT_PLAN_PARTS = frozenset({"setting", "recovery", "planner"})
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,14 @@ class EvalRuns:
     skipped: int  # units already finished under the same configuration
     gave_up: list[str]  # units ("scenario/setting/seed") interrupted MAX_ATTEMPTS times
     unfinished: list[str]  # units run now whose task plan call gave no answer
+
+
+@dataclass(frozen=True)
+class _SharedPlan:
+    """A task plan one run asked for, reused by the other settings of its scenario and seed."""
+
+    origin: str  # the run whose planner call made it
+    result: PlanResult  # without the call's trace, which only the origin records
 
 
 @dataclass(frozen=True)
@@ -145,7 +159,8 @@ def run_unit(
     steps by default)."""
     config = _UnitConfig.resolve(setting, registry, params, recovery, monitor, planner, tree)
     attempt = store.next_attempt(scenario.id, setting, seed)
-    return _run_attempt(scenario, setting, seed, attempt, store, config)
+    result, _ = _run_attempt(scenario, setting, seed, attempt, store, config, None)
+    return result
 
 
 def _run_attempt(
@@ -155,9 +170,10 @@ def _run_attempt(
     attempt: int,
     store: EventStore,
     config: _UnitConfig,
-) -> RunResult:
+    shared: _SharedPlan | None,
+) -> tuple[RunResult, _SharedPlan | None]:
     run_id = f"{scenario.id}/{setting}/{seed}/a{attempt}"
-    return asyncio.run(_run(run_id, scenario, setting, seed, attempt, store, config))
+    return asyncio.run(_run(run_id, scenario, setting, seed, attempt, store, config, shared))
 
 
 def run_eval(
@@ -181,6 +197,13 @@ def run_eval(
     interrupted MAX_ATTEMPTS times under this configuration. Nothing is deleted from the log.
     A setting given twice runs once. Scenario ids must be unique: every run is keyed by them.
 
+    With a task planner, the settings of one (scenario, seed) run one plan: the first unit to
+    run asks the planner, the others reuse its answer and record `reused_from`, so the settings
+    differ only in how they recover (#63 review F1). A resumed eval reuses the plan of a finished
+    run made under the same configuration apart from setting, recovery and planner. A plan call
+    that gave no answer is not asked again in the same eval, so an eval makes at most one plan
+    call per (scenario, seed).
+
     A unit whose task plan call gave no answer is left unfinished, like an interrupted one, and
     runs again next time. A task plan call that meets the model call cap stops the eval:
     `ModelCallCapReached` propagates, and the units after it do not run.
@@ -191,13 +214,21 @@ def run_eval(
     interrupted: Counter[tuple[str, str, int, str]] = Counter()
     # Attempts per unit under any configuration, read once: the next attempt's number.
     attempts: Counter[tuple[str, str, int]] = Counter()
+    # Finished runs per (scenario, seed), in store order (by setting, then attempt): where a
+    # resumed eval looks for a plan.
+    done_by_seed: defaultdict[tuple[str, int], list[str]] = defaultdict(list)
     for run in store.runs():  # oldest attempt first: keep the first finished one
         attempts[(run.scenario_id, run.setting, run.seed)] += 1
         key = (run.scenario_id, run.setting, run.seed, run.config_hash)
         if run.finished:
             finished.setdefault(key, run.run_id)
+            done_by_seed[(run.scenario_id, run.seed)].append(run.run_id)
         else:
             interrupted[key] += 1
+    # One plan per (scenario, seed) in this eval; every setting has the same plan parts.
+    # Keyed by the plan parts too, so a plan is never shared across configurations that differ
+    # in anything a plan may depend on (today every setting of an eval has the same ones).
+    plans: dict[tuple[str, int, str], _SharedPlan | None] = {}
     run_ids: list[str] = []
     gave_up: list[str] = []
     unfinished: list[str] = []
@@ -213,7 +244,8 @@ def run_eval(
                 planner if setting == "C" else None,
                 tree,
             )
-            digest = config.hash(scenario, setting)
+            parts = config.parts(scenario, setting)
+            digest, plan_parts = hash_parts(parts), plan_digest(parts)
             for seed in range(seeds):
                 key = (scenario.id, setting, seed, digest)
                 unit = f"{scenario.id}/{setting}/{seed}"
@@ -223,8 +255,18 @@ def run_eval(
                 elif interrupted[key] >= MAX_ATTEMPTS:
                     gave_up.append(unit)
                 else:
+                    shared = None
+                    if config.tree is not None:
+                        if (plan_key := (scenario.id, seed, plan_parts)) not in plans:
+                            found = done_by_seed[(scenario.id, seed)]
+                            plans[plan_key] = _stored_plan(store, found, plan_parts)
+                        shared = plans[plan_key]
                     attempt = attempts[(scenario.id, setting, seed)] + 1
-                    result = _run_attempt(scenario, setting, seed, attempt, store, config)
+                    result, used = _run_attempt(
+                        scenario, setting, seed, attempt, store, config, shared
+                    )
+                    if used is not None:
+                        plans[(scenario.id, seed, plan_parts)] = used
                     ran += 1
                     if result.outcome is None:
                         unfinished.append(unit)
@@ -243,7 +285,10 @@ async def _run(
     attempt: int,
     store: EventStore,
     config: _UnitConfig,
-) -> RunResult:
+    shared: _SharedPlan | None,
+) -> tuple[RunResult, _SharedPlan | None]:
+    """Run one attempt; with a task planner, also return the plan it ran, for the eval to reuse.
+    `shared` is a plan another run asked for: this run records it and asks no planner."""
     registry, params, recovery = config.registry, config.params, config.recovery
     monitor, planner = config.monitor, config.planner
     clock = SimClock()
@@ -276,49 +321,91 @@ async def _run(
         planner_wait=config.planner_wait,
     )
     steps: tuple[str, ...] = SKILL_SEQUENCE
+    used: _SharedPlan | None = None
     if config.tree is not None:
         # Before the tree is built and before anything moves: a rejected plan ends the run here.
-        try:
-            planned = await plan_task(config.tree, scenario.task, registry)
-        except ModelCallCapReached:
-            # The command's budget is spent: the log says why, the unit stays unfinished, and
-            # the eval stops (#63 review F2).
-            recorder.emit(
-                TaskPlanRejected(planner=config.tree.name, steps=[], errors=[CAP_REACHED])
-            )
-            store.flush()
-            raise
-        if (trace := planned.trace) is not None:  # a model call: its trace, whatever the verdict
-            recorder.emit(
-                TaskPlanResponded(
-                    planner=config.tree.name,
-                    provider=trace.provider,
-                    model=trace.model,
-                    prompt=trace.prompt,
-                    response=trace.response,
-                    prompt_tokens=trace.prompt_tokens,
-                    completion_tokens=trace.completion_tokens,
-                    finish_reason=trace.finish_reason,
-                    latency_s=trace.latency_s,
-                )
-            )
+        if shared is None:
+            planned = await _ask(config.tree, scenario, registry, recorder, store)
+            used = _SharedPlan(origin=run_id, result=dataclasses.replace(planned, trace=None))
+        else:
+            planned, used = shared.result, shared
+        reused_from = None if shared is None else shared.origin
         if planned.errors:
             recorder.emit(
                 TaskPlanRejected(
                     planner=config.tree.name,
                     steps=list(planned.steps),
                     errors=list(planned.errors),
+                    reused_from=reused_from,
                 )
             )
             if planned.unanswered:  # a failed call is no result: the unit runs again
                 store.flush()
-                return RunResult(run_id=run_id, outcome=None)
-            return _finish(run_id, store, recorder, clock, "aborted", PLAN_REJECTED)
-        recorder.emit(TaskPlanned(planner=config.tree.name, steps=list(planned.steps)))
+                return RunResult(run_id=run_id, outcome=None), used
+            result = _finish(run_id, store, recorder, clock, "aborted", PLAN_REJECTED)
+            return result, used
+        recorder.emit(
+            TaskPlanned(
+                planner=config.tree.name, steps=list(planned.steps), reused_from=reused_from
+            )
+        )
         steps = planned.steps
     root = build_tree(setting, registry, env, recovery, planner, steps)
     outcome, reason = await run_task(root, env, scenario.task)
-    return _finish(run_id, store, recorder, clock, outcome, reason)
+    return _finish(run_id, store, recorder, clock, outcome, reason), used
+
+
+async def _ask(
+    tree: TaskPlanner,
+    scenario: Scenario,
+    registry: SkillRegistry,
+    recorder: Recorder,
+    store: EventStore,
+) -> PlanResult:
+    """Ask the task planner, and record the call's trace, whatever the verdict."""
+    try:
+        planned = await plan_task(tree, scenario.task, registry)
+    except ModelCallCapReached:
+        # The command's budget is spent: the log says why, the unit stays unfinished, and the
+        # eval stops (#63 review F2).
+        recorder.emit(TaskPlanRejected(planner=tree.name, steps=[], errors=[CAP_REACHED]))
+        store.flush()
+        raise
+    if (trace := planned.trace) is not None:  # a model call
+        recorder.emit(
+            TaskPlanResponded(
+                planner=tree.name,
+                provider=trace.provider,
+                model=trace.model,
+                prompt=trace.prompt,
+                response=trace.response,
+                prompt_tokens=trace.prompt_tokens,
+                completion_tokens=trace.completion_tokens,
+                finish_reason=trace.finish_reason,
+                latency_s=trace.latency_s,
+            )
+        )
+    return planned
+
+
+def _stored_plan(store: EventStore, run_ids: Sequence[str], plan_parts: str) -> _SharedPlan | None:
+    """The plan of the first finished run in `run_ids` (store order) made under the same plan
+    parts, naming the run that asked for it; None if none of them has one. A unit that already
+    finished with a plan of its own (from `cellrt run`, or before schema 14) keeps it."""
+    for run_id in run_ids:
+        events = store.events(run_id, limit=PLAN_EVENT_LIMIT)
+        started = events[0].payload if events else None
+        if not isinstance(started, RunStarted) or plan_digest(started.config_parts) != plan_parts:
+            continue
+        for event in events[1:]:
+            match event.payload:
+                case TaskPlanned() as p:
+                    result = PlanResult(tuple(p.steps), ())
+                    return _SharedPlan(origin=p.reused_from or run_id, result=result)
+                case TaskPlanRejected() as p:
+                    result = PlanResult(tuple(p.steps), tuple(p.errors))
+                    return _SharedPlan(origin=p.reused_from or run_id, result=result)
+    return None
 
 
 def _finish(
@@ -419,6 +506,12 @@ def planner_config(
 def hash_parts(parts: dict[str, str]) -> str:
     """The run's config_hash: one hash over all its parts."""
     return _digest(parts)
+
+
+def plan_digest(parts: Mapping[str, str]) -> str:
+    """One hash over the parts a task plan may depend on: all but NOT_PLAN_PARTS. Runs that
+    share it can share a plan."""
+    return _digest({name: part for name, part in parts.items() if name not in NOT_PLAN_PARTS})
 
 
 def part_digest(value: object) -> str:

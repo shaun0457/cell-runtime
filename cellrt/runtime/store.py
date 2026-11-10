@@ -149,12 +149,15 @@ class EventStore:
             self._conn.executemany("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", self._buffer)
         self._buffer.clear()
 
-    def events(self, run_id: str) -> list[Event]:
+    def events(self, run_id: str, *, limit: int | None = None) -> list[Event]:
+        """The run's events in order; with `limit`, only the first `limit` of them."""
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be at least 1")
         self.flush()
         rows = self._conn.execute(
             "SELECT run_id, seq, ts, wall_ts, type, payload FROM events WHERE run_id = ?"
-            " ORDER BY seq",
-            (run_id,),
+            " ORDER BY seq LIMIT ?",
+            (run_id, -1 if limit is None else limit),  # SQLite: a negative limit is no limit
         )
         return [
             Event(

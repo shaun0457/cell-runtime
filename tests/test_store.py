@@ -126,6 +126,16 @@ def test_a_decision_event_flushes_buffered_samples(tmp_path: Path) -> None:
     reader.close()
 
 
+def test_events_with_a_limit_reads_only_the_first_ones(store: EventStore) -> None:
+    for seq in range(1, 6):
+        store.append(_signal("r", seq))
+
+    assert [e.seq for e in store.events("r", limit=2)] == [1, 2]
+    assert [e.seq for e in store.events("r")] == [1, 2, 3, 4, 5]
+    with pytest.raises(ValueError, match="limit"):
+        store.events("r", limit=0)
+
+
 def test_next_attempt_counts_started_runs_of_the_same_unit(store: EventStore) -> None:
     assert store.next_attempt("baseline", "A", 0) == 1
     store.append(_started("baseline/A/0/a1", "baseline", "A", 0, 1))

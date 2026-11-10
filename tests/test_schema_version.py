@@ -66,7 +66,7 @@ def test_a_new_run_records_the_current_schema_version(
     started = store.events(done.run_id)[0].payload
 
     assert isinstance(started, RunStarted)
-    assert started.schema_version == SCHEMA_VERSION == 13
+    assert started.schema_version == SCHEMA_VERSION == 14
 
 
 # The JSON schema of every payload, hashed, per schema version. A payload that changes shape
@@ -77,7 +77,8 @@ def test_a_new_run_records_the_current_schema_version(
 # (`planner_timed_out`); 9: #56 (`planner_preempted`); 10: #57
 # (`planner_decided.waited_sim_s`); 11: task plans, ADR 023 (`task_planned`,
 # `task_plan_rejected`); 12: a model task planner's trace, ADR 023 (`task_plan_responded`); 13:
-# a promoted plan that stops the run, ADR 021 (`promoted_stopped`).
+# a promoted plan that stops the run, ADR 021 (`promoted_stopped`); 14: a task plan shared by
+# the settings of one seed, #63 review F1 (`reused_from`).
 # Descriptions (docstrings) are left out; a pydantic upgrade that only changes how the schema
 # is written needs the hash re-recorded, not a bump.
 PAYLOAD_SHAPES = {
@@ -92,6 +93,7 @@ PAYLOAD_SHAPES = {
     11: "e8e6f75cabf4e1b1",
     12: "3fd5fa028bfd7b4f",
     13: "cd4fd95a51ac894e",
+    14: "74485fd664c9d42e",
 }
 
 

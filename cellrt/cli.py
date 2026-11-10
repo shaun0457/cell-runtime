@@ -200,10 +200,10 @@ def eval_(
     cap = _cap(max_model_calls)
     # One config for the call pre-check and the eval; checked before the store is opened.
     monitor, recovery = _with_promoted(promoted)
-    # Every unit of setting C may ask the planner, and a model task planner plans every unit,
-    # finished ones included: an upper bound.
+    # Every unit of setting C may ask the planner, and a model task planner is asked once per
+    # (scenario, seed), whatever the settings, finished units included: an upper bound.
     units_with_planner = len(loaded) * seeds if "C" in chosen else 0
-    plan_calls = len(loaded) * seeds * len(chosen) if tree == "llm" else 0
+    plan_calls = len(loaded) * seeds if tree == "llm" else 0
     chosen_planner = _planner(
         planner, units_with_planner, recovery, model=model, cap=cap, plan_calls=plan_calls
     )

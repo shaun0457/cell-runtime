@@ -27,8 +27,9 @@ Read this with four limits in mind:
   the model for its own plan, and the model does not repeat itself at temperature 0, so the llm
   rows of B and C differ in the plans drawn as well as in the recovery (PR #63 review, F1). Here
   the SC tasks drew `insert_act` once in B and once in C, with the deadline in B. The table and
-  fixed rows are deterministic and unaffected. Planning once per (task, seed) and sharing the
-  plan across settings would remove this; it is not done.
+  fixed rows are deterministic and unaffected. Since this run, an eval plans once per (task,
+  seed) and the settings share the plan (`reused_from`, schema 14), so a rerun would not have
+  this confound; the numbers below are from before that change.
 
 ## Setup
 

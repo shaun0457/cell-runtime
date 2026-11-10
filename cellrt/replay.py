@@ -52,9 +52,9 @@ def describe(event: Event) -> str:
                 f"finish={p.finish_reason or '?'}"
             )
         case TaskPlanned() as p:
-            return f"{p.planner}: {' -> '.join(p.steps)}"
+            return f"{p.planner}: {' -> '.join(p.steps)}{_reused(p.reused_from)}"
         case TaskPlanRejected() as p:
-            return f"{p.planner} rejected: {', '.join(p.errors)}"
+            return f"{p.planner} rejected: {', '.join(p.errors)}{_reused(p.reused_from)}"
         case SignalSampled() as p:
             # force is the tared magnitude; over20 is the step's time over 20 N where the world
             # reads the F/T stream faster than it samples (the AIC cell), absent in the mock.
@@ -131,3 +131,7 @@ def describe(event: Event) -> str:
 
 def _count(tokens: int | None) -> str:
     return "?" if tokens is None else str(tokens)
+
+
+def _reused(origin: str | None) -> str:
+    return "" if origin is None else f" (reused from {origin})"

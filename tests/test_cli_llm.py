@@ -183,14 +183,15 @@ def test_the_model_task_planner_without_a_key_fails_before_any_run(cli: Cli) -> 
     assert not cli.db.exists() and cli.calls() == []
 
 
-def test_the_call_pre_check_counts_a_plan_call_for_every_unit(cli: Cli) -> None:
-    # 2 tasks x 1 seed x 3 settings to plan, plus 2 units of C x 2 planner calls: up to 10 calls.
+def test_the_call_pre_check_counts_one_plan_call_per_task_and_seed(cli: Cli) -> None:
+    # 2 tasks x 1 seed to plan, shared by the 3 settings, plus 2 units of C x 2 planner calls:
+    # up to 6 calls.
     done = cli.with_key()("eval", "--scenarios", str(TASKS), "--seeds", "1", "--k", "1",
                           "--db", str(cli.db), "--tree", "llm", "--planner", "llm",
-                          "--max-model-calls", "9")  # fmt: skip
+                          "--max-model-calls", "5")  # fmt: skip
 
     assert done.returncode == 1
-    assert "up to 10 model calls" in done.stderr and "plus 6 task plan calls" in done.stderr
+    assert "up to 6 model calls" in done.stderr and "plus 2 task plan calls" in done.stderr
     assert not cli.db.exists() and cli.calls() == []
 
 
@@ -201,9 +202,9 @@ def test_an_eval_with_the_model_task_planner_counts_every_call_under_one_cap(cli
 
     assert done.returncode == 0, done.stderr
     calls = cli.calls()
-    assert len(calls) == 6  # one plan per unit; the plans need no UNKNOWN triage
+    assert len(calls) == 2  # one plan per task, shared by its settings; no UNKNOWN triage
     assert f"tree: llm ({LIGHTNING})" in done.stderr
-    assert "model calls: 6 of 10" in done.stderr
+    assert "model calls: 2 of 10" in done.stderr
     assert "task plans rejected: 0 of 6 runs" in done.stderr
 
 

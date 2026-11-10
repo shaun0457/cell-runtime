@@ -130,6 +130,13 @@ given by an earlier step, no fact is given twice, and `verified` is given.
 #### Option C — step by step during the run
 - Cons: a model call between skills is a model call in the loop the arm waits on.
 
+#### Option D — A, but an eval asks once per (scenario, seed) and its settings share the plan
+- Pros: a model does not repeat itself, so with a plan per unit the settings of a seed could
+  differ in the plans drawn as well as in recovery; shared, they differ only in recovery. One
+  call per (scenario, seed) instead of one per unit.
+- Cons: a run's plan may come from another run (`reused_from`), whose log holds the call's
+  trace; `cellrt run` still asks every time, so a lone run and an eval unit plan differently.
+
 ### 5. What an invalid plan does
 
 #### Option A — the run ends `aborted` with `task_plan_rejected`, before any motion
@@ -166,7 +173,8 @@ trace just before them (see Consequences).
 2. Option B: the schema, the registry and a step contract per skill, applied in order.
 3. Option A: the contracts are a table next to the verifier; a skill without a row cannot be
    planned.
-4. Option A: once per run, after `run_started` and before the first skill.
+4. Option D: once per run, after `run_started` and before the first skill, as in A; in an eval
+   the settings of one (scenario, seed) share one plan (#63 review F1, first chosen: A).
 5. Option A: an invalid plan ends the run `aborted` before any motion.
 6. Option A: plan events and a `tree` config part only when the tree is not `fixed`.
 
@@ -179,7 +187,9 @@ keeps that line, and it is small enough that a precondition/effect check, the us
 is validated, applies to every plan the language can express. The contracts sit in a table because the protocol change
 would touch the AIC skills for nothing yet, and a missing row refuses a plan rather than
 letting it through. Planning once per run, before motion, is where an AIC goal would plan and
-where an invalid answer can be an event of the run without anything having moved. Ending the
+where an invalid answer can be an event of the run without anything having moved. Sharing the
+plan across the settings of a seed keeps the A/B/C comparison about recovery: a model does not
+repeat itself, so a plan per unit would let the settings differ in the plans drawn. Ending the
 run on an invalid plan keeps the generator's failure rate visible; a silent fallback would hide
 it behind the fixed tree. The conditional part keeps the change one-sided: only runs that ask
 for a plan look different.
@@ -198,8 +208,8 @@ for a plan look different.
   after `MAX_ATTEMPTS`). A call that meets the model call cap stops the eval: the run records
   `task_plan_rejected` with `cap_reached` and no `run_finished`, and the units after it do not
   run. The UNKNOWN planner's timeouts are unchanged (ADR 016): there a step fails.
-- `cellrt/planner/llm_task.py`: the model task planner (`--tree llm`), one call per run through
-  the `ChatClient` seam, answered through a `plan` tool whose steps are limited to the
+- `cellrt/planner/llm_task.py`: the model task planner (`--tree llm`), one call per plan asked
+  for, through the `ChatClient` seam, answered through a `plan` tool whose steps are limited to the
   plannable skills (registered, with a contract). It is told the task's fields, the goal, the
   step limit, and each plannable skill's description (cut to 300 characters, otherwise as
   written) and contract; no scenario or injected fault is named. `plan_task` parses its answer
@@ -216,8 +226,15 @@ for a plan look different.
   `planner_responded`, which the agent report counts as UNKNOWN triage calls. The agent report
   does not count plan calls yet.
 - The task planner and the UNKNOWN planner share one cap per command. `cellrt eval` refuses to
-  start when the plan calls (one per unit, of every setting) plus the UNKNOWN calls the units
-  of setting C can make exceed it, and prints the calls made.
+  start when the plan calls (one per scenario and seed) plus the UNKNOWN calls the units of
+  setting C can make exceed it, and prints the calls made.
+- `run_eval` asks the task planner once per (scenario, seed): the first unit to run records the
+  call and its plan; the other settings record the same plan, or the same rejection, with
+  `reused_from` naming that run, and no trace (schema version 14). A resumed eval reuses the plan
+  of a finished run whose configuration differs only in setting, recovery and planner, reading
+  at most its first three events. A call that gave no answer is not asked again in the same
+  eval: every setting of that seed is unfinished, and the next eval asks again. `run_unit` and
+  `cellrt run` ask every time.
 - The model knows only what the prompt says. On the SC task the prompt does not say this plug
   wedges, but the `insert_act` description says it frees a plug rotated against the port, so a
   model that picks `insert_act` may be reading that hint, not reasoning about SC plugs. The

@@ -112,9 +112,11 @@ stall, and the metrics do not yet tell a fault a skill cleared from one the Moni
 uv run cellrt eval --scenarios eval/scenarios/phase3-tasks.yaml --settings B,C --seeds 5 --tree table
 ```
 
-`--tree llm` asks the model on NIM for the plan instead: one call per run, through a `plan` tool
-limited to the plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the
-eval does not start if its plan calls plus its UNKNOWN calls could exceed it). The model's
+`--tree llm` asks the model on NIM for the plan instead, through a `plan` tool limited to the
+plannable skills, under the same `--max-model-calls` cap as `--planner llm` (the eval does not
+start if its plan calls plus its UNKNOWN calls could exceed it). An eval asks once per (task,
+seed): the settings of that seed run the same plan, recorded with `reused_from`, so they differ
+only in how they recover; `cellrt run` asks every time. The model's
 answer is parsed and checked like any plan; the call's prompt, answer (scrubbed and cut), tokens
 and latency are recorded as `task_plan_responded`, and `cellrt replay` prints a summary line for
 it without calling the model. The model is told the task's fields and the skills' descriptions

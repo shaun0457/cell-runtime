@@ -17,10 +17,11 @@ Outcome = Literal["success", "failed", "aborted"]
 # `run_started.geometry_source`; 5 added `hold_checked`; 6 added
 # `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
 # 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
-# and `task_plan_rejected`; 12 added `task_plan_responded`; 13 added `promoted_stopped`.
+# and `task_plan_rejected`; 12 added `task_plan_responded`; 13 added `promoted_stopped`; 14
+# added `reused_from` to `task_planned` and `task_plan_rejected`.
 # Bump it when a payload changes shape (a test hashes every payload's schema per version), and
 # keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class _Payload(BaseModel):
@@ -74,6 +75,9 @@ class TaskPlanned(_Payload):
     type: Literal["task_planned"] = "task_planned"
     planner: str
     steps: list[str]
+    # The run whose planner call made this plan, when an eval reuses it for another setting of
+    # the same scenario and seed (#63 review F1); None when this run asked the planner.
+    reused_from: str | None = None
 
 
 class TaskPlanRejected(_Payload):
@@ -86,6 +90,7 @@ class TaskPlanRejected(_Payload):
     # MAX_STEP_CHARS; empty if the planner raised.
     steps: list[str]
     errors: list[str]  # codes ("step 2: needs_unmet"), never a planner's text
+    reused_from: str | None = None  # as for `task_planned`
 
 
 class FaultInjected(_Payload):
