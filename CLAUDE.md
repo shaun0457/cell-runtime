@@ -216,8 +216,8 @@ you are reading before trusting a reference.
 
 - Python >= 3.11 (Kilted on Ubuntu 24.04 ships 3.12). Type hints everywhere.
 - Dependencies: stdlib `sqlite3` + `asyncio`, `py_trees`, `pydantic` (schemas), `typer` (CLI),
-  `pyyaml` (scenario files), `pytest`, and `openai` as the optional extra `[llm]` (NVIDIA NIM through its
-  OpenAI-compatible API; the key is read only from the environment variable
+  `pyyaml` (scenario files), `pytest`, and `openai` as the optional extra `[llm]` (NVIDIA NIM
+  through its OpenAI-compatible API; the key is read only from the environment variable
   `NVIDIA_API_KEY`). Ask before adding anything else.
 - Format with `ruff format`, lint with `ruff check`. Tests with `pytest -q`.
 - Tests never call a real LLM; use a fake planner with scripted answers.
