@@ -1,8 +1,8 @@
 # Runbook: one Phase 1 run in the AIC sim (#28)
 
-**Status: draft, not yet followed.** Every command below comes from the AIC docs or this repo's
-code, not from a run. #28 follows it once from a fresh VM, fixes what is wrong, and only then is
-it done. Facts are against `shaun0457/aic` @ `3ab0653`.
+**Status: followed once, on 2026-11-09 (#28), from a fresh VM.** The fixes that run needed are
+folded in below. Results are in `docs/phase1-run28-report.md`. Facts are against
+`shaun0457/aic` @ `3ab0653`.
 
 What one session produces: the 3 sample-config tasks run in setting A with no faults, the AIC
 scorer's report, our event store with one run per goal, and one cancelled goal.
@@ -13,12 +13,24 @@ run its own scenario in the cell"). Without them the scenario ids below do not m
 
 ## 1. The VM
 
-- GCP, Ubuntu 24.04, n1-standard-8 (8 vCPU, 30 GB) with one T4, a 100 GB boot disk, and a
-  separate persistent disk for results (device name `results`), attached at creation.
+- **What #28 used:**
+  - GCP **g2-standard-8** (8 vCPU, 32 GB) with one **L4**, in `asia-northeast3-a`, about
+    US$0.85–0.9 per hour on demand;
+  - a 100 GB boot disk from the image family `ubuntu-accelerator-2404-amd64-with-nvidia-580`
+    (the NVIDIA driver is preinstalled);
+  - a separate 50 GB persistent disk for results, device name `results`, attached at creation
+    with `auto-delete=no`.
+- **T4s were out of stock** in every zone tried (`ZONE_RESOURCE_POOL_EXHAUSTED`). Plan to sweep
+  zones for a GPU that is in stock: the L4 was found on the 22nd try.
+- The project needs a GPU quota first: `GPUS_ALL_REGIONS` starts at 0, and a quota request
+  raised it to 1.
 - **On-demand for this first run**, not Spot: a preemption in the middle of debugging loses the
   session, and the eval runner's resume does not help here.
-- AIC asks for 32 GB of RAM or more (`docs/getting_started.md:25-29`); 30 GB is just under. Watch
-  memory during the first run (`free -h`).
+- AIC asks for 32 GB of RAM or more (`docs/getting_started.md:25-29`); a g2-standard-8 has
+  exactly that. An n1-standard-8 (30 GB) is just under.
+- **From Windows**, run `gcloud compute ssh` and `scp` from PowerShell. In Git Bash they fail
+  on the space in the SDK's install path. `scp` needs a full remote path
+  (`cellrt-sim:/home/<user>/`), not `~`.
 - Without a GPU Gazebo still runs, with a much lower real-time factor
   (`docs/troubleshooting.md:18-27`). Keep the GPU: Phase 2's ACT policy reads camera images,
   and turning off global illumination would change them.
@@ -37,24 +49,36 @@ sudo chown "$USER": ~/results && mkdir -p ~/results/aic ~/results/aic_cancel ~/r
 
 The mount does not survive a stop and start of the VM: after one, run the `mount` line again.
 
-1. NVIDIA driver for the T4; check with `nvidia-smi`.
+1. NVIDIA driver; check with `nvidia-smi`.
+   - The accelerator image's driver is **compute-only**: it lacks the OpenGL/EGL libraries.
+     Without them Gazebo crashes with "OpenGL 3.3 is not supported" (`component_container`
+     exits -11) and the engine stalls.
+   - Install the GL package that matches the driver version `nvidia-smi` prints. For driver
+     580.178.04 that is:
+     `sudo apt install libnvidia-gl-580-server=580.178.04-0ubuntu0.24.04.1`.
+   - Create (or recreate) the distrobox after this, so the container picks the libraries up.
 2. Docker Engine, then let the user run it: `sudo usermod -aG docker "$USER"`, and log in again.
 3. NVIDIA Container Toolkit:
    `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
 4. Distrobox (`sudo apt install distrobox`, `getting_started.md:77`), told to use Docker in
    every shell: `echo 'export DBX_CONTAINER_MANAGER=docker' >> ~/.bashrc`.
-5. Pixi (`curl -fsSL https://pixi.sh/install.sh | bash`), uv
-   (`curl -LsSf https://astral.sh/uv/install.sh | sh`), then restart the shell.
-6. GitHub CLI for the private repo: `sudo apt install gh && gh auth login && gh auth setup-git`.
+5. Pixi **0.67.2**: `curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION=v0.67.2 bash`.
+   - The fork's lockfile needs it: newer pixi (0.84.1 was tried) fails with a pixi-build API
+     mismatch.
+   - Then uv (`curl -LsSf https://astral.sh/uv/install.sh | sh`), and restart the shell.
+6. The private cell-runtime repo needs either the GitHub CLI
+   (`sudo apt install gh && gh auth login && gh auth setup-git`) or, with no credentials on the
+   VM, a git bundle. #28 used the bundle: `git bundle create cell-runtime.bundle main` on the
+   laptop, copied with `gcloud compute scp`, then `git clone cell-runtime.bundle ~/cell-runtime`.
 
 ## 3. Workspaces
 
 ```bash
 mkdir -p ~/ws_aic/src && cd ~/ws_aic/src
 git clone https://github.com/shaun0457/aic && cd aic && git checkout 3ab0653
-pixi install
+pixi install --frozen     # without --frozen pixi re-solves and hits opencv/libprotobuf conflicts
 
-git clone https://github.com/shaun0457/cell-runtime ~/cell-runtime
+git clone https://github.com/shaun0457/cell-runtime ~/cell-runtime   # or the bundle (step 2.6)
 git -C ~/cell-runtime log --oneline -1                  # record this commit in #28's report
 grep -q '^def session_label' ~/cell-runtime/adapters/aic/run.py &&
   grep -q '^READY_TIMEOUT_S' ~/cell-runtime/adapters/aic/world.py && echo 'merged: ok'
@@ -81,13 +105,14 @@ source ~/cellrt.env
 uv pip install --python "$AIC_PY" -e ~/cell-runtime
 ```
 
-pixi does not track this install: run the line again after any `pixi install`. Then check that
+pixi does not track this install: run the line again after any `pixi install`. Every
+`pixi run` below takes `--frozen` too, or it re-solves the environment first. Then check that
 the policy imports without heavy modules (aic_model has a GetState timeout), which also warms
 the environment so the policy starts fast in step 5:
 
 ```bash
 cd ~/ws_aic/src/aic
-pixi run python -c "import sys, adapters.aic.RuntimePolicy; assert 'torch' not in sys.modules; print('ok')"
+pixi run --frozen python -c "import sys, adapters.aic.RuntimePolicy; assert 'torch' not in sys.modules; print('ok')"
 ```
 
 ## 4. Start the sim with ground truth
@@ -97,6 +122,8 @@ Have the step 5 shell ready first: the engine waits only 30 s for the policy's n
 
 ```bash
 docker pull ghcr.io/intrinsic-dev/aic/aic_eval:latest   # if denied, log in to ghcr.io (getting_started.md:158)
+# #28 ran sha256:9aa2ffdbb946d38edde1bac7b5f02a44cfbea26e3b04a9c74e09f14c97472923 (9.2 GB);
+# record the digest of every run: docker inspect --format '{{index .RepoDigests 0}}' <image>
 distrobox create -r --nvidia -i ghcr.io/intrinsic-dev/aic/aic_eval:latest aic_eval
 distrobox enter -r aic_eval
 # inside the container:
@@ -108,8 +135,9 @@ The VM has no display: `gazebo_gui:=false launch_rviz:=false` are the flags AIC'
 file runs the eval with (`docker/docker-compose.yaml:9`). That file also passes
 `shutdown_on_aic_engine_exit:=true`; it is left out here so the sim and the engine terminal stay
 up after the last trial, to read the scores. Ctrl-C stops the launch. `ground_truth:=true`
-publishes the TF frames the skills read; the submission environment blocks them
-(`docs/access_control.md`).
+publishes the TF frames the skills read. The official eval runs with `ground_truth:=false`, so
+it never publishes them, and its access list denies the model the scoring and simulator topics
+(`docker/aic_eval/aic_zenoh_config.json5:293-321` in the AIC repo).
 
 ## 5. Start the policy
 
@@ -119,9 +147,12 @@ In a second shell on the host (not in the container):
 cd ~/ws_aic/src/aic
 source ~/cellrt.env                       # without CELLRT_STORE the store is runs/aic.sqlite here
 export CELLRT_SESSION=sample_config       # names the engine config: change it per config
-pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
+pixi run --frozen ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
   -p policy:=adapters.aic.RuntimePolicy
 ```
+
+Start it when the engine log prints "No node with name 'aic_model' found": the engine waits
+30 s from then. The entrypoint has to run first, because it starts the Zenoh router.
 
 The aic_model log should show `Loaded policy module adapters.aic.RuntimePolicy` and `Using
 policy: RuntimePolicy` (`aic_model.py:66`, `:73`). Each goal becomes one run:
@@ -135,6 +166,11 @@ down (`aic_engine.cpp:618-620`).
 - **Scorer report:** `~/results/aic/scoring.yaml` on the host (`$AIC_RESULTS_DIR` in the
   container, `aic_engine.cpp:2011`), per trial and tier. Each engine run overwrites it, so every
   run gets its own directory.
+- **Scorer insertion result:** when `insert_cable` returns False, the YAML says "Task not
+  completed" and scores tiers 2 and 3 as 0, even if the plug is in. The truth is the
+  `/scoring/insertion_event` topic in that trial's bag (`bag_trial_*`, mcap). Read it inside
+  the eval container, where `rosbag2_py` is installed, from a script file: `distrobox enter`
+  with an inline `bash -c` loop failed on a quoting error.
 - **Our store:** `$CELLRT_STORE`. The step 5 shell is busy with aic_model, so open a new one;
   list the runs, then replay one with its force curve:
 
@@ -159,7 +195,7 @@ and in the policy shell:
 ```bash
 cd ~/ws_aic/src/aic && source ~/cellrt.env
 export CELLRT_SESSION=sample_config_cancel
-pixi run ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
+pixi run --frozen ros2 run aic_model aic_model --ros-args -p use_sim_time:=true \
   -p policy:=adapters.aic.RuntimePolicy
 ```
 
@@ -167,9 +203,12 @@ During the first goal's descent, abort it from a third shell:
 
 ```bash
 cd ~/ws_aic/src/aic
-pixi run ros2 service list | grep cancel_task          # aic_model's service (aic_model.py:86-87)
-pixi run ros2 service call /cancel_task std_srvs/srv/Empty
+pixi run --frozen ros2 service list | grep cancel_task          # aic_model's service (aic_model.py:86-87)
+pixi run --frozen ros2 service call /cancel_task std_srvs/srv/Empty
 ```
+
+#28 called it 27 s of wall time after "Entering insert_cable_execute_callback" (sim t = 14 s,
+during align, at a real-time factor of about 0.43).
 
 Expected in the store: that run (`sample_config_cancel/goal1/task_1/A/0/a1`) ends `aborted`
 with reason `goal_aborted`, and its `hold_checked` reads `hold_confirmed` (ADR 012). After an
@@ -177,6 +216,9 @@ abort aic_model can accept the next goal while the old run is still holding: rec
 report whether goal 2 started before goal 1's `run_finished`.
 
 ## 8. What #28's report records
+
+The report is `docs/phase1-run28-report.md`. It found that the placeholder below is wrong:
+`verify` needs the seated height, not a depth of 10 mm. A later run records the same list.
 
 For each of the 3 tasks of the first run, kept apart:
 
