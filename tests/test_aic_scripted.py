@@ -26,7 +26,7 @@ from adapters.aic.skills import (
     AicVerify,
     descent_offsets,
 )
-from adapters.aic.world import AicWorld
+from adapters.aic.world import AicWorld, Geometry
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
 from cellrt.runtime.events import (
     Event,
@@ -449,3 +449,16 @@ def test_a_failing_feedback_call_does_not_stop_the_run(store: EventStore) -> Non
     node = FakeNode(task=TASK, fail_feedback=True)
 
     assert run_goal(node, TASK, store) is True
+
+
+def test_every_aic_skill_tells_the_planner_what_it_does() -> None:
+    # The model planner chooses by these descriptions; in the sim it was sent empty ones.
+    def no_geometry() -> Geometry:
+        raise AssertionError("not read when the registry is built")
+
+    registry = aic_run.aic_registry(no_geometry)
+
+    for name in registry.names():
+        description = getattr(registry.get(name), "description", "")
+        assert isinstance(description, str), name
+        assert description.strip(), name

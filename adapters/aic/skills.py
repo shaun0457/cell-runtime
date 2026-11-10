@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import ClassVar
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
 from adapters.aic.geometry import XYIntegrator, gripper_target, xy_integrator_at, z_offset_at
@@ -56,6 +57,9 @@ def speed_scale(ctx: SkillContext) -> float:
 class AicApproach:
     """Move to CheatCode's approach pose above the port (z_offset 0.2), aligned with it."""
 
+    description: ClassVar[str] = (
+        "Moves the plug to a point 20 cm above the port, turned to line up with it."
+    )
     name = "approach"
     monitor_profile: MonitorProfile = "motion"
     timeout_s = 2 * 5.0 / SLOWEST_SCALE  # twice CheatCode's 5 s, at the slowest speed
@@ -253,6 +257,10 @@ class AicAlign(_AicSkill):
     """Descend to 10 mm above the port (z_offset 0.01) with CheatCode's XY correction, then
     keep correcting there until the plug is within 1 mm of the port axis."""
 
+    description: ClassVar[str] = (
+        "Descends to 10 mm above the port while correcting XY, then holds there until the "
+        "plug is within 1 mm of the port axis."
+    )
     name = "align"
     monitor_profile: MonitorProfile = "motion"
     timeout_s = 2 * ALIGN_STEPS * STEP_S / SLOWEST_SCALE
@@ -285,6 +293,10 @@ class AicInsertScripted(_AicSkill):
     as the plug rests on its seat (seated, and no longer going down). Pushing on would only
     press it into the seat, which the Monitor cannot tell from a jam (#28)."""
 
+    description: ClassVar[str] = (
+        "Descends into the port in 0.5 mm steps, still correcting XY, and stops once the plug "
+        "rests on its seat. It does not twist the plug."
+    )
     name = "insert_scripted"
     monitor_profile: MonitorProfile = "insertion"
     timeout_s = 2 * INSERT_STEPS * STEP_S / SLOWEST_SCALE
@@ -326,6 +338,9 @@ class AicVerify(_AicSkill):
     """Wait for the connector to settle (the arm holds: the executor sent HOLD when insertion
     ended), then check from ground truth that the plug tip is seated in the port."""
 
+    description: ClassVar[str] = (
+        "Holds for 5 s while the connector settles, then checks that the plug is seated."
+    )
     name = "verify"
     monitor_profile: MonitorProfile = "motion"
     timeout_s = 2 * VERIFY_SETTLE_S
@@ -358,6 +373,7 @@ class AicRetract(_AicSkill):
     different things. Given the descent, it marks it interrupted, so the next align or insert
     goes on down from where the arm is measured after the retract."""
 
+    description: ClassVar[str] = "Lifts the plug 5 mm straight up from where it is."
     name = "retract"
     monitor_profile: MonitorProfile = "unload"
     timeout_s = 2 * RETRACT_STEPS * STEP_S
