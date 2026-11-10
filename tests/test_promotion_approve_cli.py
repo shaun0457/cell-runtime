@@ -100,6 +100,19 @@ def test_an_approved_rule_is_not_replaced(passed_report: Path, tmp_path: Path) -
     assert "Shaun Chen" in (tmp_path / "PLUG_ROTATED.json").read_text(encoding="utf-8")
 
 
+def test_a_rule_that_overlaps_an_approved_one_is_refused(
+    passed_report: Path, phase3_store: Path, tmp_path: Path
+) -> None:
+    directory = tmp_path / "promoted"
+    assert _approve(passed_report, directory).returncode == 0
+    twin = _report(phase3_store, tmp_path, name="PLUG_TWISTED")  # the same conditions
+    assert json.loads(twin.read_text(encoding="utf-8"))["passed"] is True
+    done = _approve(twin, directory)
+    assert done.returncode == 1
+    assert "approval refused: rules_overlap" in done.stderr
+    assert not (directory / "PLUG_TWISTED.json").exists()
+
+
 def test_a_report_with_a_failed_gate_is_refused(phase3_store: Path, tmp_path: Path) -> None:
     report = _report(phase3_store, tmp_path, window_s=2.0)  # misses every window: gate 1 fails
     done = _approve(report, tmp_path / "promoted")

@@ -17,6 +17,7 @@ from cellrt.monitor.promoted import (
     Candidate,
     CandidateRefused,
     PromotedRule,
+    rules_overlap,
 )
 
 
@@ -200,6 +201,54 @@ def test_a_refusal_shows_at_most_five_errors() -> None:
     message = str(caught.value)
     assert message.count("; ") == 5  # five shown, then the count of the rest
     assert message.endswith("... and 5 more")
+
+
+def _watching(
+    *conditions: tuple[str, str, float], skill: str = "insert_scripted", window_s: float = 0.5
+) -> PromotedRule:
+    listed = [{"field": f, "op": op, "value": v} for f, op, v in conditions]
+    rule = _rule(name="SOME_RULE", skill=skill, window_s=window_s, conditions=listed)
+    return PromotedRule.model_validate_json(json.dumps(rule))
+
+
+@pytest.mark.parametrize(
+    "a, b, overlap",
+    [
+        # A sample with 0.6 Nm meets both.
+        (_watching(("torque_nm", ">=", 0.3)), _watching(("torque_nm", ">=", 0.5)), True),
+        # Split at one threshold: whether the threshold itself meets both is the operators'.
+        (_watching(("torque_nm", ">=", 0.3)), _watching(("torque_nm", "<", 0.3)), False),
+        (_watching(("torque_nm", ">", 0.3)), _watching(("torque_nm", "<=", 0.3)), False),
+        (_watching(("torque_nm", ">=", 0.3)), _watching(("torque_nm", "<=", 0.3)), True),
+        # Conditions on different fields leave room for a sample that meets both.
+        (_watching(("torque_nm", ">=", 0.3)), _watching(("force_n", "<", 5.0)), True),
+        # A band on one field, and a rule above it.
+        (
+            _watching(("force_n", ">", 2.0), ("force_n", "<", 5.0)),
+            _watching(("force_n", ">=", 5.0)),
+            False,
+        ),
+        # The same conditions under another skill: they never watch the same sample.
+        (
+            _watching(("torque_nm", ">=", 0.3)),
+            _watching(("torque_nm", ">=", 0.3), skill="insert_act"),
+            False,
+        ),
+        # Progress over the same window separates them...
+        (_watching(("progress_mm", "<", 0.2)), _watching(("progress_mm", ">=", 0.5)), False),
+        # ...over different windows it does not: 0.1 mm in 0.5 s can be 0.6 mm in 1 s.
+        (
+            _watching(("progress_mm", "<", 0.2)),
+            _watching(("progress_mm", ">=", 0.5), window_s=1.0),
+            True,
+        ),
+    ],
+)
+def test_rules_overlap_when_one_sample_can_meet_both(
+    a: PromotedRule, b: PromotedRule, overlap: bool
+) -> None:
+    assert rules_overlap(a, b) is overlap
+    assert rules_overlap(b, a) is overlap
 
 
 def test_the_hash_is_stable_and_changes_with_the_candidate() -> None:

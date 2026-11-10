@@ -133,7 +133,8 @@ with a candidate rule (a JSON file: a rule in a small, bounded language and its 
 checks four gates: the replay
 reproduces the record, the rule covers its group, it raises no false alarm, and it changes no
 other verdict. `approve` writes `eval/promoted/<NAME>.json` from a report whose gates all
-passed under the Monitor configuration in use now, with the approver's name. `eval --promoted
+passed under the Monitor configuration in use now, with the approver's name; it refuses a rule
+that could fire on the same sample as one already approved (`rules_overlap`). `eval --promoted
 DIR` runs with the approved rules, whose plans run in B and C without the planner:
 
 ```sh

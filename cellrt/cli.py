@@ -542,15 +542,17 @@ def promote_approve(
     ] = DEFAULT_PROMOTED,
 ) -> None:
     """Approve the candidate of a report whose gates all passed: write `<dir>/<NAME>.json`.
-    Refuses a report with a failed gate or whose candidate no longer has the hash it names,
-    and never replaces an approved rule (ADR 021)."""
+    Refuses a report with a failed gate or whose candidate no longer has the hash it names, a
+    rule that can fire on the same sample as one already approved, and never replaces an
+    approved rule (ADR 021)."""
     try:
         with report.open(encoding="utf-8") as f:
             raw = f.read(MAX_REPORT_CHARS + 1)  # approval refuses anything longer
     except (OSError, UnicodeDecodeError) as exc:
         _fail(f"cannot read the report at {report} ({type(exc).__name__})")
     try:
-        adopted = approve(raw, by, mock_registry())
+        approved = load_promoted(directory, mock_registry()).rules if directory.is_dir() else ()
+        adopted = approve(raw, by, mock_registry(), approved=approved)
         path = write_adopted(adopted, directory)
     except ApprovalRefused as exc:
         _fail(str(exc))

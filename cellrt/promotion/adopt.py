@@ -20,7 +20,7 @@ import dataclasses
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -29,7 +29,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from cellrt.executor.recovery import RecoveryConfig
 from cellrt.monitor.classifier import FailureClass, MonitorConfig
-from cellrt.monitor.promoted import Candidate, CandidateRefused, PromotedPlan, PromotedRule
+from cellrt.monitor.promoted import (
+    Candidate,
+    CandidateRefused,
+    PromotedPlan,
+    PromotedRule,
+    rules_overlap,
+)
 from cellrt.promotion.replay import ReplayConfig
 from cellrt.promotion.validate import REPORT_VERSION, check_registry
 from cellrt.skills.registry import SkillRegistry
@@ -89,10 +95,17 @@ class Promoted:
 
 
 def approve(
-    report: str, by: str, registry: SkillRegistry, parts: Mapping[str, str] | None = None
+    report: str,
+    by: str,
+    registry: SkillRegistry,
+    parts: Mapping[str, str] | None = None,
+    *,
+    approved: Iterable[PromotedRule] = (),
 ) -> Adopted:
     """The approved rule for a report whose gates all passed, approved by `by`. `parts` is the
-    replay configuration in use now (the mock's by default)."""
+    replay configuration in use now (the mock's by default). A candidate that can fire on the
+    same sample as one of the `approved` rules is refused; one with the same name is left to
+    `write_adopted`, which never replaces it."""
     expected = dict(ReplayConfig.mock().parts if parts is None else parts)
     if not APPROVER.fullmatch(by):
         raise ApprovalRefused("approver_invalid")
@@ -117,6 +130,9 @@ def approve(
     group = data.get("group")
     if not isinstance(group, str) or not 0 < len(group) <= MAX_GROUP_CHARS:
         raise ApprovalRefused("group_invalid")
+    rule = candidate.rule
+    if any(r.name != rule.name and rules_overlap(r, rule) for r in approved):
+        raise ApprovalRefused("rules_overlap")
     return Adopted(
         rule=candidate.rule,
         plan=candidate.plan,
@@ -183,6 +199,10 @@ def load_promoted(
         _checked(candidate.canonical(), registry)
         rules.append(adopted.rule)
         plans[adopted.rule.name] = adopted.plan
+    # Approval checks a candidate against the rules approved before it; a file copied in, or one
+    # approved before that check existed, meets the check only here.
+    if any(rules_overlap(a, b) for i, a in enumerate(rules) for b in rules[i + 1 :]):
+        raise ApprovalRefused("rules_overlap")
     # By name as a string, the same on every platform: the order is part of the Monitor's hash.
     rules.sort(key=lambda r: r.name)
     return Promoted(tuple(rules), MappingProxyType(plans))

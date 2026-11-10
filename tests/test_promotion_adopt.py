@@ -188,9 +188,17 @@ def _adopt(tmp_path: Path, **rule: Any) -> None:
     write_adopted(approve(_report(_candidate(**rule)), "Shaun", mock_registry()), tmp_path)
 
 
+def _band(i: int) -> list[dict[str, Any]]:
+    """Conditions no other band's rule meets on the same sample: torque in [i, i + 1) Nm."""
+    return [
+        {"field": "torque_nm", "op": ">=", "value": float(i)},
+        {"field": "torque_nm", "op": "<", "value": float(i + 1)},
+    ]
+
+
 def test_approved_rules_load_in_name_order(tmp_path: Path) -> None:
-    _adopt(tmp_path, name="ZED_RULE")
-    _adopt(tmp_path, name="ALPHA_RULE")
+    _adopt(tmp_path, name="ZED_RULE", conditions=_band(0))
+    _adopt(tmp_path, name="ALPHA_RULE", conditions=_band(1))
     promoted = load_promoted(tmp_path, mock_registry())
     assert [r.name for r in promoted.rules] == ["ALPHA_RULE", "ZED_RULE"]
     assert set(promoted.plans) == {"ALPHA_RULE", "ZED_RULE"}
@@ -199,9 +207,41 @@ def test_approved_rules_load_in_name_order(tmp_path: Path) -> None:
 def test_the_load_order_is_the_names_as_strings_on_every_platform(tmp_path: Path) -> None:
     # Windows paths compare case-folded, which puts "_" before letters; strings do not.
     names = ["A_B_RULE", "AB_RULE", "ABC"]
-    for name in names:
-        _adopt(tmp_path, name=name)
+    for i, name in enumerate(names):
+        _adopt(tmp_path, name=name, conditions=_band(i))
     assert [r.name for r in load_promoted(tmp_path, mock_registry()).rules] == sorted(names)
+
+
+def test_rules_that_can_fire_on_the_same_sample_are_not_loaded(tmp_path: Path) -> None:
+    # The load order would pick between them, and the order is only the names (ADR 021).
+    _adopt(tmp_path, name="PLUG_ROTATED")
+    _adopt(tmp_path, name="PLUG_TWISTED", conditions=[RULE["conditions"][0]])
+    with pytest.raises(ApprovalRefused, match="rules_overlap"):
+        load_promoted(tmp_path, mock_registry())
+
+
+def test_a_candidate_that_overlaps_an_approved_rule_is_refused(tmp_path: Path) -> None:
+    _adopt(tmp_path)
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    report = _report(_candidate(name="PLUG_TWISTED", conditions=_band(0)))  # 0.3 Nm meets both
+    with pytest.raises(ApprovalRefused, match="rules_overlap"):
+        approve(report, "Shaun", mock_registry(), approved=approved)
+
+
+def test_a_candidate_apart_from_the_approved_rules_is_approved(tmp_path: Path) -> None:
+    _adopt(tmp_path, conditions=_band(0))
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    report = _report(_candidate(name="PLUG_TWISTED", conditions=_band(1)))
+    assert approve(report, "Shaun", mock_registry(), approved=approved).rule.name == "PLUG_TWISTED"
+
+
+def test_the_same_rule_again_is_left_to_the_write(tmp_path: Path) -> None:
+    # Not an overlap with itself: the write refuses to replace it, with its own code.
+    _adopt(tmp_path)
+    approved = load_promoted(tmp_path, mock_registry()).rules
+    adopted = approve(_report(), "Shaun", mock_registry(), approved=approved)
+    with pytest.raises(ApprovalRefused, match="already_adopted"):
+        write_adopted(adopted, tmp_path)
 
 
 def test_only_files_ending_in_lower_case_json_are_read(tmp_path: Path) -> None:

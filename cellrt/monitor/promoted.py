@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import operator
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal
 
@@ -137,6 +138,35 @@ class Candidate(BaseModel):
     def digest(self) -> str:
         """Identifies the candidate across files and whitespace: approval names this hash."""
         return hashlib.sha256(self.canonical().encode("utf-8")).hexdigest()[:16]
+
+
+def rules_overlap(a: PromotedRule, b: PromotedRule) -> bool:
+    """Whether one sample can meet both rules: they watch the same skill and, field by field,
+    some reading meets every condition of both. The Monitor would then pick between them by
+    name, which says nothing about which plan fits (ADR 021). `progress_mm` is the descent over
+    a rule's own window, so it tells two rules apart only when their windows are the same.
+
+    Readings are taken as unbounded, so a pair is called overlapping also where a reading that
+    meets both cannot occur (a force below 0 N): a false refusal, never a missed overlap."""
+    if a.skill != b.skill:
+        return False
+    fields = set(FIELD_BOUNDS) - (set() if a.window_s == b.window_s else {"progress_mm"})
+    both = (*a.conditions, *b.conditions)
+    return all(_satisfiable(c for c in both if c.field == f) for f in fields)
+
+
+def _satisfiable(conditions: Iterable[Condition]) -> bool:
+    """Whether some reading meets every one of these conditions on one field."""
+    low, low_closed = -math.inf, False
+    high, high_closed = math.inf, False
+    for c in conditions:
+        closed = c.op in ("<=", ">=")
+        if c.op in (">", ">="):
+            if c.value > low or (c.value == low and not closed):
+                low, low_closed = c.value, closed
+        elif c.value < high or (c.value == high and not closed):
+            high, high_closed = c.value, closed
+    return low < high or (low == high and low_closed and high_closed)
 
 
 def _where(exc: ValidationError) -> str:
