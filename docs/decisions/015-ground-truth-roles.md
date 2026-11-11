@@ -1,7 +1,7 @@
 # 015: Ground truth: what it is for, and who may read it
 
 Date: 2026-11-09
-Status: accepted
+Status: accepted; the counting on sim runs amended by 029 (each verdict judged against the insertion time)
 
 **This decision changes what eval results mean** (it fixes how verdicts on runs without an
 injected fault are counted, and states that every sim result so far depends on perfect

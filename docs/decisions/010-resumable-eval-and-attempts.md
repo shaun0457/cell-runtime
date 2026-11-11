@@ -1,7 +1,7 @@
 # 010: How the eval resumes after it is killed
 
 Date: 2026-11-08
-Status: accepted
+Status: accepted; question 6 amended by 027 (engine runs from the batch runner name their scenes)
 
 ## Context
 
