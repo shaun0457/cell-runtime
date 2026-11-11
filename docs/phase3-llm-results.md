@@ -8,8 +8,8 @@ classify, next to the simple policies. Run on 2026-11-09.
 passes among them. On the two faults alone they are 43.3% (26 of 60) for the model, 50% for the
 rule planner and 0% for B and C-fixed. The gap to the rule planner is within the spread of
 three repeats (56.7-66.7%). The model picked the right skill every time it answered on the
-fixable fault, and never stopped early on the unfixable one. About 1 call in 4 gave no usable answer: 17 came back empty and 6
-were cut at the deadline.
+fixable fault, and never stopped early on the unfixable one. About 1 call in 4 gave no usable
+answer: 17 came back empty and 6 were cut at the deadline.
 
 **Update, 2026-11-10:** a smaller follow-up run with the token budget and reasoning as settings
 ([Token budget and reasoning](#token-budget-and-reasoning-2026-11-10)): with 4096 tokens no

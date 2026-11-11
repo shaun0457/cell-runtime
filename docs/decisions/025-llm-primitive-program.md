@@ -139,7 +139,8 @@ How it would be evaluated, first on the mock:
   check before the motion.** The same split as task-to-tree (ADR 023): the model proposes, and
   a validator with written limits decides what may run.
 - **The model comes after the rules, not before them.** A known class keeps its tested recovery,
-  which costs no model call; a sim call took 6.5-28 s. The model gets the jam only once the
+  which costs no model call; a sim call that answered took 6.5-28 s, and one hit the 30 s
+  deadline. The model gets the jam only once the
   table has nothing left to try, where today the task fails. That keeps principle 1's first
   half, the part that keeps the cell predictable. It also gives D a case in the sim that no one
   designed: the SC rim jam, 1 of 3 clean runs.
