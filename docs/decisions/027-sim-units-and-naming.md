@@ -96,8 +96,9 @@ sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any
 Option B for each question.
 
 **Naming.**
-- Every task id in an engine config we write is unique across all manifests: `<scene id>_r<k>`,
-  where k is the repeat. The id matches `^[a-z0-9_]{1,64}$`.
+- Every task id in an engine config we write is `<scene id>_r<k>`, where k is the repeat, and
+  is unique within its manifest. The id matches `^[a-z0-9_]{1,64}$`. Runs are told apart
+  across manifests by the scenario id, which carries the manifest's name.
 - A manifest (JSON, one per split: `pilot-v1`, `tune-v1`, `heldout-v1`) holds:
   - the manifest's name;
   - each scene's parameters and digest;
