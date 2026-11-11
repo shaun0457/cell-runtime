@@ -84,6 +84,22 @@ def test_the_origin_is_the_sim_time_at_the_run_clocks_zero_after_a_wait(
     assert event.ts == pytest.approx(3.0, abs=0.05)
 
 
+def test_the_anchor_holds_when_ground_truth_is_lost_mid_run(store: EventStore) -> None:
+    # The step whose read finds no TF stops the run without advancing the clock; the stop
+    # confirmation's settle must carry that step's time, or every later event is a step early.
+    node = FakeNode(task=TASK, hide_frames_after_sleeps=40)
+
+    run_goal(node, TASK, store)
+
+    events = _events(store)
+    ((_, event),) = _ready(events)
+    ready = event.payload
+    assert isinstance(ready, WorldReady) and ready.sim_origin_s is not None
+    end = events[-1].payload
+    assert isinstance(end, RunFinished) and end.reason == "ground_truth_unavailable"
+    assert ready.sim_origin_s + events[-1].ts == pytest.approx(node.sim_now_s(), abs=1e-6)
+
+
 def test_a_world_that_is_never_ready_records_no_world_ready(store: EventStore) -> None:
     node = FakeNode(task=TASK, frames_from_s=READY_TIMEOUT_S + 0.05)
 

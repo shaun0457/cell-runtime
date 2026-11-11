@@ -31,7 +31,8 @@ class _Payload(BaseModel):
 
 
 class PoseRecord(BaseModel):
-    """A pose in the base frame: a position in metres and a unit quaternion (w, x, y, z)."""
+    """A pose in the base frame: a position in metres and a quaternion (w, x, y, z) as read,
+    finite but not checked for unit norm."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -45,8 +46,9 @@ class WorldReady(_Payload):
 
     `sim_origin_s` is the node's sim time at the run clock's 0, so a sim time t is the run's
     clock time t - sim_origin_s: the anchor that maps the referee's times onto the run (ADR
-    029). The poses are what the oracle read at this event's time, the scene as it spawned
-    rather than as it was requested (#13). None where a reading was not finite (for the origin:
+    029). The poses are what the oracle read at this event's time, at the goal's start: for a
+    trial's first task (every trial we generate has one), the scene as it spawned rather than
+    as it was requested (#13). None where a reading was not finite (for the origin:
     not a finite time from 0), so the run goes on and the report treats it as unmapped."""
 
     type: Literal["world_ready"] = "world_ready"

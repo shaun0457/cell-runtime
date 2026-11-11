@@ -16,8 +16,9 @@ F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop wh
 thinks, so the arm holds, the world keeps stepping and the Monitor keeps watching.
 
 Once the world is built, `world_ready` records the node's sim time at the run clock's 0 and the
-port, plug and gripper poses the oracle reads (#79): the scene as it spawned, and the anchor
-that maps the referee's times onto the run (ADR 029).
+port, plug and gripper poses the oracle reads at the goal's start (#79): for a trial's first
+task, the scene as it spawned, and the anchor that maps the referee's times onto the run
+(ADR 029).
 
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
