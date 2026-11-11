@@ -207,8 +207,9 @@ def test_a_plug_that_rose_since_the_last_step_is_not_resting_on_its_seat(
 ) -> None:
     # As in the test above, the tip reaches the SFP seat (-0.98 mm) at step 14. At step 15 it
     # springs back to -0.83 mm: in the band, but 0.15 mm higher than a step ago, so still
-    # moving, where the test above ends. Insertion goes on and ends on the seat once it has
-    # stopped moving, later than above.
+    # moving, where the test above ends. Insertion goes on: the tip is back on the seat at
+    # step 16 (0.15 mm lower, still moving) and unmoved at step 17, so insertion ends there,
+    # recorded a tick later: two steps after the test above.
     node = _SpringsBack(task=TASK, plug_below_tcp_m=0.0021, seat_height_m=-0.00098)
 
     assert run_goal(node, TASK, store) is True
@@ -221,7 +222,7 @@ def test_a_plug_that_rose_since_the_last_step_is_not_resting_on_its_seat(
         if isinstance(e.payload, SignalSampled) and started.ts < e.ts <= finished.ts
     ]
     assert -0.83 in [round(h, 2) for h in sprung]
-    assert finished.ts - started.ts > 16 * 0.05 + 1e-9
+    assert finished.ts - started.ts == pytest.approx(18 * 0.05)
 
 
 def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
@@ -313,9 +314,9 @@ def test_a_plug_jammed_at_the_sc_entrance_during_insertion_is_still_insert_stuck
 ) -> None:
     # #28's true positive: the SC plug stuck at its entrance (13.46 mm), pressed at 12.5 N.
     # It is not seated, so insertion pushes on and the stuck rule still fires.
-    node = FakeNode(task=TASK, seat_height_m=0.01346, raw_force=(0.0, 0.0, 13.5))
+    node = FakeNode(task=SC_TASK, seat_height_m=0.01346, raw_force=(0.0, 0.0, 13.5))
 
-    assert run_goal(node, TASK, store) is False
+    assert run_goal(node, SC_TASK, store) is False
 
     verdicts = [e.payload for e in _events(store) if isinstance(e.payload, MonitorVerdict)]
     assert [(v.skill, v.failure_class) for v in verdicts] == [("insert_scripted", "INSERT_STUCK")]
@@ -426,24 +427,25 @@ def test_a_port_type_with_no_measured_seat_is_refused_before_anything_runs(
 
 
 @pytest.mark.parametrize(
-    "height_m",
+    ("task", "seat_m", "height_m"),
     [
-        pytest.param(0.002, id="sprung-back-2mm"),
-        pytest.param(0.01346, id="jammed-at-the-sc-entrance"),  # #28's SC jam
+        pytest.param(TASK, SFP_SEAT_M, 0.002, id="sfp-sprung-back-2mm"),
+        pytest.param(SC_TASK, 0.00007, 0.01346, id="sc-jammed-at-its-entrance"),  # #28's jam
     ],
 )
 def test_a_plug_that_is_not_seated_at_the_end_makes_verify_fail(
-    store: EventStore, height_m: float
+    store: EventStore, task: Task, seat_m: float, height_m: float
 ) -> None:
     # The connector springs back out 1 s into the settle. (A plug stopped short during the
     # descent trips the Monitor's insertion stall rule first.)
     node = FakeNode(
-        task=TASK,
+        task=task,
+        seat_height_m=seat_m,
         plug_pops_out_after_s=5.0 + ALIGN_STEPS * 0.05 + 1.0,
         plug_pops_out_to_m=height_m,
     )
 
-    assert run_goal(node, TASK, store) is False
+    assert run_goal(node, task, store) is False
 
     end = _end(store)
     assert end.outcome == "failed"
@@ -636,21 +638,26 @@ def test_align_holds_above_the_entrance_until_the_plug_is_on_the_port_axis(
     height = detail["entry_height_mm"]
     assert isinstance(height, float) and hold_at_mm - 0.5 < height <= hold_at_mm
     # Every target while it holds has the same height: the z_offset reached, not the next one.
-    # Only the descent's targets, sent with the tip under 100 mm: the approach's last ones
-    # settle on one height too.
+    assert _longest_run_of_one_height(node) == round(held_s / 0.05) + 1
+    expected = 5.0 + ALIGN_STEPS * 0.05 + held_s + 5.0 + 4 * 0.05  # a recording tick per skill
+    assert _end(store).duration == pytest.approx(expected, abs=0.01)
+
+
+def _longest_run_of_one_height(node: FakeNode) -> int:
+    """The most descent targets in a row with one height: the step that reached the hold point,
+    then each of the hold's. Only the targets sent with the tip under 100 mm: the approach's
+    last ones settle on one height too."""
     sent = zip(node.tcp_at_send, node.sent, strict=True)
     z = [
         m.position_m[2]
         for at, m in sent
         if m.mode == "position" and at.position[2] - PLUG_BELOW_TCP_M - PORT.position[2] < 0.1
     ]
-    runs, run = [], 1
+    longest = run = 1
     for a, b in itertools.pairwise(z):
         run = run + 1 if abs(b - a) < 1e-12 else 1
-        runs.append(run)
-    assert max(runs) == round(held_s / 0.05) + 1  # the step that reached the hold point, held
-    expected = 5.0 + ALIGN_STEPS * 0.05 + held_s + 5.0 + 4 * 0.05  # a recording tick per skill
-    assert _end(store).duration == pytest.approx(expected, abs=0.01)
+        longest = max(longest, run)
+    return longest
 
 
 @dataclass
@@ -710,6 +717,21 @@ def test_the_hold_above_the_entrance_ends_after_its_limit_and_the_descent_goes_o
     assert detail["entry_held_s"] == pytest.approx(ENTRY_HOLD_S)
     assert detail["entry_converged"] is False
     assert isinstance(detail["entry_xy_mm"], float) and detail["entry_xy_mm"] >= ENTRY_XY_MM
+
+
+def test_the_holds_limit_is_on_the_runs_clock_not_a_count_of_steps(store: EventStore) -> None:
+    # The same plug that never comes within 0.15 mm, in a sim whose steps come back after
+    # 0.08 s of sim time (two 0.04 s polls for each 0.05 s period). The hold ends on the run's
+    # clock, after the 38 steps that first reach 3 s; 3 s / 0.05 s = 60 steps would have held
+    # it for 4.8 s.
+    node = _OffAxisNearTheEntrance(task=TASK, off_m=0.02, sim_per_sleep_s=0.04)
+
+    assert run_goal(node, TASK, store) is True
+
+    (detail,) = _align_detail(store)
+    assert detail["entry_converged"] is False
+    assert detail["entry_held_s"] == pytest.approx(38 * 0.08)
+    assert _longest_run_of_one_height(node) == 38 + 1
 
 
 def test_an_align_that_starts_under_the_hold_point_does_not_hold(

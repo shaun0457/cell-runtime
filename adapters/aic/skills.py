@@ -387,9 +387,13 @@ class AicAlign(_AicSkill):
         entry: dict[str, object] = {}
         for i, z in enumerate(align):
             g = self._geometry()
-            if above_entry and plug_to_port_mm(g.port, g.plug)[0] <= self._port.hold_at_mm:
+            # Set from the first command on. The first step cannot reach the hold point (it reads
+            # the geometry `above_entry` read); the check only makes `reached` a float.
+            reached = self._descent.z_offset_m
+            at_hold_point = plug_to_port_mm(g.port, g.plug)[0] <= self._port.hold_at_mm
+            if above_entry and reached is not None and at_hold_point:
                 above_entry = False
-                entry = await self._hold_at_entry(ctx)
+                entry = await self._hold_at_entry(ctx, reached)
                 g = self._geometry()
             self._descent.command(ctx, g, z)
             ctx.progress((i + 1) / len(align))
@@ -401,27 +405,20 @@ class AicAlign(_AicSkill):
         detail = {"xy_error_mm": ctx.world.signals().xy_error_mm, **entry}
         return SkillResult(ok=True, detail=detail)
 
-    async def _hold_at_entry(self, ctx: SkillContext) -> dict[str, object]:
-        """Command the z_offset reached again, correcting XY with the integrator, until the
-        plug has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row
+    async def _hold_at_entry(self, ctx: SkillContext, z: float) -> dict[str, object]:
+        """Command `z`, the z_offset reached, again, correcting XY with the integrator, until
+        the plug has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row
         (counting the one at the hold point) or ENTRY_HOLD_S of the run's clock has passed;
-        what it reached. The steps are capped too, at what the time allows at full rate."""
-        z = self._descent.z_offset_m
+        what it reached. Each sleep lasts at least the period of that clock (`SimClock`), and
+        every world step moves the clock on (the runner stops a run whose step comes back
+        short), so the hold ends; align's timeout bounds it too."""
         start_s = ctx.clock.now()
-        max_steps = round(ENTRY_HOLD_S / ctx.period_s)
-        steps = 0
         g = self._geometry()
         off_mm = _off_axis_mm(g)
         on_axis = 1 if off_mm < ENTRY_XY_MM else 0
-        while (
-            z is not None
-            and on_axis < ENTRY_SAMPLES
-            and steps < max_steps
-            and ctx.clock.now() - start_s < ENTRY_HOLD_S - 1e-9
-        ):
+        while on_axis < ENTRY_SAMPLES and ctx.clock.now() - start_s < ENTRY_HOLD_S - 1e-9:
             self._descent.command(ctx, g, z)
             await ctx.clock.sleep(ctx.period_s)
-            steps += 1
             g = self._geometry()
             off_mm = _off_axis_mm(g)
             on_axis = on_axis + 1 if off_mm < ENTRY_XY_MM else 0

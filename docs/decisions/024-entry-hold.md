@@ -1,7 +1,7 @@
 # 024: Stopping above the port entrance before the plug meets it
 
 Date: 2026-11-11
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -58,8 +58,9 @@ Place the stop by the port type's measured entrance. The wait has a time limit, 
 limit runs out the descent goes on.
 - Pros: it targets the cause the data shows, the error at the entrance. It uses the integrator
   that is already there, adds at most 3 s to a task with a 180 s limit (the sample config's
-  `time_limit`), and keeps the descent's offsets as they are. A realign after a retract from the rim crosses the stop again, so recovery gains
-  from it too.
+  `time_limit`), and keeps the descent's offsets as they are. A realign after a retract from
+  the rim crosses the stop again, so the recoveries that run align again (retract and realign,
+  a slowed realign) gain from it too.
 - Cons: it is the first departure from "run once at full speed, every skill commands what
   CheatCode does". The thresholds come from 13 runs. It does nothing for a plug that stops in
   the bore (2 of 13 runs).
@@ -134,3 +135,10 @@ Option B.
 - The thresholds and the bands are measured values for two port types. A third type needs
   measuring first (`port_profile` refuses it).
 - A plug that stops in the bore (about 5.15 mm, 2 of 13 runs) is not addressed.
+- Only align stops. A recovery that runs insert_scripted again without align (a retry) goes
+  through the entrance without stopping, as before this change.
+- The stop commands the z_offset last sent, as the rest of the descent does. While every
+  command arrives, that is where the arm is. After a command dropout during align it can be
+  below the arm, so the stop may then sit at or under the entrance. The planned sim runs
+  inject the dropout on an SFP goal at 20 mm, under the SFP stop (48.8 mm), so they do not
+  meet this.
