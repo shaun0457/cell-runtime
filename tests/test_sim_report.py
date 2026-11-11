@@ -6,6 +6,7 @@ store copies hold synthetic runs, so each test fixes the verdicts and the insert
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import math
@@ -20,6 +21,7 @@ import yaml
 
 import tools.sim.report as report
 from adapters.aic.manifest import load_manifest
+from cellrt.eval.calibration import ForceVerdict, Measured
 from cellrt.runtime.events import (
     SCHEMA_VERSION,
     Event,
@@ -28,6 +30,7 @@ from cellrt.runtime.events import (
     RecoveryStarted,
     RunFinished,
     RunStarted,
+    SignalSampled,
     SkillStarted,
     WorldReady,
 )
@@ -95,6 +98,7 @@ class Unit:
     dump: bool = True
     score: bool = True
     ready: WorldReady | None = None  # the run's readback; None: no pose read
+    samples: tuple[float, ...] = ()  # forces sampled every 0.05 s in approach, 100 mm up, still
 
 
 class Session:
@@ -200,8 +204,26 @@ def _ledger(path: Path, **row: Any) -> None:
     (path / "ledger.jsonl").write_text(json.dumps(full, sort_keys=True) + "\n", "utf-8")
 
 
+def _signal(force: float) -> SignalSampled:
+    return SignalSampled(
+        step=0,
+        height_mm=100.0,
+        depth_mm=0.0,
+        xy_offset_mm=(0.0, 0.0),
+        xy_error_mm=0.0,
+        raw_force_n=(0.0, 0.0, force),
+        tare_offset_n=(0.0, 0.0, 0.0),
+        force_n=force,
+        torque_nm=0.0,
+        wrench_valid=True,
+    )
+
+
 def _events(unit: Unit, setting: str, wall: float, name: str = NAME) -> list[Event]:
     body: list[tuple[float, Any]] = []
+    if unit.samples:
+        body.append((0.0, SkillStarted(skill="approach", attempt=1)))
+        body += [(0.05 * k, _signal(force)) for k, force in enumerate(unit.samples, start=1)]
     if unit.verdict_at is not None:
         body.append((unit.verdict_at - 1.0, SkillStarted(skill="insert", attempt=1)))
         body.append(
@@ -858,16 +880,100 @@ def test_the_session_line_names_the_runs_that_did_not_end_ok(tmp_path: Path) -> 
     )
 
 
-def test_main_prints_the_five_tables(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_prints_the_six_tables(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     s = Session(tmp_path)
     path = s.run("A", [Unit(0)])
 
     assert main(["--manifest", str(s.manifest), "--run", str(path)]) == 0
 
     out = capsys.readouterr().out
-    for heading in ("## Discovery", "## Applied", "## Reconciliation", "## A/B", "## Confusion"):
-        assert heading in out
+    headings = ("Discovery", "Applied", "Reconciliation", "A/B", "Confusion", "Calibration")
+    for heading in headings:
+        assert f"## {heading}" in out
     assert report.NO_CLAIM_HERE in out  # the pilot's manifest
+
+
+# --- calibration -------------------------------------------------------------------------------
+
+
+def test_a_counted_trial_carries_its_calibration_series(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+
+    (t,) = s.trials(s.run("A", [Unit(0, samples=(0.5,) * 11)]))
+
+    assert t.port_type == "sfp" and t.calibration is not None
+    assert t.calibration.free_space_n == (0.5,) * 11  # every fresh sample of approach
+    # still from the 2nd sample, so at rest from the 6th: 100 mm above the SFP entrance
+    assert t.calibration.rest_approach_n == (0.5,) * 6
+    assert t.calibration.periods_s == pytest.approx((0.05,) * 10)
+
+
+def test_rest_is_read_above_the_port_types_entrance(tmp_path: Path) -> None:
+    unknown = copy.deepcopy(BASE_TRIAL)
+    unknown["task"]["port_type"] = "lc"
+    s = Session(tmp_path, kinds=[("inrange_sfp", BASE_TRIAL), ("inrange_lc", unknown)])
+    manifest = load_manifest(s.manifest)
+    by_scene = {manifest.units[task_id].scene: task_id for task_id in sorted(manifest.units)}
+
+    assert report._free_above_mm(manifest, by_scene["s0"]) == pytest.approx(
+        45.8 + report.REST_CLEARANCE_MM
+    )
+    assert report._free_above_mm(manifest, by_scene["s1"]) == math.inf  # no profile: nowhere
+
+
+def test_the_calibration_table_pools_the_counted_trials_per_port_type(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+    (t,) = s.trials(s.run("A", [Unit(0)]))
+    measured = Measured(
+        samples=11,
+        periods_s=(0.05,) * 10,
+        not_fresh=1,
+        dropped=2,
+        free_space_n=(0.5,) * 10,
+        rest_approach_n=(0.2,) * 3,
+        rest_align_n=(0.3,) * 10,
+        force_verdicts=(
+            ForceVerdict("INSERT_STUCK", 0.5),
+            ForceVerdict("INSERT_STUCK", 0.7),
+            ForceVerdict("FORCE_LIMIT", 0.6, over_s=0.52),
+            ForceVerdict("FORCE_LIMIT", None, repeat=True, over_s=0.57),
+            ForceVerdict("FORCE_LIMIT", None),
+        ),
+    )
+    trials = [
+        dataclasses.replace(t, calibration=measured),
+        dataclasses.replace(t, setting="B", calibration=measured, port_type="sc"),
+        dataclasses.replace(t, setting="C", judged=None),  # infrastructure: not counted
+    ]
+
+    table = report.calibration_table(trials)
+
+    period = "mean 50.0, sd 0.0, p95 50.0, max 50.0"
+    free = "mean 0.50, sd 0.00, p95 0.50, max 0.50"
+    align = "mean 0.30, sd 0.00, p95 0.30, max 0.30"
+    stuck = "rise mean 0.60 s, max 0.70 s"
+    limit = "rise mean 0.60 s, max 0.60 s; over the limit at it mean 0.52 s, max 0.52 s"
+    one = (
+        f"| 1 | 11 | {period} | 1 | 2 | {free} | undefined | {align} |"
+        f" 2 verdicts, 0 repeats, 0 untimed; {stuck} | 3 verdicts, 1 repeats, 1 untimed; {limit} |"
+    )
+    assert _lines(table) == [
+        f"| sc {one}",
+        f"| sfp {one}",
+        f"| all | 2 | 22 | {period} | 2 | 4 | {free} | undefined | {align} |"
+        f" 4 verdicts, 0 repeats, 0 untimed; {stuck} | 6 verdicts, 2 repeats, 2 untimed; {limit} |",
+    ]
+    assert "INSERT_STUCK from the start of the run above 10 N; FORCE_LIMIT from" in table
+    assert "first step over 20 N" in table
+
+
+def test_a_class_without_verdicts_is_none(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+    (t,) = s.trials(s.run("A", [Unit(0)]))
+
+    (row,) = [r for r in _lines(report.calibration_table([t])) if r.startswith("| all |")]
+
+    assert row.endswith("| none | none |")
 
 
 def _reference(

@@ -1,5 +1,5 @@
 """The Phase 2 tables (#82; ADR 026, 028, 029, 030): each unit's counted trial, judged against
-the referee, then four tables.
+the referee, then the tables below.
 
 **Inputs.** The manifest the units come from, and one directory per engine run, laid out as
 `tools/sim/batch.py` writes it:
@@ -53,6 +53,9 @@ port type's other nominal trials about it.
   metrics, then ADR 030's one pooled claim.
 - Confusion: per setting and verdict class, how the verdicts counted, and the false-alarm count
   with and without the trials judged as a whole.
+- Calibration: per port type and pooled over the counted trials, ADR 030's measurements of the
+  force signal (`cellrt/eval/calibration.py`): the sample period, the wrench's health, the
+  force in free space and at rest, and the time from a force rise to its verdict.
 
 Every file read has a size bound, and every refusal is a fixed message naming the input.
 
@@ -82,6 +85,20 @@ import yaml
 
 from adapters.aic.manifest import Manifest, ManifestError, load_manifest
 from adapters.aic.scoring import ScoringInputError, referee_trial
+from adapters.aic.skills import PORT_PROFILES
+from cellrt.eval.calibration import (
+    FORCE_CLASSES,
+    LIMIT_N,
+    MIN_VALUES,
+    REST_MM,
+    REST_STEPS,
+    STUCK_N,
+    ForceVerdict,
+    Measured,
+    Summary,
+    measure,
+    summarize,
+)
 from cellrt.eval.intervals import SceneTally, claim, format_interval, wilson
 from cellrt.eval.metrics import RunSummary, summarize_run
 from cellrt.eval.referee import (
@@ -123,6 +140,7 @@ MAX_STORE_COPY_BYTES = 2 << 30  # a held-out session's store is about 0.1 GiB
 MAX_LEDGER_BYTES = 64 << 10
 MAX_RUNS = 500
 POOLED = "all"
+REST_CLEARANCE_MM = 2.0  # at rest only this far above the port's entrance, where nothing touches
 HELD_OUT_PREFIX = "heldout"  # ADR 030: the manifest the claim is made on
 NOMINAL_PREFIX = "nominal"  # ADR 026: the control scenes, each port type's reference
 APPLIED, NOT_APPLIED = "applied", "not applied"
@@ -176,6 +194,8 @@ class Trial:
     referee: RefereeTrial | None
     summary: RunSummary | None
     ready: WorldReady | None = None  # the counted run's readback of the spawned scene
+    port_type: str | None = None  # the unit's task's, as `_port_type` reads it
+    calibration: Measured | None = None  # the counted run's force signal (ADR 030)
 
     @property
     def trial_class(self) -> str:
@@ -190,6 +210,7 @@ class _Attempt:
     referee: RefereeTrial | None = None
     summary: RunSummary | None = None
     ready: WorldReady | None = None
+    calibration: Measured | None = None
 
 
 @dataclass(frozen=True)
@@ -401,6 +422,8 @@ def collect(
                 referee=None if counted is None else counted.referee,
                 summary=None if counted is None else counted.summary,
                 ready=None if counted is None else counted.ready,
+                port_type=_port_type(manifest.scenes[unit.scene].trial),
+                calibration=None if counted is None else counted.calibration,
             )
         )
     return trials
@@ -445,10 +468,20 @@ def _attempts(
                     if (s.info.scenario_id, s.info.seed, s.info.setting) == unit
                     and run.started_wall <= s.started_wall <= run.ended_wall
                 ]
-                out.append((task_id, _attempt(run, store, trial_id, target, mine)))
+                free = _free_above_mm(manifest, task_id)
+                out.append((task_id, _attempt(run, store, trial_id, target, mine, free)))
     except sqlite3.Error:
         raise ReportInputError("store copy: unreadable") from None
     return out, stored
+
+
+def _free_above_mm(manifest: Manifest, task_id: str) -> float:
+    """How high above its port a unit's plug must be for a sample to count as at rest in free
+    space: its port type's entrance and `REST_CLEARANCE_MM`; for a port type with no profile,
+    nowhere."""
+    port_type = _port_type(manifest.scenes[manifest.units[task_id].scene].trial)
+    profile = PORT_PROFILES.get(port_type or "")
+    return math.inf if profile is None else profile.entrance_mm + REST_CLEARANCE_MM
 
 
 def _check_store_copy(path: Path) -> None:
@@ -475,6 +508,7 @@ def _attempt(
     trial_id: str,
     target: tuple[str, str],
     mine: Sequence[RunInfo],
+    free_above_mm: float,
 ) -> _Attempt:
     if len(mine) > 1:  # one goal per trial, one attempt per goal
         raise ReportInputError("store copy: a unit has two attempts in one engine run")
@@ -491,7 +525,8 @@ def _attempt(
     except ValueError:  # finished, yet not run_started ... run_finished: the copy is not ours
         raise ReportInputError("store copy: a finished run out of order") from None
     ready = next((e.payload for e in events if isinstance(e.payload, WorldReady)), None)
-    return _Attempt(run, trial_id, judged, referee, summarize_run(events), ready)
+    calibration = measure(events, free_above_mm=free_above_mm)
+    return _Attempt(run, trial_id, judged, referee, summarize_run(events), ready, calibration)
 
 
 def _first(store: EventStore, run_id: str) -> Event:
@@ -631,6 +666,8 @@ def render(
             ab_table(rated, held_out=held_out),
             "## Confusion",
             confusion_table(rated),
+            "## Calibration",
+            calibration_table(trials),
         )
     )
 
@@ -929,6 +966,89 @@ def confusion_table(trials: Sequence[Trial]) -> str:
         " bound (ADR 029)",
     ]
     return _table(CONFUSION, rows) + "\n\n" + "\n".join(f"- {n}" for n in notes)
+
+
+CALIBRATION = (
+    "port type",
+    "trials",
+    "samples",
+    "period ms",
+    "not fresh",
+    "dropped",
+    "free-space N",
+    "at rest N, approach",
+    "at rest N, align",
+    *FORCE_CLASSES,
+)
+
+
+def calibration_table(trials: Sequence[Trial]) -> str:
+    """ADR 030's calibration measurements (`cellrt/eval/calibration.py`), pooled over the
+    counted trials of each port type and of all."""
+    measured = [
+        (t.port_type or "-", t.calibration)
+        for t in trials
+        if t.judged is not None and t.calibration is not None
+    ]
+    rows = [
+        _calibration_row(group, [m for p, m in measured if p == group])
+        for group in sorted({p for p, _ in measured})
+    ]
+    rows.append(_calibration_row(POOLED, [m for _, m in measured]))
+    notes = [
+        f"a distribution is mean, sd, nearest-rank p95 and max; undefined under {MIN_VALUES}"
+        " values",
+        "free space: every fresh sample of approach; at rest: a fresh sample after the plug"
+        f" moved under {REST_MM} mm in each of {REST_STEPS} steps, over {REST_CLEARANCE_MM} mm"
+        " above the port's entrance",
+        f"rise: INSERT_STUCK from the start of the run above {STUCK_N:g} N; FORCE_LIMIT from the"
+        f" run's first step over {LIMIT_N:g} N, its verdict's summed time over the limit against"
+        " the Monitor's trigger; only the first verdict of a rise or run is timed",
+        "measured only: a threshold changes under ADR 030's D5, with ADR 032",
+    ]
+    return _table(CALIBRATION, rows) + "\n\n" + "\n".join(f"- {n}" for n in notes)
+
+
+def _calibration_row(group: str, ms: Sequence[Measured]) -> list[object]:
+    verdicts = [v for m in ms for v in m.force_verdicts]
+    return [
+        group,
+        len(ms),
+        sum(m.samples for m in ms),
+        _distribution(summarize(1000.0 * p for m in ms for p in m.periods_s), 1),
+        sum(m.not_fresh for m in ms),
+        sum(m.dropped for m in ms),
+        _distribution(summarize(f for m in ms for f in m.free_space_n), 2),
+        _distribution(summarize(f for m in ms for f in m.rest_approach_n), 2),
+        _distribution(summarize(f for m in ms for f in m.rest_align_n), 2),
+        *(_verdicts([v for v in verdicts if v.failure_class == c]) for c in FORCE_CLASSES),
+    ]
+
+
+def _distribution(s: Summary | None, digits: int) -> str:
+    if s is None:
+        return "undefined"
+    return (
+        f"mean {s.mean:.{digits}f}, sd {s.sd:.{digits}f}, p95 {s.p95:.{digits}f},"
+        f" max {s.max:.{digits}f}"
+    )
+
+
+def _verdicts(verdicts: Sequence[ForceVerdict]) -> str:
+    """A class's force verdicts: how many, how many repeats and untimed, their rise times, and
+    for FORCE_LIMIT the summed time over the limit at each first verdict."""
+    if not verdicts:
+        return "none"
+    repeats = sum(v.repeat for v in verdicts)
+    untimed = sum(v.rise_s is None and not v.repeat for v in verdicts)
+    text = f"{len(verdicts)} verdicts, {repeats} repeats, {untimed} untimed"
+    rises = [v.rise_s for v in verdicts if v.rise_s is not None]
+    if rise := summarize(rises, min_values=1):
+        text += f"; rise mean {rise.mean:.2f} s, max {rise.max:.2f} s"
+    overs = [v.over_s for v in verdicts if not v.repeat and v.over_s is not None]
+    if over := summarize(overs, min_values=1):
+        text += f"; over the limit at it mean {over.mean:.2f} s, max {over.max:.2f} s"
+    return text
 
 
 def _settings(trials: Iterable[Trial]) -> list[str]:

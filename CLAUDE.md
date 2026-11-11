@@ -75,7 +75,8 @@ cellrt/
   world/       base.py (World protocol, Signals), mock_world.py, faults.py
   eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py, agent_report.py,
                baseline.py, referee.py (sim verdicts against the scorer, ADR 029),
-               intervals.py (Wilson intervals and the sign test, ADR 030)
+               intervals.py (Wilson intervals and the sign test, ADR 030),
+               calibration.py (the force signal a world gives the Monitor, ADR 030)
   replay.py, trace_export.py
   cli.py       `cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report |
                promote group | validate | approve | propose`
