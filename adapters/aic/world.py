@@ -109,6 +109,9 @@ class AicWorld:
         try:
             self._check_goal()  # fail fast, before reading anything else
             self._sim_s = node.sim_now_s()
+            # Read before any wait, so it is the sim time at the run clock's 0: every wait from
+            # here on reaches the clock through `on_wait` or a step.
+            self.sim_origin_s: float = self._sim_s
             self._wait_until_ready(on_wait)
         except WorldStopped:
             raise

@@ -15,6 +15,10 @@ Settings B and C build the same trees as the mock, from the AIC skills plus a wa
 F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop while a planner
 thinks, so the arm holds, the world keeps stepping and the Monitor keeps watching.
 
+Once the world is built, `world_ready` records the node's sim time at the run clock's 0 and the
+port, plug and gripper poses the oracle reads (#79): the scene as it spawned, and the anchor
+that maps the referee's times onto the run (ADR 029).
+
 Once the world is built, however the run ends, the arm is held and the stop is then confirmed
 (ADR 012): the linear TCP speed must read under 5 mm/s for 3 samples in a row within 1.0 s of
 sim time; the result is recorded as `hold_checked` just before `run_finished`. If an injected
@@ -32,6 +36,7 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import math
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -39,7 +44,9 @@ from typing import cast
 
 import py_trees
 from py_trees.common import Status
+from pydantic import ValidationError
 
+from adapters.aic.convert import Pose
 from adapters.aic.faults import FAULT_ENV, CommandDropout, FaultSpec, FaultSpecError
 from adapters.aic.feedback import FeedbackRecorder
 from adapters.aic.manifest import MANIFEST_ENV, Manifest, ManifestError, load_manifest
@@ -85,8 +92,10 @@ from cellrt.runtime.events import (
     SCHEMA_VERSION,
     HoldChecked,
     Outcome,
+    PoseRecord,
     RunFinished,
     RunStarted,
+    WorldReady,
 )
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -329,6 +338,7 @@ async def _run_goal(
         outcome, reason = "aborted", stopped.reason
         duration = clock.now()
     else:
+        recorder.emit(_world_ready(world))
         if clock.now() >= task.time_limit - STEP_TOLERANCE_S:
             # The wait for readiness used the whole time limit: end without moving.
             outcome, reason = "aborted", "time limit reached"
@@ -368,6 +378,27 @@ async def _run_goal(
     )
     store.flush()
     return outcome == "success"
+
+
+def _world_ready(world: AicWorld) -> WorldReady:
+    """The ready world's sim-time origin and the poses its oracle read last. Never raises on a
+    reading: one that is not finite is recorded as None."""
+    g = world.geometry()
+    origin = world.sim_origin_s
+    return WorldReady(
+        sim_origin_s=origin if math.isfinite(origin) and origin >= 0 else None,
+        port=pose_record(g.port),
+        plug=pose_record(g.plug),
+        gripper=pose_record(g.gripper),
+    )
+
+
+def pose_record(pose: Pose) -> PoseRecord | None:
+    """A TF pose for the log, or None if any of its numbers is not finite."""
+    try:
+        return PoseRecord(position=pose.position, orientation=pose.orientation)
+    except ValidationError:  # its text would quote the reading; the None says enough
+        return None
 
 
 async def _hold_after_crash(

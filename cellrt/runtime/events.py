@@ -18,14 +18,42 @@ Outcome = Literal["success", "failed", "aborted"]
 # `signal_sampled.wrench_dropped`; 7 added `planner_responded`; 8 added `planner_timed_out`;
 # 9 added `planner_preempted`; 10 added `planner_decided.waited_sim_s`; 11 added `task_planned`
 # and `task_plan_rejected`; 12 added `task_plan_responded`; 13 added `promoted_stopped`; 14
-# added `reused_from` to `task_planned` and `task_plan_rejected`.
+# added `reused_from` to `task_planned` and `task_plan_rejected`; 15 added `world_ready`.
 # Bump it when a payload changes shape (a test hashes every payload's schema per version), and
 # keep older rows readable: new fields get defaults.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
+
+Finite = Annotated[float, Field(allow_inf_nan=False)]
 
 
 class _Payload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class PoseRecord(BaseModel):
+    """A pose in the base frame: a position in metres and a unit quaternion (w, x, y, z)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    position: tuple[Finite, Finite, Finite]
+    orientation: tuple[Finite, Finite, Finite, Finite]
+
+
+class WorldReady(_Payload):
+    """The world is ready: recorded once, after it is built and before the first skill, by a
+    world that reads poses (the AIC cell; the mock world has none).
+
+    `sim_origin_s` is the node's sim time at the run clock's 0, so a sim time t is the run's
+    clock time t - sim_origin_s: the anchor that maps the referee's times onto the run (ADR
+    029). The poses are what the oracle read at this event's time, the scene as it spawned
+    rather than as it was requested (#13). None where a reading was not finite (for the origin:
+    not a finite time from 0), so the run goes on and the report treats it as unmapped."""
+
+    type: Literal["world_ready"] = "world_ready"
+    sim_origin_s: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
+    port: PoseRecord | None
+    plug: PoseRecord | None
+    gripper: PoseRecord | None
 
 
 class RunStarted(_Payload):
@@ -317,6 +345,7 @@ class HoldChecked(_Payload):
 
 Payload = Annotated[
     RunStarted
+    | WorldReady
     | TaskPlanResponded
     | TaskPlanned
     | TaskPlanRejected
