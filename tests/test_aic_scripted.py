@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import py_trees
 import pytest
-from aic_fakes import PLUG_BELOW_TCP_M, PORT, FakeNode
+from aic_fakes import PLUG_BELOW_TCP_M, PORT, SFP_SEAT_M, FakeNode
 
 from adapters.aic import run as aic_run
 from adapters.aic.convert import MotionCommand, Pose
@@ -17,14 +17,19 @@ from adapters.aic.run import run_goal
 from adapters.aic.skills import (
     ALIGN_STEPS,
     DESCENT_STEP_M,
+    ENTRY_HOLD_ABOVE_MM,
+    ENTRY_HOLD_S,
+    ENTRY_SAMPLES,
+    ENTRY_XY_MM,
     INSERT_STEPS,
+    PORT_PROFILES,
     RETRACT_M,
     AicAlign,
     AicApproach,
-    AicInsertScripted,
     AicRetract,
-    AicVerify,
+    UnknownPortType,
     descent_offsets,
+    seated,
 )
 from adapters.aic.world import AicWorld, Geometry
 from cellrt.executor.behaviours import ExecEnv, SkillBehaviour
@@ -32,6 +37,8 @@ from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
     RunFinished,
+    RunStarted,
+    SignalSampled,
     SkillFinished,
     SkillProgress,
     SkillStarted,
@@ -39,8 +46,12 @@ from cellrt.runtime.events import (
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 
-TASK = Task(id="trial_1_task_1", time_limit=180.0)
+TASK = Task(id="trial_1_task_1", time_limit=180.0)  # an SFP task, as the default Task
+SC_TASK = Task(
+    id="trial_3_task_1", time_limit=180.0, cable_type="sc", plug_type="sc", port_type="sc"
+)
 SKILLS = ["approach", "align", "insert_scripted", "verify"]
+SFP = PORT_PROFILES["sfp"]
 
 
 def _events(store: EventStore) -> list[Event]:
@@ -115,8 +126,11 @@ def test_a_full_setting_a_run_on_the_fake_cell_succeeds_without_verdicts(
     assert (_end(store).outcome, _end(store).reason) == ("success", "task complete")
     # CheatCode's 32 s of sim time (5 s approach, 430 x 0.05 s descent, 5 s settle) less the
     # insertion: with CheatCode's quirk the plug reaches its seat during align, as in #28, so
-    # insert_scripted ends on its first step.
-    assert _end(store).duration == pytest.approx(5.0 + ALIGN_STEPS * 0.05 + 5.0, abs=0.2)
+    # insert_scripted ends on its first step. Plus align's stop above the entrance, two samples
+    # that confirm the plug is on the axis (ADR 024), and the tick on which each of the four
+    # skills' finish is recorded.
+    expected = 5.0 + ALIGN_STEPS * 0.05 + 0.05 * (ENTRY_SAMPLES - 1) + 5.0 + 4 * 0.05
+    assert _end(store).duration == pytest.approx(expected, abs=0.01)
 
 
 def _skill(store: EventStore, name: str) -> tuple[Event, Event]:
@@ -132,18 +146,18 @@ def _skill(store: EventStore, name: str) -> tuple[Event, Event]:
 
 
 # Seated heights measured in #28: an SFP plug on its seat reads -0.98 mm, an SC plug +0.07 mm.
-SEATED_MM = [pytest.param(-0.98, id="sfp"), pytest.param(0.07, id="sc")]
+SEATED_MM = [pytest.param(TASK, -0.98, id="sfp"), pytest.param(SC_TASK, 0.07, id="sc")]
 
 
-@pytest.mark.parametrize("seat_mm", SEATED_MM)
+@pytest.mark.parametrize(("task", "seat_mm"), SEATED_MM)
 def test_a_plug_seated_before_insertion_ends_it_on_its_first_step(
-    store: EventStore, seat_mm: float
+    store: EventStore, task: Task, seat_mm: float
 ) -> None:
     # #28: the plug was seated during align, insertion kept pressing it into the seat at
     # 12-13 N with no depth progress, and the stuck rule called that INSERT_STUCK.
-    node = FakeNode(task=TASK, seat_height_m=seat_mm / 1000, raw_force=(0.0, 0.0, 13.5))
+    node = FakeNode(task=task, seat_height_m=seat_mm / 1000, raw_force=(0.0, 0.0, 13.5))
 
-    assert run_goal(node, TASK, store) is True
+    assert run_goal(node, task, store) is True
 
     assert not [e for e in _events(store) if isinstance(e.payload, MonitorVerdict)]
     started, finished = _skill(store, "insert_scripted")
@@ -156,9 +170,10 @@ def test_a_plug_seated_before_insertion_ends_it_on_its_first_step(
 
 def test_insertion_pushes_a_plug_on_until_it_rests_on_its_seat(store: EventStore) -> None:
     # The tip hangs 2.1 mm under the TCP; with CheatCode's quirk it is at 10 - 2 x 2.1 = 5.8 mm
-    # when align ends, then 0.5 mm lower per step. It is in the seated band from 0.8 mm (10
-    # steps) but still going down, so insertion goes on: it reaches the SFP seat at step 14
-    # and stays there; at step 15 it has not moved, so insertion ends, recorded a tick later.
+    # when align ends, then 0.5 mm lower per step. It is in the SFP seated band at step 13, at
+    # -0.7 mm, but still going down, so insertion goes on: it reaches the seat (-0.98 mm) at
+    # step 14 and stays there; at step 15 it has not moved, so insertion ends, recorded a tick
+    # later.
     node = FakeNode(task=TASK, plug_below_tcp_m=0.0021, seat_height_m=-0.00098)
 
     assert run_goal(node, TASK, store) is True
@@ -170,33 +185,43 @@ def test_insertion_pushes_a_plug_on_until_it_rests_on_its_seat(store: EventStore
 
 @dataclass
 class _SpringsBack(FakeNode):
-    """While the tip would be 0-0.5 mm above the port frame, it reads `lift_m` higher: the
-    connector pushing back against the insertion for one step."""
+    """While the TCP holds the tip 1.4-1.52 mm under the port frame (pressed past its seat;
+    the bounds sit off the 0.5 mm grid of the steps), the tip reads `lift_m` above the seat:
+    the connector pushing back against the insertion for one step."""
 
-    lift_m: float = 0.00065
+    lift_m: float = 0.00015
 
     @property
     def plug(self) -> Pose:
         plug = super().plug
-        x, y, z = plug.position
-        if 0.0 < z - self.port.position[2] <= 0.0005:
-            return Pose(position=(x, y, z + self.lift_m), orientation=plug.orientation)
+        x, y, _ = plug.position
+        pressed_to = self.tcp.position[2] - self.plug_below_tcp_m - self.port.position[2]
+        if self.seat_height_m is not None and -0.00152 < pressed_to <= -0.0014:
+            z = self.port.position[2] + self.seat_height_m + self.lift_m
+            return Pose(position=(x, y, z), orientation=plug.orientation)
         return plug
 
 
 def test_a_plug_that_rose_since_the_last_step_is_not_resting_on_its_seat(
     store: EventStore,
 ) -> None:
-    # As in the test above, the tip is in the seated band from step 10, at 0.8 mm. At step 11
-    # it would be at 0.3 mm but springs back to 0.95 mm: in the band, but 0.15 mm higher than
-    # a step ago, so still moving. Insertion goes on and ends on the seat as before.
+    # As in the test above, the tip reaches the SFP seat (-0.98 mm) at step 14. At step 15 it
+    # springs back to -0.83 mm: in the band, but 0.15 mm higher than a step ago, so still
+    # moving, where the test above ends. Insertion goes on and ends on the seat once it has
+    # stopped moving, later than above.
     node = _SpringsBack(task=TASK, plug_below_tcp_m=0.0021, seat_height_m=-0.00098)
 
     assert run_goal(node, TASK, store) is True
 
     started, finished = _skill(store, "insert_scripted")
     assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
-    assert finished.ts - started.ts == pytest.approx(16 * 0.05)
+    sprung = [
+        e.payload.height_mm
+        for e in _events(store)
+        if isinstance(e.payload, SignalSampled) and started.ts < e.ts <= finished.ts
+    ]
+    assert -0.83 in [round(h, 2) for h in sprung]
+    assert finished.ts - started.ts > 16 * 0.05 + 1e-9
 
 
 def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
@@ -209,7 +234,7 @@ def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
     def insert_retract_insert(
         world: AicWorld, env: ExecEnv, goal: object
     ) -> py_trees.behaviour.Behaviour:
-        registry = aic_run.aic_registry(world.geometry)
+        registry = aic_run.aic_registry(world.geometry, SFP)
         names = ["approach", "align", "insert_scripted", "retract", "insert_scripted"]
         children = [SkillBehaviour(registry.get(name), env) for name in names]
         return py_trees.composites.Sequence(name="insert", memory=True, children=children)
@@ -223,7 +248,7 @@ def test_after_a_retract_insertion_steps_once_before_it_calls_the_plug_seated(
     started = [e for e in events if isinstance(e.payload, SkillStarted)][-1]
     finished = [e for e in events if isinstance(e.payload, SkillFinished)][-1]
     assert started.payload.skill == finished.payload.skill == "insert_scripted"
-    assert finished.payload.detail == {"height_mm": 0.0, "seated": True}
+    assert finished.payload.detail == {"height_mm": -0.98, "seated": True}
     assert finished.ts - started.ts == pytest.approx(2 * 0.05)
 
 
@@ -241,7 +266,10 @@ def test_a_plug_that_never_rests_on_a_seat_gets_the_whole_descent_and_fails_veri
     assert finished.payload.ok
     assert finished.payload.detail == {"height_mm": -95.0, "seated": False}
     assert _end(store).reason.startswith("verify failed")
-    assert _end(store).duration == pytest.approx(5.0 + 430 * 0.05 + 5.0, abs=0.2)
+    # CheatCode's 430 descent steps, align's two confirming samples above the entrance and one
+    # recording tick per skill, as in the full run above.
+    expected = 5.0 + 430 * 0.05 + 0.05 * (ENTRY_SAMPLES - 1) + 5.0 + 4 * 0.05
+    assert _end(store).duration == pytest.approx(expected, abs=0.01)
 
 
 @dataclass
@@ -294,13 +322,107 @@ def test_a_plug_jammed_at_the_sc_entrance_during_insertion_is_still_insert_stuck
     assert _end(store).reason == "insert_scripted failed: INSERT_STUCK"
 
 
-def test_the_seated_band_is_in_the_config() -> None:
-    # 1 mm over the SC seat (+0.07 mm), 2 mm under the SFP seat (-0.98 mm), far under the SC
-    # entrance (13.64 mm, #28), and 2 mm off the port axis.
-    band = {"max_height_mm": 1.0, "min_height_mm": -3.0, "max_xy_mm": 2.0}
-    assert AicInsertScripted.config()["seated"] == band
-    assert AicInsertScripted.config()["still_mm"] == 0.1
-    assert AicVerify.config()["seated"] == band
+def test_every_port_types_profile_is_in_the_config_whichever_the_task_has() -> None:
+    # Around the SFP seat (-0.97 to -0.98 mm, #28 and the reruns), under the -0.24 mm the
+    # scorer called a partial insertion (#70); around the SC seat (+0.05 to +0.07 mm), far
+    # under the 5.15 mm where an SC plug stopped in the bore and the rim at 13.5 mm. The whole
+    # table, the same for every task: which profile a run uses follows from its port type.
+    ports = {
+        "sc": {"entrance_mm": 13.64, "seated_min_mm": -0.5, "seated_max_mm": 0.5},
+        "sfp": {"entrance_mm": 45.8, "seated_min_mm": -1.5, "seated_max_mm": -0.6},
+    }
+    names = ("approach", "align", "insert_scripted", "verify", "retract")
+    configs = [
+        {name: reg.get(name).config() for name in names}
+        for reg in (aic_run.aic_registry(_unread_geometry, p) for p in PORT_PROFILES.values())
+    ]
+
+    assert configs[0] == configs[1]
+    for name in ("align", "insert_scripted", "verify"):
+        assert configs[0][name]["ports"] == ports, name
+    assert configs[0]["insert_scripted"]["still_mm"] == 0.1
+    assert configs[0]["verify"]["seated_max_xy_mm"] == 2.0
+
+
+def test_the_goals_of_an_engine_run_with_both_port_types_are_one_configuration(
+    store: EventStore,
+) -> None:
+    # The sample config sends SFP goals and an SC goal into one store; the agent report pools a
+    # store's runs only if every config part but the scenario is the same.
+    run_goal(FakeNode(task=TASK), TASK, store, scenario_id="aic/goal1/task_1")
+    run_goal(
+        FakeNode(task=SC_TASK, seat_height_m=0.00007), SC_TASK, store, scenario_id="aic/goal3/t"
+    )
+
+    parts = [
+        {k: v for k, v in e.payload.config_parts.items() if k != "scenario"}
+        for run in store.runs()
+        for e in store.events(run.run_id)
+        if isinstance(e.payload, RunStarted)
+    ]
+    assert len(parts) == 2 and parts[0] == parts[1]
+
+
+def _geometry_at(height_mm: float, xy_mm: float = 0.0) -> Geometry:
+    px, py, pz = PORT.position
+    plug = Pose(position=(px + xy_mm / 1000, py, pz + height_mm / 1000))
+    return Geometry(port=PORT, plug=plug, gripper=Pose(position=(px, py, pz + 0.1)))
+
+
+@pytest.mark.parametrize(
+    ("port_type", "height_mm", "expected"),
+    [
+        pytest.param("sfp", -0.98, True, id="sfp-on-its-seat"),
+        pytest.param("sfp", -0.24, False, id="sfp-short-of-its-seat"),  # #70
+        pytest.param("sfp", -2.0, False, id="sfp-under-its-seat"),
+        pytest.param("sc", 0.07, True, id="sc-on-its-seat"),
+        pytest.param("sc", 5.15, False, id="sc-stopped-in-the-bore"),
+        pytest.param("sc", 13.46, False, id="sc-on-the-entrance-rim"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("xy_mm", "near_axis"),
+    [pytest.param(0.0, True, id="on-axis"), pytest.param(3.0, False, id="3mm-off")],
+)
+def test_a_plug_is_seated_only_in_its_port_types_band_and_near_the_axis(
+    port_type: str, height_mm: float, expected: bool, xy_mm: float, near_axis: bool
+) -> None:
+    on_seat, height = seated(_geometry_at(height_mm, xy_mm), PORT_PROFILES[port_type])
+
+    assert on_seat is (expected and near_axis)
+    assert height == pytest.approx(height_mm)
+
+
+def test_an_sfp_plug_that_stops_short_of_its_seat_is_never_called_seated(
+    store: EventStore,
+) -> None:
+    # #70: in the 4096-token rerun an SFP plug settled at -0.24 mm; one band for both port
+    # types called it seated, verify passed, and the scorer called it a partial insertion (50).
+    node = FakeNode(task=TASK, seat_height_m=-0.00024)
+
+    assert run_goal(node, TASK, store) is False
+
+    details = [
+        e.payload.detail
+        for e in _events(store)
+        if isinstance(e.payload, SkillFinished) and e.payload.skill in ("insert_scripted", "verify")
+    ]
+    assert not [d for d in details if d.get("seated")]
+    assert _end(store).outcome == "failed"
+
+
+def test_a_port_type_with_no_measured_seat_is_refused_before_anything_runs(
+    store: EventStore,
+) -> None:
+    # No seat or entrance was measured for it, so neither insertion nor verify could judge it.
+    task = Task(id="trial_1_task_1", time_limit=180.0, port_type="usb")
+    node = FakeNode(task=task)
+
+    with pytest.raises(UnknownPortType, match=r"^port_type must be one of: sc, sfp$"):
+        run_goal(node, task, store)
+
+    assert node.sent == []
+    assert store.runs() == []
 
 
 @pytest.mark.parametrize(
@@ -332,18 +454,18 @@ def test_a_plug_that_is_not_seated_at_the_end_makes_verify_fail(
 def test_a_plug_on_its_seat_height_but_off_the_port_axis_fails_verify(
     store: EventStore,
 ) -> None:
-    # At the seat's height, 3 mm to the side (in a neighbouring port, say): not seated.
+    # At the SFP seat's height, 3 mm to the side (in a neighbouring port, say): not seated.
     node = FakeNode(
         task=TASK,
         plug_pops_out_after_s=5.0 + ALIGN_STEPS * 0.05 + 1.0,
-        plug_pops_out_to_m=0.0,
+        plug_pops_out_to_m=SFP_SEAT_M,
         plug_pops_out_xy_m=(0.003, 0.0),
     )
 
     assert run_goal(node, TASK, store) is False
 
     _, verify = _skill(store, "verify")
-    assert verify.payload.detail == {"height_mm": 0.0, "reason": "not seated"}
+    assert verify.payload.detail == {"height_mm": -0.98, "reason": "not seated"}
 
 
 # --- timeouts --------------------------------------------------------------------------------
@@ -369,7 +491,7 @@ def test_each_skills_timeout_is_twice_its_nominal_duration_at_the_speed_it_runs(
     # At full speed approach takes 5 s, align 19 s and insertion 2.5 s, as CheatCode; a
     # recovery may run them at half speed (#59), which takes twice as long. Verify only waits,
     # and retract never runs slowed. A full-speed run does not wait out the slow timeout.
-    skill = aic_run.aic_registry(_unread_geometry).get(name)
+    skill = aic_run.aic_registry(_unread_geometry, SFP).get(name)
 
     assert skill.timeout_s == pytest.approx(full_speed_s)
     assert skill.timeout_for({}) == pytest.approx(full_speed_s)
@@ -379,8 +501,10 @@ def test_each_skills_timeout_is_twice_its_nominal_duration_at_the_speed_it_runs(
 
 
 def test_insertion_runs_under_the_monitors_insertion_rules() -> None:
-    assert AicInsertScripted.config()["monitor_profile"] == "insertion"
-    assert AicAlign.config()["monitor_profile"] == "motion"
+    registry = aic_run.aic_registry(_unread_geometry, SFP)
+
+    assert registry.get("insert_scripted").config()["monitor_profile"] == "insertion"
+    assert registry.get("align").config()["monitor_profile"] == "motion"
 
 
 def test_the_xy_integrator_corrects_an_offset_plug_and_carries_into_insertion(
@@ -426,7 +550,7 @@ def test_a_slowed_align_gets_twice_the_time_before_it_times_out(
     # The same plug that never comes within 1 mm, under an align a recovery slowed to half
     # speed: it times out at 76 s, not at the full-speed 38 s.
     def slow_align(world: AicWorld, env: ExecEnv, goal: object) -> py_trees.behaviour.Behaviour:
-        registry = aic_run.aic_registry(world.geometry)
+        registry = aic_run.aic_registry(world.geometry, SFP)
         children = [
             SkillBehaviour(registry.get("approach"), env),
             SkillBehaviour(registry.get("align"), env, params={"speed_scale": 0.5}),
@@ -448,6 +572,183 @@ def test_a_slowed_align_gets_twice_the_time_before_it_times_out(
         if isinstance(e.payload, SkillStarted) and e.payload.skill == "align"
     ]
     assert end.duration - align.ts == pytest.approx(76.0, abs=0.1)
+
+
+# --- the hold above the entrance -------------------------------------------------------------
+
+
+@dataclass
+class _OffAxisNearTheEntrance(FakeNode):
+    """While the tip is more than `low_m` and at most `high_m` above the port frame, it hangs
+    `off_m` further off the TCP axis in x: an XY error the descent meets just before the hold
+    point, as the sim's plug swings 0-0.9 mm off the axis on its way down (the F1 rerun)."""
+
+    off_m: float = 0.0005
+    low_m: float = 0.040
+    high_m: float = 0.050
+
+    @property
+    def plug(self) -> Pose:
+        plug = super().plug
+        x, y, z = plug.position
+        if self.low_m < z - self.port.position[2] <= self.high_m + 1e-9:
+            return Pose(position=(x + self.off_m, y, z), orientation=plug.orientation)
+        return plug
+
+
+def _align_detail(store: EventStore) -> list[dict[str, object]]:
+    return [
+        e.payload.detail
+        for e in _events(store)
+        if isinstance(e.payload, SkillFinished) and e.payload.skill == "align"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("task", "seat_m", "low_m", "high_m"),
+    [
+        # SFP: the hold point is 48.8 mm (3 mm over the 45.8 mm entrance); off the axis from
+        # 50 mm, so three descent steps see the error before the first step at 48.5 mm.
+        pytest.param(TASK, SFP_SEAT_M, 0.040, 0.050, id="sfp"),
+        # SC, the port this is for: 16.64 mm (3 mm over 13.64 mm); off the axis from 17.5 mm,
+        # two steps before the first at 16.5 mm.
+        pytest.param(SC_TASK, 0.00007, 0.010, 0.0175, id="sc"),
+    ],
+)
+def test_align_holds_above_the_entrance_until_the_plug_is_on_the_port_axis(
+    store: EventStore, task: Task, seat_m: float, low_m: float, high_m: float
+) -> None:
+    # The tip hangs 40 mm under the TCP, so with CheatCode's quirk it is 80 mm under each
+    # z_offset and steps down 0.5 mm at a time. Near the hold point it hangs 0.5 mm off the
+    # axis; the integrator takes that to about 0.3 mm by the first step at or under the hold
+    # point, so align holds there, correcting XY, until the plug has been within 0.15 mm for 3
+    # samples, then goes on down. The hold adds its time, nothing else.
+    node = _OffAxisNearTheEntrance(task=task, seat_height_m=seat_m, low_m=low_m, high_m=high_m)
+    hold_at_mm = PORT_PROFILES[task.port_type].hold_at_mm
+
+    assert run_goal(node, task, store) is True
+
+    (detail,) = _align_detail(store)
+    held_s = detail["entry_held_s"]
+    assert isinstance(held_s, float) and 0.05 * ENTRY_SAMPLES <= held_s < ENTRY_HOLD_S
+    assert detail["entry_converged"] is True
+    assert isinstance(detail["entry_xy_mm"], float) and detail["entry_xy_mm"] < ENTRY_XY_MM
+    height = detail["entry_height_mm"]
+    assert isinstance(height, float) and hold_at_mm - 0.5 < height <= hold_at_mm
+    # Every target while it holds has the same height: the z_offset reached, not the next one.
+    # Only the descent's targets, sent with the tip under 100 mm: the approach's last ones
+    # settle on one height too.
+    sent = zip(node.tcp_at_send, node.sent, strict=True)
+    z = [
+        m.position_m[2]
+        for at, m in sent
+        if m.mode == "position" and at.position[2] - PLUG_BELOW_TCP_M - PORT.position[2] < 0.1
+    ]
+    runs, run = [], 1
+    for a, b in itertools.pairwise(z):
+        run = run + 1 if abs(b - a) < 1e-12 else 1
+        runs.append(run)
+    assert max(runs) == round(held_s / 0.05) + 1  # the step that reached the hold point, held
+    expected = 5.0 + ALIGN_STEPS * 0.05 + held_s + 5.0 + 4 * 0.05  # a recording tick per skill
+    assert _end(store).duration == pytest.approx(expected, abs=0.01)
+
+
+@dataclass
+class _DipsOnceWhileHeld(_OffAxisNearTheEntrance):
+    """As `_OffAxisNearTheEntrance`, but on the 5th step the arm holds still in that band the
+    tip reads on the port axis, for that step only: one sample under the threshold."""
+
+    still_steps: int = 0
+
+    def send(self, motion: MotionCommand) -> None:
+        before = self.tcp.position
+        super().send(motion)
+        still = motion.mode == "position" and self.tcp.position == before
+        self.still_steps = self.still_steps + 1 if still else 0
+
+    @property
+    def plug(self) -> Pose:
+        plug = super().plug
+        _, _, z = plug.position
+        in_band = self.low_m < z - self.port.position[2] <= self.high_m + 1e-9
+        if in_band and self.still_steps == 5:
+            px, py, _ = self.port.position
+            return Pose(position=(px, py, z), orientation=plug.orientation)
+        return plug
+
+
+def test_one_sample_on_the_axis_does_not_end_the_hold(store: EventStore) -> None:
+    # 20 mm off, as below, except for one sample on the axis while align holds: the hold needs
+    # 3 in a row, so it goes on to its limit.
+    node = _DipsOnceWhileHeld(task=TASK, off_m=0.02)
+
+    assert run_goal(node, TASK, store) is True
+
+    (detail,) = _align_detail(store)
+    assert detail["entry_converged"] is False
+    assert detail["entry_held_s"] == pytest.approx(ENTRY_HOLD_S)
+    readings = [
+        e.payload.xy_error_mm
+        for e in _events(store)
+        if isinstance(e.payload, SignalSampled) and 40.0 < e.payload.height_mm <= 50.0
+    ]
+    assert min(readings) < ENTRY_XY_MM  # the dip was seen
+
+
+def test_the_hold_above_the_entrance_ends_after_its_limit_and_the_descent_goes_on(
+    store: EventStore,
+) -> None:
+    # 20 mm off the axis: the integrator's correction is clipped at 7.5 mm, so the plug never
+    # comes within 0.15 mm. Align holds for 3 s, then goes on down; under 40 mm the plug hangs
+    # straight again, the integrator brings it back, and the task succeeds. The hold judges
+    # nothing: what the plug meets at the entrance is the Monitor's.
+    node = _OffAxisNearTheEntrance(task=TASK, off_m=0.02)
+
+    assert run_goal(node, TASK, store) is True
+
+    (detail,) = _align_detail(store)
+    assert detail["entry_held_s"] == pytest.approx(ENTRY_HOLD_S)
+    assert detail["entry_converged"] is False
+    assert isinstance(detail["entry_xy_mm"], float) and detail["entry_xy_mm"] >= ENTRY_XY_MM
+
+
+def test_an_align_that_starts_under_the_hold_point_does_not_hold(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first align crosses the SFP hold point (48.8 mm) on its way down, so it stops there,
+    # though the plug is on the axis: two more samples confirm it (0.1 s). After a retract the
+    # tip is at 10.8 mm, already under the hold point (in the port's guide), so the second
+    # align does not stop there.
+    def align_retract_align(
+        world: AicWorld, env: ExecEnv, goal: object
+    ) -> py_trees.behaviour.Behaviour:
+        registry = aic_run.aic_registry(world.geometry, SFP)
+        names = ["approach", "align", "retract", "align"]
+        children = [SkillBehaviour(registry.get(name), env) for name in names]
+        return py_trees.composites.Sequence(name="align", memory=True, children=children)
+
+    monkeypatch.setattr(aic_run, "_tree", align_retract_align)
+    node = FakeNode(task=TASK, plug_below_tcp_m=0.0021)
+
+    assert run_goal(node, TASK, store) is True
+
+    first, second = _align_detail(store)
+    assert first["entry_held_s"] == pytest.approx(0.05 * (ENTRY_SAMPLES - 1))
+    assert first["entry_converged"] is True
+    assert not [key for key in second if key.startswith("entry_")]
+
+
+def test_the_hold_is_in_aligns_config() -> None:
+    config = aic_run.aic_registry(_unread_geometry, SFP).get("align").config()
+
+    assert config["entry"] == {
+        "above_entrance_mm": ENTRY_HOLD_ABOVE_MM,
+        "xy_mm": ENTRY_XY_MM,
+        "samples": ENTRY_SAMPLES,
+        "max_hold_s": ENTRY_HOLD_S,
+    }
+    for profile in PORT_PROFILES.values():
+        assert profile.hold_at_mm == pytest.approx(profile.entrance_mm + ENTRY_HOLD_ABOVE_MM)
 
 
 # --- retract ---------------------------------------------------------------------------------
@@ -482,7 +783,7 @@ def test_a_retract_after_a_finished_align_makes_the_next_align_step_down_from_th
     def align_retract_align(
         world: AicWorld, env: ExecEnv, goal: object
     ) -> py_trees.behaviour.Behaviour:
-        registry = aic_run.aic_registry(world.geometry)
+        registry = aic_run.aic_registry(world.geometry, SFP)
         names = ["approach", "align", "retract", "align"]
         children = [SkillBehaviour(registry.get(name), env) for name in names]
         return py_trees.composites.Sequence(name="align", memory=True, children=children)
@@ -555,7 +856,7 @@ def test_every_aic_skill_tells_the_planner_what_it_does() -> None:
     def no_geometry() -> Geometry:
         raise AssertionError("not read when the registry is built")
 
-    registry = aic_run.aic_registry(no_geometry)
+    registry = aic_run.aic_registry(no_geometry, SFP)
 
     for name in registry.names():
         description = getattr(registry.get(name), "description", "")

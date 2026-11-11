@@ -4,8 +4,9 @@ Sim time moves only when the policy thread sleeps (wall time), by `sim_per_sleep
 a test sets it to 0 to stall the sim, or schedules a jump back with `reset_after_sleeps`. The
 arm tracks every position target exactly, and the plug hangs `PLUG_BELOW_TCP_M` under the TCP.
 Goal events (a cancel, an abort, deactivation) and failures are scripted by sleep count.
-`seat_height_m` stops the tip that far above the port frame (at the frame by default), as a
-real port stops a plug on its seat; None lets it go on down through the port.
+`seat_height_m` stops the tip that far above the port frame (by default where #28 measured an
+SFP plug on its seat, 0.98 mm under the frame), as a real port stops a plug on its seat; None
+lets it go on down through the port.
 `plug_below_tcp_m` sets how far the tip hangs under the TCP.
 The F/T broadcaster publishes every `wrench_period_s` of sim time (50 Hz by default), from
 `wrench_age_s` before the goal's start (or `wrench_delay_s` after it), through a real
@@ -27,6 +28,7 @@ from adapters.aic.node import ControllerSnapshot, WrenchReading
 from cellrt.runtime.task import Task
 
 PLUG_BELOW_TCP_M = 0.04
+SFP_SEAT_M = -0.00098  # an SFP plug on its seat, below the port frame (#28)
 SECRET = "upstream text with a key: sk-123"  # must never reach the store
 PORT = Pose(position=(0.5, 0.1, 0.05))
 START_TCP = Pose(position=(0.3, -0.1, 0.45))
@@ -68,7 +70,8 @@ class FakeNode:
     stall_after_sleeps: int | None = None  # from then on sim time stops
     plug_xy_offset_m: tuple[float, float] = (0.0, 0.0)  # where the plug hangs off the TCP axis
     plug_below_tcp_m: float = PLUG_BELOW_TCP_M
-    seat_height_m: float | None = 0.0  # the tip never goes below this height above the port
+    # The tip never goes below this height above the port; the default task is an SFP one.
+    seat_height_m: float | None = SFP_SEAT_M
     # From this much sim time after the goal's start, the connector has sprung back out: the
     # tip reads `plug_pops_out_to_m` above the port, whatever the arm does.
     plug_pops_out_after_s: float | None = None

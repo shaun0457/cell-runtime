@@ -169,9 +169,14 @@ def test_setting_b_runs_align_again_at_half_speed_after_a_force_limit(store: Eve
     drops = [a - b for a, b in itertools.pairwise(heights)]
     assert len(drops) > 10
     # From where the retract left the plug, with no jump (down to where align had got to, or
-    # back up to the approach height): the first step may come a tick late, then 0.25 mm each.
+    # back up to the approach height): the first step may come a tick late, then 0.25 mm each,
+    # but for the samples the slow align holds still above the entrance (ADR 024): it starts
+    # above the hold point, so it stops there once.
+    held = events[slow_to].payload.detail["entry_held_s"]
     assert -0.01 <= drops[0] <= 0.26
-    assert all(d == pytest.approx(0.25, abs=0.01) for d in drops[1:])
+    still = [d for d in drops[1:] if abs(d) < 0.01]
+    assert len(still) == round(held / 0.05) and still
+    assert all(d == pytest.approx(0.25, abs=0.01) for d in drops[1:] if abs(d) >= 0.01)
 
 
 def test_the_z_offset_at_a_pose_commands_that_pose() -> None:

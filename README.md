@@ -208,10 +208,11 @@ goal before it (a trial it skips shifts the later ones). `cellrt replay` reads t
 runs like any other.
 
 By default (setting A) the policy runs CheatCode's two phases split into skills: `approach`, `align`
-(down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
--0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then the
-tip's height and offset from ground truth, against the seated band measured in the #28 sim
-run); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
+(down to z_offset 0.01 with CheatCode's XY correction, stopping once 3 mm above the port's
+entrance until the plug is on the port axis, at most 3 s; ADR 024), `insert_scripted` (on to
+z_offset -0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then
+the tip's height and offset from ground truth, against its port type's seated band, measured
+in the sim; #70); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
 the plug tip actually ends depends on CheatCode's tip-offset quirk
 (`adapters/aic/geometry.py`): in #28 it seated two of the three plugs during align. Skill
 starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
