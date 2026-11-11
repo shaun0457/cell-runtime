@@ -16,7 +16,8 @@ injected in the sim.
 
 A `RuntimePolicy` loaded by `aic_model` runs the Phase 0 core against Gazebo and completes the
 3 tasks of the AIC sample config with **no injected faults**, with every step recorded in the
-event store and replayable with `cellrt replay`.
+event store and replayable with `cellrt replay`. (At the close the criterion was revised; see
+exit criterion 3.)
 
 ## In scope
 
@@ -89,7 +90,9 @@ Each is a behaviour a test or a recorded run can show.
    metres to millimetres, plug-to-port XY error and depth from ground-truth TF, `Velocity` or
    pose to `MotionUpdate`. Tests that need ROS skip when it is not importable.
 2. `aic_model` loads `RuntimePolicy` without a GetState timeout.
-3. The 3 sample-config tasks succeed, the same tasks CheatCode passes.
+3. The 3 sample-config tasks succeed, the same tasks CheatCode passes. (Revised at the close,
+   2026-11-11: a recorded run that passes all three, plus the rate over three clean runs;
+   `docs/roadmap.md`. This brief keeps the wording it was cut with.)
 4. A cancelled goal stops the robot: a test with a fake node shows that every stop reason
    revokes the lease, sends HOLD, and records the reason; a late command from the old skill is
    dropped.

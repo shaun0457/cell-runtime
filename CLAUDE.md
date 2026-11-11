@@ -248,10 +248,12 @@ cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
 - [x] Phase 0 — ROS-free runtime core + mock world + eval CLI
 - [x] Phase 1 — AIC adapter and scripted skills; a recorded, replayable run in which the 3
   sample-config tasks succeed end to end with no faults, plus the rate over three clean runs
-  (`docs/briefs/phase-1-aic-adapter.md`; criterion revised at the close). The first sim run
+  (criterion revised at the close, `docs/roadmap.md`; `docs/briefs/phase-1-aic-adapter.md`
+  keeps the first wording). The first sim run
   (#28, `docs/phase1-run28-report.md`) did not reach 3/3. #58 judges seating by height, and
   #73 adds align's entry hold above the port (ADR 024) and per-port seated bands. Three clean
-  runs after #73 went 3/3, 3/3 and 2/3 (SFP 6/6, SC 2/3, scorer 75 per seated plug). The SC
+  runs with #73's merged hold (`0014a07`) went 3/3, 3/3 and 2/3 (SFP 6/6, SC 2/3, scorer 75
+  per seated plug; `cellrt replay` not run on them). The SC
   plug sticking on the entrance rim is a known limit (`docs/sim-results.md`,
   `docs/roadmap.md`).
 - [ ] Phase 2 — to be revised after #28 (the draft is PR #42, not merged): a cost-capped fault

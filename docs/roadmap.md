@@ -10,20 +10,30 @@ and what is out of scope on purpose. Phase specs and tickets are cut from the br
 | Phase | Goal | Exit criterion | Runs on | Status |
 |---|---|---|---|---|
 | 0 | ROS-free runtime core, mock world, eval CLI | eval prints the A/B/C table; kill and rerun gives the same table | laptop + CI | done (#1, #15) |
-| 1 | The same runtime drives the real AIC interface | the 3 sample-config tasks succeed end to end with no faults in a recorded, replayable run, and the rate over three clean runs is recorded (revised 2026-11-11, below) | laptop (adapter, fakes) + GCP VM (on-demand) | done (#73): 2 of 3 clean runs seated all three plugs; SFP 6/6, SC 2/3 (`sim-results.md`) |
-| 2 | What recovery is worth, measured in the sim | A/B/C eval in Gazebo with injected faults, reconciled with the AIC score; B and C may show no gain | Spot VM | not started; draft in PR #42 (not merged), open decisions: #13 |
+| 1 | The same runtime drives the real AIC interface | the 3 sample-config tasks succeed end to end with no faults in a recorded, replayable run, and the rate over three clean runs is recorded (revised 2026-11-11, below) | laptop (adapter, fakes) + GCP VM (on-demand) | done (#73): 2 of the 3 clean runs with the merged hold (`0014a07`) seated all three plugs; SFP 6/6, SC 2/3. `cellrt replay` was not run on these sessions (`sim-results.md`) |
+| 2 | What recovery is worth, measured in the sim | A/B/C eval in Gazebo with injected faults, reconciled with the AIC score; B and C may show no gain | Spot VM | not started as a phase; draft in PR #42 (not merged), open decisions: #13. An injected dropout already ran A, B and C in Gazebo once, for Phase 3's triage (#60, #61) |
 | 3 | The LLM planner | LLM triage and task-to-tree generation pass the same validation gate; UNKNOWN promotion validated by replay | laptop + on-demand VM | mostly done; forking a run is open. Done: triage on the mock and in the sim, escalation, task-to-tree, UNKNOWN promotion (`phase3-*-results.md`, `sim-results.md`); open decisions: #14 |
 | 4 | Report and demo | eval report, README, demo video | laptop | in progress: demo video composed (kept outside the repository); README next |
 
-Phase 1's criterion was revised when it closed. It first asked for the 3 tasks to succeed, which
-one run can show by luck. After the SC entry hold (ADR 024), three clean runs went 3/3, 3/3
-and 2/3. The SC plug stuck on the entrance rim once, after a stop that ended above the
-entrance. The criterion now asks for a recorded run that passes all three, plus the rate over
-three clean runs. That rate is part of the result, and the SC rim jam is a known limit.
+Phase 1's criterion was revised when it closed. It first read "the 3 sample-config tasks succeed
+end to end with no faults, recorded and replayable", which can be read two ways:
+- **One run passes all three.** Two of the three clean runs with the merged entry hold
+  (ADR 024, `0014a07`) did, so this reading is met.
+- **Every clean run passes all three.** ADR 024's time box used this reading, and it is not
+  met: in the third run the SC plug stuck on the entrance rim, after a stop that ended above
+  the entrance.
+
+The revision keeps the first reading and adds the rate over three clean runs, with no
+threshold. It is not a higher bar than the first reading. What it adds is that the result
+shows how often the cell passes as well as that it can: SFP 6 of 6, SC 2 of 3. The SC rim jam
+is a known limit. An earlier clean run with the hold's first version (`439e58b`) went 2/3 and
+is not in the rate (`sim-results.md`). Read the criterion the second way and Phase 1 is not
+done.
 
 Boundary between 1 and 2: Phase 1 ends when the pipeline works end to end with **no faults**.
-Fault injection, the eval in the sim and the ACT skill are Phase 2. An adapter that has never run
-in the sim is not done, so Phase 1 includes one real run.
+Fault injection, the eval in the sim and the ACT skill are Phase 2. The injected dropout was
+built early, for Phase 3's triage in the sim (#60, #61). Phase 2's measured eval is not built.
+An adapter that has never run in the sim is not done, so Phase 1 includes one real run.
 
 ## Where each capability is designed
 

@@ -52,7 +52,7 @@ moves down; a guarded move then stops on contact. Industrial insertion cycles ad
 ### A — keep CheatCode's descent; let recovery handle the jam
 - Pros: no change to a ported expert; recovery has seated the plug after a jam once
   (F1 rerun, C-LLM #3).
-- Cons: setting A has no recovery, so Phase 1's criterion stays unmet. Retract-and-realign
+- Cons: setting A has no recovery, so a jam in a clean run fails its task. Retract-and-realign
   then failed twice in a row in another run.
 
 ### B — stop once above the entrance and correct XY until the plug is on the axis
@@ -129,7 +129,9 @@ Option B.
   models' entrance geometry was not measured, so this is a margin, not a clearance.
 - **It is checked where it matters.** The fix is only proven by a clean setting-A sim run. If
   SC still fails, Phase 1's criterion is revised and the rate recorded, rather than tuned
-  further: the time box Shaun set on 2026-11-11.
+  further: the time box Shaun set on 2026-11-11. This read the criterion as every clean run
+  passing. At the close one clean run in three failed SC, and the revision kept the one-run
+  reading and added the rate (`docs/roadmap.md`).
 - **It stops where the arm is, because the first sim run showed the arm trailing.** The first
   version held the z_offset last sent. In the first clean setting-A run with it (one engine
   run with the code of `439e58b`, session `scclean` of the VM's `simclose.sqlite`, read from a
@@ -149,9 +151,11 @@ Option B.
     the entrance while XY was corrected, sinking at 1-2.3 mm/s on average over the stop,
     against CheatCode's 10 mm/s. The ninth sank 1.1 mm in 0.1 s.
   - All six SFP plugs and two of three SC plugs seated (scorer 75 each). One SC plug
-    crossed its entrance 0.97 mm off the axis and seated anyway.
+    crossed its entrance (the first sample at or under 13.64 mm) 0.97 mm off the axis, 0.91 mm
+    at the first sample at or under 14 mm, and seated anyway.
   - The one SC plug that stuck is the one stop that ended above the entrance. It converged
-    in 0.1 s at 15.5 mm, went on at full speed, was 0.36 mm off at the entrance, and stuck
+    in 0.1 s at 15.5 mm, went on at full speed, was 0.36 mm off at the first sample at or
+    under 14 mm, and stuck
     on the rim 0.70 mm off (13.46 mm, INSERT_STUCK). The error at the stop did not stay
     small over the last 3 mm, which the first Why bullet left open.
 
