@@ -133,8 +133,9 @@ run-clock time t:
   - runtime success without one: a **false success**;
   - any other end with no verdict (an adapter stop such as `ground_truth_unavailable`, or a
     cancel): an **adapter abort**.
-- **Per trial**, ADR 026's class follows the trial's first verdict; the per-verdict counts above
-  feed the Monitor's rates.
+- **Per trial**, ADR 026's class table gives the class: its first rows (infrastructure, false
+  success, compensated, adapter abort), then the trial's first verdict. The per-verdict counts
+  above feed the Monitor's rates.
 - **The mock keeps its own rule.** It has no scorer. Its metrics and the committed baseline do
   not change.
 

@@ -134,16 +134,21 @@ fake process runner):
 **The queue** (#81):
 - The unit is one trial (ADR 027). The next engine config is built from the units still
   unfinished.
-- A unit is finished when it has a finished attempt with the current `config_hash` **and** its
-  referee data: its `scoring.yaml` entry and its bag dump. The report counts the first attempt
-  that has both.
+- **On the VM**, the queue treats a unit as finished when it has a finished attempt with the
+  current `config_hash` **and** its referee data: its `scoring.yaml` entry and its bag dump.
+- **One session, one commit, one store.** Each session writes its own store, and the runner
+  refuses to add an engine run to a session whose ledger names another commit. The report
+  counts, per unit, the first attempt in that session's store that has referee data; it never
+  filters by the `config_hash` of the checkout it runs from. So the pilot table, the checkpoint
+  and the held-out each count the runs of one configuration.
 - **Attempts are counted by the runner's ledger, not by `run_started`**, because most ways an
   engine run fails happen before any run starts:
   - an engine run that ends badly charges one attempt to the unit whose trial was running
-    then (the last `run_started`, or the task id in the engine log), and none to the units it
-    had finished or not reached;
-  - a failure before any trial (no sim ready, no policy ready, an engine error at start)
-    charges the engine run, not a unit; two in a row stop the queue with that code;
+    then: the last trial the engine log names, because the engine prints each trial's id
+    before it spawns the trial (`aic_engine.cpp:594-598`). The units it had finished or not
+    reached are not charged;
+  - a failure before the log names any trial (no sim ready, no policy ready, an engine error
+    at start) charges the engine run, not a unit; two in a row stop the queue with that code;
   - a goal the policy refuses (a manifest code, ADR 027) stops the queue at once: the
     manifest and the engine config disagree, and no rerun can fix that.
 - A unit gets at most 3 attempts (ADR 010). One that runs out is reported as infrastructure.
@@ -191,7 +196,9 @@ snapshots, and no trial.
 - **Referee data as part of "finished"**, because a trial that cannot be judged is not data.
   Losing it depends on when the VM stopped, not on whether the plug went in, so taking the
   first judged attempt does not bias the count. The exception is a scene that crashes the sim
-  itself; it runs out of attempts and is reported, never silently dropped.
+  while its trial spawns: it is charged each time, runs out of attempts, and is reported, never
+  silently dropped. A crash before the engine names any trial is charged to the engine run, and
+  two in a row stop the queue.
 - **Every wait bounded, every exit torn down**: the session runs unattended, and the only
   guard against a hung engine burning money all night is the bound (D8).
 

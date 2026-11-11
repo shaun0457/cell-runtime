@@ -55,10 +55,11 @@ is the exception:
   side of that vertical line;
 - SC (h = 13.64 mm): 0.48 mm at 2°, 0.95 mm at 4°. SFP (h = 45.8 mm): 1.6 mm at 2°;
 - in the 13 SC runs on record before align's entry hold, the plug's distance from the port axis
-  at the entrance sorted the outcomes: 0.10-0.18 mm seated, and every plug 0.5 mm or more off
-  stuck on the rim (`docs/sim-results.md:192-196`). After the hold, one plug stuck 0.70 mm off
-  while another seated 0.97 mm off (ADR 024, Why). The boundary is not sharp, but 2-4° of tilt
-  lands in that range.
+  at the entrance sorted the outcomes, though not cleanly (ADR 024, Context): at 0.10-0.18 mm,
+  3 of 4 seated; at 0.34-0.42 mm, 1 of 4; at 0.50-0.87 mm, none of 5, all stuck on the rim.
+  After the hold, a plug 0.36 mm off at the entrance stuck on the rim, while another seated
+  0.97 mm off (ADR 024, Why). The boundary is not sharp, but the 0.48-0.95 mm that 2-4° of tilt
+  gives lands where plugs stuck.
 
 **What bounds the pilot.**
 - One malformed trial stops the whole engine at parse time (`aic_engine.cpp:414-424`).
@@ -160,8 +161,9 @@ trials, whose board x is 0.15 or 0.17 m and whose yaw is 3.0 or 3.1415 rad.
 - every translation lies inside the effective clamp, so the engine never moves a value silently;
 - no trial carries its own `task_board_limits`, so the clamp stays the one above;
 - the roll and pitch of every rail entity (card, port, mount) are at most 4°, and the board's
-  are 0. The cable's pose in the gripper is not covered: the sample's own cables have a yaw of
-  1.33 rad. The grasp families bound it instead (at most 0.12 rad from the base);
+  are 0. The cable's pose in the gripper is not covered: the sample's own cable is held at a
+  roll of 0.44 rad and a pitch of -0.48 rad (`sample_config.yaml:136-137`). The grasp families
+  bound it instead (at most 0.12 rad from the base);
 - every key that `Trial::Trial` reads is present (`aic_engine.cpp:41-240`).
 
 **Runs**, in this order within the pilot session:
