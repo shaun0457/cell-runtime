@@ -63,6 +63,9 @@ def test_a_run_records_the_world_once_before_its_first_skill(store: EventStore) 
     for name, pose in expected.items():
         assert pose is not None
         assert getattr(ready, name) == _record(pose), name
+    # The anchor holds to the end of the run, not only at the event: origin + run time is the
+    # node's sim time after the last step and the hold check's settle (ADR 029).
+    assert ready.sim_origin_s + events[-1].ts == pytest.approx(node.sim_now_s(), abs=1e-6)
 
 
 def test_the_origin_is_the_sim_time_at_the_run_clocks_zero_after_a_wait(
@@ -81,7 +84,7 @@ def test_the_origin_is_the_sim_time_at_the_run_clocks_zero_after_a_wait(
     assert event.ts == pytest.approx(3.0, abs=0.05)
 
 
-def test_a_world_that_is_never_ready_records_none(store: EventStore) -> None:
+def test_a_world_that_is_never_ready_records_no_world_ready(store: EventStore) -> None:
     node = FakeNode(task=TASK, frames_from_s=READY_TIMEOUT_S + 0.05)
 
     run_goal(node, TASK, store)
