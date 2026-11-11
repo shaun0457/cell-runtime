@@ -135,7 +135,7 @@ This report stays as it was measured. What changed because of it:
 - **The SC jam, read again (ADR 024):** across the 13 goal3 runs on record, the plug's distance
   from the port axis as it reached the entrance sorts the outcomes. Every plug 0.5 mm or more
   off stuck on the rim, and 3 of 4 within 0.18 mm went in. The outcome is settled during
-  align's descent. Align now stops once, 3 mm above the entrance, until the plug is within
+  align's descent. Align now stops once where the arm is, 3 mm above the entrance, until the plug is within
   0.15 mm of the axis (at most 3 s), and the seated band is per port type (#70). A clean
   setting-A sim run is needed to show whether that meets the criterion.
 - **A count that does not add up:** section 6's "11 of 12 runs" does not match the

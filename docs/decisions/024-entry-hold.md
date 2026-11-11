@@ -2,6 +2,8 @@
 
 Date: 2026-11-11
 Status: accepted
+Revised: 2026-11-11, after the first clean sim run with the stop: it now holds where the arm
+is measured, not the z_offset last sent (Why, last bullet).
 
 ## Context
 
@@ -57,8 +59,9 @@ moves down; a guarded move then stops on contact. Industrial insertion cycles ad
 Place the stop by the port type's measured entrance. The wait has a time limit, and when the
 limit runs out the descent goes on.
 - Pros: it targets the cause the data shows, the error at the entrance. It uses the integrator
-  that is already there, adds at most 3 s to a task with a 180 s limit (the sample config's
-  `time_limit`), and keeps the descent's offsets as they are. A realign after a retract from
+  that is already there, adds at most 3 s and the steps down from where the arm stopped
+  (about 0.7 s with the sim's lag) to a task with a 180 s limit (the sample config's
+  `time_limit`), and keeps the descent's 0.5 mm steps. A realign after a retract from
   the rim crosses the stop again, so the recoveries that run align again (retract and realign,
   a slowed realign) gain from it too.
 - Cons: it is the first departure from "run once at full speed, every skill commands what
@@ -86,15 +89,18 @@ Option B.
   (3 mm) above its port type's entrance: 16.64 mm for SC, 48.8 mm for SFP. An align that starts
   below that point does not stop. That covers one already in the port, such as a realign after
   a retract from inside the bore.
-- **What the stop does.** It commands the z_offset it reached again, so the integrator keeps
-  correcting XY. It stops waiting once the plug has been within `ENTRY_XY_MM` (0.15 mm) of the
-  axis for `ENTRY_SAMPLES` (3) samples in a row, counting the one at the stop, so one dip
-  under the threshold does not end it. Otherwise it stops after `ENTRY_HOLD_S` (3 s) of the
-  run's clock. Either way it then goes on with CheatCode's remaining offsets. A plug already on
-  the axis costs two samples, 0.1 s.
-- **What it records.** It judges nothing. Align records `entry_xy_mm`, `entry_height_mm` (the
-  tip's height when the stop ends), `entry_held_s` and `entry_converged`. Anything the plug
-  then meets at the entrance is the Monitor's to classify.
+- **What the stop does.** It stops where the arm is: it commands the z_offset measured at the
+  stop (`z_offset_at`), not the one last sent, so the arm stays where it is while the
+  integrator keeps correcting XY. It stops waiting once the plug has been within `ENTRY_XY_MM`
+  (0.15 mm) of the axis for `ENTRY_SAMPLES` (3) samples in a row, counting the one at the stop,
+  so one dip under the threshold does not end it. Otherwise it stops after `ENTRY_HOLD_S`
+  (3 s) of the run's clock. Either way align then goes on down from the held z_offset in
+  CheatCode's 0.5 mm steps to its usual end, z_offset 0.01. With the arm on its targets those
+  are CheatCode's remaining offsets. A plug already on the axis costs two samples, 0.1 s.
+- **What it records.** It judges nothing. Align records `entry_start_mm` and
+  `entry_height_mm` (the tip's height when the stop begins and ends), `entry_xy_mm`,
+  `entry_held_s` and `entry_converged`. Anything the plug then meets at the entrance is the
+  Monitor's to classify.
 - **Seated bands per port type.** The same `PortProfile` that places the stop also gives each
   port type its seated band (#70). SFP is -1.5 to -0.6 mm. SC is -0.5 to +0.5 mm.
 - **An unknown port type.** A port type with no profile is refused before anything runs, as
@@ -113,15 +119,27 @@ Option B.
   recorded samples (the first `signal_sampled` at or under 14 mm for SC). That reading
   confirms the mechanism or rules it out, whatever the outcome.
 - **A stop that cannot converge does no harm.** It goes on after 3 s, so the run is never
-  worse off than today's except for that time. The Monitor and recovery still own the failure.
+  worse off than today's except for that time and the steps down from where the arm stopped.
+  The Monitor and recovery still own the failure.
 - **The thresholds are read from 13 runs, not tuned.** 0.15 mm sits inside the band
   (0.10-0.18 mm) where 3 of 4 plugs went in; the fourth, at 0.15 mm, stopped in the bore, which
   this does not claim to fix. 3 mm above the entrance keeps the plug in free space while it
   moves sideways. The port models' entrance geometry was not measured, so this is a margin,
   not a clearance.
-- **It is checked where it matters.** The fix is only proven by a clean setting-A sim run,
-  planned right after this change. If SC still fails, Phase 1's criterion is revised and the
-  rate recorded, rather than tuned further: the time box Shaun set on 2026-11-11.
+- **It is checked where it matters.** The fix is only proven by a clean setting-A sim run. If
+  SC still fails, Phase 1's criterion is revised and the rate recorded, rather than tuned
+  further: the time box Shaun set on 2026-11-11.
+- **It stops where the arm is, because the first sim run showed the arm trailing.** The first
+  version held the z_offset last sent. In the first clean setting-A run with it (one engine
+  run with the code of `439e58b`, session `scclean` of the VM's `simclose.sqlite`, read from a
+  copy), the sim's arm trailed its targets by 6-7 mm while it descended, so
+  holding the target let it slide on down while XY converged. Every stop ended under its
+  entrance: at 10.07 mm for SC (entrance 13.64 mm), at 41.9 and 43.5 mm for the two SFP tasks
+  (45.8 mm). The SFP plugs still seated (scorer 75 each); the SC plug converged in 1.27 s to
+  0.069 mm off the axis, but it had crossed the entrance during the stop 0.27 mm off, and it
+  stopped in the bore at 5.15 mm (INSERT_STUCK, scorer 1). Holding the measured z_offset keeps
+  the plug 3 mm above the entrance whatever the lag; a test drives an arm that trails its
+  targets as the sim's did. The run after this revision checks it.
 
 ## Consequences
 
@@ -139,10 +157,15 @@ Option B.
   entrance without stopping, as before this change: a recovery that reruns insert_scripted
   without align (a retry, or the slow rerun after a FORCE_LIMIT in insertion), or an SC goal
   whose plug a dropout holds above the stop until align ends.
-- The stop commands the z_offset last sent, as the rest of the descent does. While every
-  command arrives, that is where the arm is. After a command dropout during align it can be
-  below the arm, so the stop may then sit at or under the entrance.
-- Both limits meet the dropout fault only on an SC goal: its 20 mm onset is above the SC stop
-  (16.64 mm) and under the SFP stop (48.8 mm). The runbook's Phase 3 command injects it on
-  every goal, as #61 did; the runs planned right after this change inject it on goal 1, an
-  SFP goal, only.
+- After the stop, align's offsets are CheatCode's only when the arm was on its target. With
+  the sim's lag they go down from the measured z_offset, 6-7 mm higher, so align sends more
+  of them and ends later; insert_scripted's offsets are unchanged.
+- The stop holds the measured z_offset, so a command dropout that ends while align is
+  stopped no longer leaves the stop holding a target below the arm (#73 review, F1). One that
+  ends before the stop is unchanged: align's next offset is as far below the arm as the steps
+  lost, and the plug may cross the hold point and the entrance in that one move
+  (`test_aic_faults.py`).
+- The dropout fault meets the remaining limit, a stop only in align, only on an SC goal: its
+  20 mm onset is above the SC stop (16.64 mm) and under the SFP stop (48.8 mm). The runbook's
+  Phase 3 command injects it on every goal, as #61 did; the runs planned right after this
+  change inject it on goal 1, an SFP goal, only.

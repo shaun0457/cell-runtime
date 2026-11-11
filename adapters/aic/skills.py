@@ -21,9 +21,10 @@ holds the TCP far above its target) or from the approach pose; align first comes
 z_offset 0.01 if the arm is below that.
 
 Run once at full speed, every skill commands what CheatCode does, with one addition (ADR 024):
-align stops its descent once, just above the port's entrance, and corrects XY there until the
-plug is on the port axis (at most `ENTRY_HOLD_S`), then goes on with CheatCode's offsets. The
-skills judge a seat and place that hold by the port type's measured geometry (`PortProfile`).
+align stops its descent once, just above the port's entrance, where the arm is measured to be,
+and corrects XY there until the plug is on the port axis (at most `ENTRY_HOLD_S`), then goes on
+down from there in CheatCode's 0.5 mm steps. The skills judge a seat and place that hold by the
+port type's measured geometry (`PortProfile`).
 """
 
 from __future__ import annotations
@@ -341,10 +342,11 @@ def _off_axis_mm(g: Geometry) -> float:
 class AicAlign(_AicSkill):
     """Descend to 10 mm above the port (z_offset 0.01) with CheatCode's XY correction, then
     keep correcting there until the plug is within 1 mm of the port axis. On the way down it
-    stops once just above the port's entrance (ADR 024): there it corrects XY until the plug
-    has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row, for at most
-    ENTRY_HOLD_S, then goes on. An align that starts under that point (in the port, after a
-    retract) does not stop."""
+    stops once just above the port's entrance (ADR 024), where the arm is measured to be: there
+    it corrects XY until the plug has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES
+    samples in a row, for at most ENTRY_HOLD_S, then goes on down from there in CheatCode's
+    steps. An align that starts under that point (in the port, after a retract) does not
+    stop."""
 
     description: ClassVar[str] = (
         "Descends to 10 mm above the port while correcting XY, stopping just above the port's "
@@ -385,19 +387,19 @@ class AicAlign(_AicSkill):
         align = descent_from(descent_offsets()[0], self._descent.z_offset_m, scale)
         above_entry = plug_to_port_mm(g.port, g.plug)[0] > self._port.hold_at_mm
         entry: dict[str, object] = {}
-        for i, z in enumerate(align):
+        i = 0
+        while i < len(align):  # bounded: each pass sends one offset, and the list is replaced once
             g = self._geometry()
-            # Set from the first command on. The first step cannot reach the hold point (it reads
-            # the geometry `above_entry` read); the check only makes `reached` a float.
-            reached = self._descent.z_offset_m
-            at_hold_point = plug_to_port_mm(g.port, g.plug)[0] <= self._port.hold_at_mm
-            if above_entry and reached is not None and at_hold_point:
+            if above_entry and plug_to_port_mm(g.port, g.plug)[0] <= self._port.hold_at_mm:
                 above_entry = False
-                entry = await self._hold_at_entry(ctx, reached)
+                entry, held_m = await self._hold_at_entry(ctx)
+                # Go on from where the arm stopped: the offsets sent before the stop are below it.
+                align = align[:i] + descent_from(descent_offsets()[0], held_m, scale)
                 g = self._geometry()
-            self._descent.command(ctx, g, z)
+            self._descent.command(ctx, g, align[i])
             ctx.progress((i + 1) / len(align))
             await ctx.clock.sleep(ctx.period_s)
+            i += 1
         while ctx.world.signals().xy_error_mm >= ALIGN_XY_MM:  # bounded by the timeout
             self._descent.command(ctx, self._geometry(), ALIGN_HEIGHT_M)
             await ctx.clock.sleep(ctx.period_s)
@@ -405,15 +407,20 @@ class AicAlign(_AicSkill):
         detail = {"xy_error_mm": ctx.world.signals().xy_error_mm, **entry}
         return SkillResult(ok=True, detail=detail)
 
-    async def _hold_at_entry(self, ctx: SkillContext, z: float) -> dict[str, object]:
-        """Command `z`, the z_offset reached, again, correcting XY with the integrator, until
-        the plug has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row
-        (counting the one at the hold point) or ENTRY_HOLD_S of the run's clock has passed;
-        what it reached. Each sleep lasts at least the period of that clock (`SimClock`), and
-        every world step moves the clock on (the runner stops a run whose step comes back
+    async def _hold_at_entry(self, ctx: SkillContext) -> tuple[dict[str, object], float]:
+        """Stop where the arm is: command the z_offset measured at the hold point
+        (`z_offset_at`), correcting XY with the integrator, until the plug has been within
+        ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row (counting the one at the hold
+        point) or ENTRY_HOLD_S of the run's clock has passed. Not the z_offset last sent: the
+        sim's arm trails its targets by 6-7 mm while it descends (#73's first clean run), and
+        holding that target let the plug slide on into the port. Returns what it reached and
+        the z_offset it held. Each sleep lasts at least the period of that clock (`SimClock`),
+        and every world step moves the clock on (the runner stops a run whose step comes back
         short), so the hold ends; align's timeout bounds it too."""
         start_s = ctx.clock.now()
         g = self._geometry()
+        z = z_offset_at(g.port, g.plug, g.gripper)
+        start_mm = plug_to_port_mm(g.port, g.plug)[0]
         off_mm = _off_axis_mm(g)
         on_axis = 1 if off_mm < ENTRY_XY_MM else 0
         while on_axis < ENTRY_SAMPLES and ctx.clock.now() - start_s < ENTRY_HOLD_S - 1e-9:
@@ -422,12 +429,14 @@ class AicAlign(_AicSkill):
             g = self._geometry()
             off_mm = _off_axis_mm(g)
             on_axis = on_axis + 1 if off_mm < ENTRY_XY_MM else 0
-        return {
+        entry: dict[str, object] = {
+            "entry_start_mm": round(start_mm, 3),
             "entry_xy_mm": round(off_mm, 3),
             "entry_height_mm": round(plug_to_port_mm(g.port, g.plug)[0], 3),
             "entry_held_s": round(ctx.clock.now() - start_s, 3),
             "entry_converged": on_axis >= ENTRY_SAMPLES,
         }
+        return entry, z
 
 
 class AicInsertScripted(_AicSkill):

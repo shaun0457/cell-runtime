@@ -291,22 +291,36 @@ class _FallsShort(FakeNode):
 def test_a_descent_nothing_interrupts_sends_cheatcodes_targets_unchanged(
     store: EventStore, short_m: float
 ) -> None:
-    # Only a run after a broken descent goes on from the measured pose (F1): with no seat to
-    # stop the plug, align and insert_scripted send CheatCode's 430 targets, each its z_offset
-    # above the port less the TCP-to-tip offset, even when the arm does not reach them (a run
-    # that started from the measured pose would start 1 mm higher). HOLDs, a target at the
-    # measured pose, are left out.
+    # Only a run after a broken descent, and align after its hold above the entrance (ADR 024),
+    # go on from the measured pose (F1): with no seat to stop the plug, align and
+    # insert_scripted send CheatCode's targets, each its z_offset above the port less the
+    # TCP-to-tip offset, even when the arm does not reach them (a run that started from the
+    # measured pose would start 1 mm higher). With the arm on its targets the hold commands the
+    # target last sent again, so all 430 are CheatCode's; with the arm 1 mm short, those down to
+    # the hold point and insertion's are, and the hold and the rest of align go on from the arm
+    # (`test_the_hold_stops_an_arm_that_trails_its_targets_above_the_entrance`). HOLDs, a target
+    # at the measured pose, are left out, and repeats within float error count once.
     node = _FallsShort(task=TASK, seat_height_m=None, short_m=short_m)
 
     assert run_goal(node, TASK, store) is False
 
     sent = zip(node.tcp_at_send, node.sent, strict=True)
     z = [m.position_m[2] for at, m in sent if m.mode == "position" and m.position_m != at.position]
-    moved = [b for a, b in itertools.pairwise([None, *z]) if b != a]
+    moved = [b for a, b in itertools.pairwise([None, *z]) if a is None or abs(b - a) > 1e-12]
     align, insert = descent_offsets()
     expected = [PORT.position[2] + off - PLUG_BELOW_TCP_M for off in [*align, *insert]]
     start = next(i for i, v in enumerate(moved) if abs(v - expected[0]) < 1e-9)
-    assert moved[start : start + len(expected)] == pytest.approx(expected, abs=1e-9)
+    descent = moved[start:]
+    if short_m == 0.0:
+        assert descent == pytest.approx(expected, abs=1e-9)
+        return
+    # The tip hangs 40 mm under the TCP, so with CheatCode's quirk it is 80 mm under each
+    # z_offset, here 1 mm higher. Align checks the height each offset reached before it sends
+    # the next, so it sends those that leave the tip above 48.8 mm and the first that does not.
+    hold_at_m = SFP.hold_at_mm / 1000
+    before = 1 + sum(1 for off in align if off - 2 * PLUG_BELOW_TCP_M + short_m > hold_at_m)
+    assert descent[:before] == pytest.approx(expected[:before], abs=1e-9)
+    assert descent[-len(insert) :] == pytest.approx(expected[-len(insert) :], abs=1e-9)
 
 
 def test_a_plug_jammed_at_the_sc_entrance_during_insertion_is_still_insert_stuck(
@@ -717,6 +731,63 @@ def test_the_hold_above_the_entrance_ends_after_its_limit_and_the_descent_goes_o
     assert detail["entry_held_s"] == pytest.approx(ENTRY_HOLD_S)
     assert detail["entry_converged"] is False
     assert isinstance(detail["entry_xy_mm"], float) and detail["entry_xy_mm"] >= ENTRY_XY_MM
+
+
+@dataclass
+class _TrailsItsTargets(_OffAxisNearTheEntrance):
+    """As `_OffAxisNearTheEntrance`, on an arm whose height has momentum: each position target
+    moves it by `gain` of its distance to the target's height plus `carry` of its last move.
+    In a steady descent of 0.5 mm a step it trails its target by 0.5 x (1 - carry) / gain mm,
+    6.25 mm by default, as the sim's arm did (6-7 mm, #73's first clean run), and once the
+    targets stop it goes on down about 0.5 mm before it comes back. XY follows each target
+    exactly."""
+
+    gain: float = 0.04
+    carry: float = 0.5
+    _moved_m: float = 0.0
+
+    def send(self, motion: MotionCommand) -> None:
+        before = self.tcp.position
+        super().send(motion)
+        if motion.mode == "position":
+            x, y, z = self.tcp.position
+            self._moved_m = self.gain * (z - before[2]) + self.carry * self._moved_m
+            height = before[2] + self._moved_m
+            self.tcp = Pose(position=(x, y, height), orientation=motion.orientation)
+
+
+def test_the_hold_stops_an_arm_that_trails_its_targets_above_the_entrance(
+    store: EventStore,
+) -> None:
+    # The SC plug meets the hold point (16.64 mm) with its arm 6.25 mm above the target last
+    # sent. Holding that target would let the arm slide on into the port while XY converges;
+    # the hold commands where the arm is when it stops, once, so the plug stays above the
+    # entrance (13.64 mm) after the arm's overshoot, and the descent then goes on from there,
+    # 0.5 mm a step. A hold that measured the arm again at every sample would follow the
+    # overshoot down and send no target twice.
+    node = _TrailsItsTargets(task=SC_TASK, seat_height_m=0.00007, low_m=0.010, high_m=0.0175)
+    sc = PORT_PROFILES["sc"]
+
+    assert run_goal(node, SC_TASK, store) is True
+
+    (detail,) = _align_detail(store)
+    start, end = detail["entry_start_mm"], detail["entry_height_mm"]
+    assert isinstance(start, float) and isinstance(end, float)
+    assert sc.hold_at_mm - 0.6 < start <= sc.hold_at_mm
+    assert detail["entry_held_s"] >= 0.05 * ENTRY_SAMPLES  # it held while XY converged
+    assert start - 1.0 < end <= start and end > sc.entrance_mm
+    sent = zip(node.tcp_at_send, node.sent, strict=True)
+    z = [
+        m.position_m[2]
+        for at, m in sent
+        if m.mode == "position" and at.position[2] - PLUG_BELOW_TCP_M - PORT.position[2] < 0.1
+    ]
+    # The first repeated target is the hold's (align's wait at 10 mm and insertion's settle
+    # come later); the target after the hold's last is one 0.5 mm step under it.
+    held = next(k for k, (a, b) in enumerate(itertools.pairwise(z)) if abs(b - a) < 1e-12)
+    last = next(k for k in range(held, len(z) - 1) if abs(z[k + 1] - z[k]) >= 1e-12)
+    assert last - held + 1 >= ENTRY_SAMPLES - 1
+    assert z[last + 1] - z[last] == pytest.approx(-DESCENT_STEP_M, abs=1e-9)
 
 
 def test_the_holds_limit_is_on_the_runs_clock_not_a_count_of_steps(store: EventStore) -> None:
