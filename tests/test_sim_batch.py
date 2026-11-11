@@ -719,6 +719,29 @@ def test_a_failed_dump_is_reported_and_the_container_still_stopped(tmp_path: Pat
     assert runner.calls[-1][-4:] == ["stop", "-r", "--yes", "aic_eval"]
 
 
+def test_the_dumps_container_stop_ignores_a_second_signal(tmp_path: Path) -> None:
+    seen: list[object] = []
+
+    class _Watching(FakeRunner):
+        def call(self, argv: list[str], *, timeout_s: float) -> int:
+            if "stop" in argv:
+                seen.append(signal.getsignal(signal.SIGTERM))
+            return super().call(argv, timeout_s=timeout_s)
+
+    p = plan(tmp_path, n_units=1)
+    before = signal.getsignal(signal.SIGTERM)
+    dump_bags(
+        p,
+        _Watching(log_of={}),
+        script=tmp_path / "s.py",
+        ros_setup=tmp_path / "r",
+        out_dir=tmp_path / "b",
+    )
+
+    assert seen == [signal.SIG_IGN]
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
 def test_dump_paths_the_command_cannot_carry_are_refused(tmp_path: Path) -> None:
     p = plan(tmp_path, n_units=2)
     (p.results_dir / "bag_trial_1_a;b").mkdir(parents=True)

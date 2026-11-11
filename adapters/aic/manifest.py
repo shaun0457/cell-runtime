@@ -123,8 +123,9 @@ class Manifest(_Strict):
     def lookup(self, task_id: str, task: Mapping[str, Any] | None = None) -> Placement:
         """The goal's placement; ManifestError(TASK_NOT_IN_MANIFEST) for an unknown task id.
         Given the goal's `task` fields, also ManifestError(TASK_MISMATCH) when any of
-        `TASK_FIELDS` differs from the scene's task: a stale manifest that reuses a task id must
-        not put its digest on a run of another scene (ADR 027)."""
+        `TASK_FIELDS` differs from the scene's task: a stale manifest that reuses a task id for
+        another task cannot put its digest on the run. One that reuses it for another scene with
+        the same task is not caught here; the runner rules it out (ADR 027, ADR 028)."""
         unit = self.units.get(task_id)
         if unit is None:
             raise ManifestError(TASK_NOT_IN_MANIFEST)

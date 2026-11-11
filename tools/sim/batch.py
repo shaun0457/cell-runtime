@@ -506,7 +506,8 @@ def dump_bags(
             ok = runner.call(argv, timeout_s=BAG_DUMP_TIMEOUT_S) == 0
             results[trial_id] = "ok" if ok else "dump_failed"
     finally:
-        runner.call([*_DBX, "stop", "-r", "--yes", CONTAINER], timeout_s=CALL_TIMEOUT_S)
+        with _signals_held():  # the dump restarted the container: stop it whatever comes
+            runner.call([*_DBX, "stop", "-r", "--yes", CONTAINER], timeout_s=CALL_TIMEOUT_S)
     return results
 
 
