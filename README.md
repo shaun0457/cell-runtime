@@ -1,8 +1,71 @@
 # cell-runtime
 
 An agent runtime for a robotic work cell: it makes a cable-insertion robot know when it has
-failed and recover, and it measures how much that recovery is worth. See `CLAUDE.md` for the
-design and `docs/decisions/` for the decision records.
+failed and recover, and it measures how much that recovery is worth.
+
+## The problem
+
+A scripted insertion that misses the port goes on pushing, or reports success with the plug
+on the rim. A cell that runs unattended needs three things on top of its skills. It has to
+notice a failure and name it. It needs a recovery for the failures it knows. And it needs a way
+to handle one it has never seen without letting a slow, untrusted model drive the arm. The
+project builds that layer for the cable-insertion cell of the
+[AI for Industry Challenge](https://github.com/intrinsic-dev/aic) (Gazebo, UR5e, ROS 2), and
+measures it. The robot policies are reused as they are; nothing is trained.
+
+## How it is built
+
+```
+LLM planner      failures the Monitor cannot classify; its answer is validated before it runs
+    |
+BT executor      py_trees; retry, re-align, fall back to another skill (settings A, B, C)
+    |
+Skills           approach / align / insert_scripted / insert_act / verify / retract
+    |
+World            mock world (any laptop)  |  AIC Gazebo through adapters/aic
+
+Monitor          force, progress, timeout -> a failure class           (reads world signals)
+Runtime          append-only event log (SQLite); state is a fold over it; replay and traces
+Eval harness     scenarios and injected faults -> metrics table         (reads the event log)
+```
+
+- **Known failures are handled deterministically.** The Monitor classifies a failure, and the
+  Behavior Tree's recovery table handles a known class. Only UNKNOWN goes to a planner.
+- **Everything is an event.** Every step is recorded; any run can be replayed, traced, and its
+  state rebuilt at any step.
+- **The core is ROS-free.** `cellrt/` imports nothing from ROS. ROS and AIC live in
+  `adapters/aic/`, so the core runs and is tested on Windows and Linux.
+- **Model output is untrusted.** An answer is checked against a schema and the skill registry;
+  an invalid one is an event, not a crash. Each call has a token cap and a deadline, each eval
+  or policy process a cap on calls. In the sim the arm holds while the model thinks (the mock's
+  clock stops instead).
+
+Settings: **A** stops at the first failure, **B** adds Behavior Tree recovery for known
+classes, **C** adds a planner for UNKNOWN (rules, or a model on NVIDIA NIM). `CLAUDE.md` has
+the design, and `docs/decisions/` the decision records.
+
+## Results in three numbers
+
+1. **Mock eval, two UNKNOWN faults we designed:** the model planner reached 62.2% task success
+   (56.7-66.7% over three repeats). That beats Behavior Tree recovery alone at 33.3%, but not a
+   hand-written rule planner at 66.7%. At 1024 tokens about 1 call in 4 gave no usable answer
+   (empty, or cut at the deadline); each was recorded as an event, and nothing ran from it.
+   [`docs/phase3-llm-results.md`](docs/phase3-llm-results.md)
+2. **The AIC sim, no faults:** three clean runs of the sample config on the merged code passed
+   3/3, 3/3 and 2/3 tasks (an earlier version of align's stop failed SC once before them): SFP 6 of 6, SC 2 of 3, each seated plug scoring 75 with the AIC scorer. The runtime's
+   verdicts and the scorer's agree on every task of that session.
+   [`docs/sim-results.md`](docs/sim-results.md)
+3. **The AIC sim, an unknown fault:** a command dropout the runtime cannot see stalls the
+   insertion, and the Monitor calls it UNKNOWN. The rule planner has no rule and aborts in
+   0.05 s. With 4096 tokens the model answered `retry` in 3 of 4 runs, and each retry seated
+   the plug (75); in each of those the dropout had already ended during the model's call, which
+   it cannot know. The fourth time it escalated to a human, with a reason. The first sim retry,
+   in #61, threw the plug 12 mm down in 0.15 s; the runtime now takes the descent up from where
+   the arm is measured. [`docs/sim-results.md`](docs/sim-results.md)
+
+Every sim result uses ground-truth poses in place of perception (oracle mode, ADR 015), which
+AIC's own evaluation does not allow. Large-N numbers come from the mock; the sim runs are a
+small confirmation set.
 
 ## How to run
 
@@ -258,6 +321,31 @@ for local development only. AIC's own evaluation launches the sim with `ground_t
 so those frames are never published there, and the challenge rules allow ground truth in
 training, not in evaluation (`docker/docker-compose.yaml:9` and `docs/challenge_rules.md:31` in
 the AIC repository).
+
+## Known limits
+
+- **Oracle geometry.** The skills read poses from the sim's ground truth; no perception.
+- **The SC plug can stick on the port's entrance rim** (1 of 3 clean runs). Align's stop above
+  the entrance (ADR 024) does not hold the arm there in the sim: it sinks 3-5 mm while held,
+  and why was not read from the controller.
+- **The faults are ours.** Every UNKNOWN in the results was designed: two mock faults and a
+  command dropout in the sim. Real unknowns may not look like them.
+- **The sim results are small.** There are a few engine runs per setting. The model's answer to
+  the same fault varies from run to run.
+- **The model has not beaten the rule planner** on the mock faults. Where no rule exists, it
+  answers, and its answer is validated before anything runs. The sim has not yet shown it doing
+  better than a retry would.
+- **Open findings:** #69 (task-plan bookkeeping and the CLI) and #71 (a goal that started
+  beside the task board after a home reset).
+
+## Next
+
+- **Phase 2:** an A/B/C eval in the sim with injected faults, reconciled with the AIC score
+  (draft in PR #42, not merged).
+- **Forking a run** from step N. `state_at` already rebuilds the state at any step.
+- **ACT as `insert_act`** in the sim (the policy is reused, not retrained).
+- **Setting D:** the model writes a short program of bounded motion primitives, checked before
+  it runs ([ADR 025](docs/decisions/025-llm-primitive-program.md), proposed, not built).
 
 ## License
 
