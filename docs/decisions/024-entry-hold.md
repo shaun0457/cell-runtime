@@ -135,10 +135,14 @@ Option B.
 - The thresholds and the bands are measured values for two port types. A third type needs
   measuring first (`port_profile` refuses it).
 - A plug that stops in the bore (about 5.15 mm, 2 of 13 runs) is not addressed.
-- Only align stops. A recovery that runs insert_scripted again without align (a retry) goes
-  through the entrance without stopping, as before this change.
+- Only align stops. A descent that crosses the stop inside insert_scripted goes through the
+  entrance without stopping, as before this change: a recovery that reruns insert_scripted
+  without align (a retry, or the slow rerun after a FORCE_LIMIT in insertion), or an SC goal
+  whose plug a dropout holds above the stop until align ends.
 - The stop commands the z_offset last sent, as the rest of the descent does. While every
   command arrives, that is where the arm is. After a command dropout during align it can be
-  below the arm, so the stop may then sit at or under the entrance. The planned sim runs
-  inject the dropout on an SFP goal at 20 mm, under the SFP stop (48.8 mm), so they do not
-  meet this.
+  below the arm, so the stop may then sit at or under the entrance.
+- Both limits meet the dropout fault only on an SC goal: its 20 mm onset is above the SC stop
+  (16.64 mm) and under the SFP stop (48.8 mm). The runbook's Phase 3 command injects it on
+  every goal, as #61 did; the runs planned right after this change inject it on goal 1, an
+  SFP goal, only.
