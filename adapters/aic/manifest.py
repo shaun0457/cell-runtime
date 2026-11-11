@@ -2,9 +2,12 @@
 
 aic_engine passes one field of our engine config through to the policy: the task id, the key of
 the trial's `tasks:` block (aic_engine.cpp:224-248). The batch runner writes every task id as
-`<scene id>_r<k>`, unique across manifests, and a manifest maps it to its scene, its repeat k
-(the run's seed) and the scene's digest. `RuntimePolicy` reads the manifest that
-`CELLRT_MANIFEST` names, once, and names each goal's unit from it instead of counting goals.
+`<scene id>_r<k>`, and a manifest maps it to its scene, its repeat k (the run's seed) and the
+scene's digest. `RuntimePolicy` reads the manifest that `CELLRT_MANIFEST` names, once, and
+names each goal's unit from it instead of counting goals. A goal whose task differs from its
+scene's is refused, but a manifest that reuses a scene id for another scene with the same
+task is not caught here: the runner renders the engine config from the very manifest it
+names in `CELLRT_MANIFEST` (ADR 028), so the two cannot disagree.
 
 A manifest is read strictly and with bounds (`MAX_BYTES`, `MAX_UNITS`): every field is checked,
 each scene's digest must match its trial, and each task id must name its scene and repeat. A

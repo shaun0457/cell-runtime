@@ -70,7 +70,7 @@ _TILT_EPS = 1e-12
 
 class EngineConfigError(ValueError):
     """An engine config, template or scene we would not hand to aic_engine. The message names
-    the key path; every value in it is our own."""
+    the key path, which can hold a key read from the file; it never holds a value."""
 
 
 class Scene(BaseModel):
@@ -169,8 +169,10 @@ def read_bounded(path: Path, limit: int = MAX_CONFIG_BYTES) -> str:
 
 
 def write_yaml(path: Path, data: Mapping[str, Any]) -> None:
-    """Sorted keys and LF line endings, so the same config is the same file on every OS."""
-    text = yaml.safe_dump(_plain(data), sort_keys=True, default_flow_style=False)
+    """Keys in the order given and LF line endings, so the same config is the same file on every
+    OS. Never sorted: aic_engine runs the trials in file order (aic_engine.cpp:410-416), and a
+    sort would put trial_10 before trial_2."""
+    text = yaml.safe_dump(_plain(data), sort_keys=False, default_flow_style=False)
     path.write_text(text, encoding="utf-8", newline="\n")
 
 

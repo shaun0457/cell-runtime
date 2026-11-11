@@ -30,7 +30,9 @@ TEMPLATE = Path(__file__).parent.parent / "eval" / "sim" / "engine_template.yaml
 TARGET = "nic_card_mount_0/sfp_port_0"
 
 
-def _setup(tmp_path: Path, *, inserted: str | None, run: bool = True) -> dict[str, Path]:
+def _setup(
+    tmp_path: Path, *, inserted: str | None, run: bool = True, dump: bool = True, attempts: int = 1
+) -> dict[str, Path]:
     sample = yaml.safe_load((FIXTURES / "sample_config.yaml").read_text("utf-8"))
     scene = scene_from_trial("nominal_sfp", "nominal", sample["trials"]["trial_1"])
     manifest = tmp_path / "manifest.json"
@@ -39,7 +41,7 @@ def _setup(tmp_path: Path, *, inserted: str | None, run: bool = True) -> dict[st
     config.write_text(yaml.safe_dump(engine_config([(scene, 0)], load_template(TEMPLATE))), "utf-8")
     store = tmp_path / "store.sqlite"
     with EventStore(store) as s:
-        if run:
+        for _ in range(attempts if run else 0):
             task = Task(id="nominal_sfp_r0", time_limit=180.0)
             run_goal(
                 FakeNode(task=task),
@@ -51,10 +53,10 @@ def _setup(tmp_path: Path, *, inserted: str | None, run: bool = True) -> dict[st
             )
     bags = tmp_path / "bags"
     bags.mkdir()
-    if inserted is not None:
-        dump = {"version": 1, "insertions": [{"recv_ns": 5, "port": inserted}]}
-        dump |= {"contacts": [], "pairs": []}
-        (bags / "trial_1.json").write_text(json.dumps(dump), "utf-8")
+    if dump:
+        events = [] if inserted is None else [{"recv_ns": 5, "port": inserted}]
+        content = {"version": 1, "insertions": events, "contacts": [], "pairs": []}
+        (bags / "trial_1.json").write_text(json.dumps(content), "utf-8")
     return {"store": store, "config": config, "manifest": manifest, "bags": bags}
 
 
@@ -84,8 +86,25 @@ def test_a_run_the_scorer_saw_inserted_agrees(tmp_path: Path) -> None:
 def test_a_success_the_scorer_did_not_see_disagrees(tmp_path: Path) -> None:
     (row,) = _rows(_setup(tmp_path, inserted=None))
 
-    assert row.inserted is None
+    assert row.dumped and row.inserted is None
     assert row.agrees is False
+
+
+def test_a_trial_without_its_bag_dump_has_no_referee_data_to_compare(tmp_path: Path) -> None:
+    # A lost bag says nothing about the plug: neither "agrees" nor "disagrees".
+    (row,) = _rows(_setup(tmp_path, inserted=None, dump=False))
+
+    assert row.outcome == "success"
+    assert not row.dumped and row.inserted is None
+    assert row.agrees is None
+
+
+def test_a_store_with_two_finished_attempts_of_a_unit_is_refused(tmp_path: Path) -> None:
+    # Which engine run made which attempt is not recorded until #81: never guess.
+    paths = _setup(tmp_path, inserted=TARGET, attempts=2)
+
+    with pytest.raises(ReportInputError, match="more than one finished attempt"):
+        _rows(paths)
 
 
 def test_an_insertion_into_another_port_does_not_count(tmp_path: Path) -> None:
@@ -161,10 +180,18 @@ def test_an_input_over_its_bound_is_refused(tmp_path: Path) -> None:
 
 
 def test_rows_print_as_a_table_with_a_dash_for_what_is_missing(tmp_path: Path) -> None:
-    rows = _rows(_setup(tmp_path, inserted=None))
+    rows = _rows(_setup(tmp_path, inserted=None, dump=False))
 
     text = format_rows(rows)
 
     header, rule, line = text.splitlines()
     assert header.startswith("| trial ") and set(rule) <= {"|", "-", " "}
-    assert "trial_1" in line and "nominal_sfp_r0" in line and "| - |" in line
+    assert "trial_1" in line and "nominal_sfp_r0" in line
+    assert line.endswith("| - |")  # no bag dump: no agreement either way
+    assert "| none |" not in line
+
+
+def test_a_dump_without_an_insertion_prints_none_not_a_dash(tmp_path: Path) -> None:
+    (line,) = format_rows(_rows(_setup(tmp_path, inserted=None))).splitlines()[2:]
+
+    assert "| none |" in line and line.endswith("| no |")

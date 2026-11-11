@@ -28,6 +28,7 @@ from tools.sim.scenes import (
     read_bounded,
     scene_from_trial,
     validate_engine_config,
+    write_yaml,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sim"
@@ -37,6 +38,22 @@ TEMPLATE = REPO / "eval" / "sim" / "engine_template.yaml"
 
 def _sample() -> dict[str, Any]:
     return yaml.safe_load((FIXTURES / "sample_config.yaml").read_text("utf-8"))
+
+
+def test_a_written_config_keeps_its_trials_in_run_order(tmp_path: Path) -> None:
+    # aic_engine runs the trials in file order (aic_engine.cpp:410-416): sorted keys would put
+    # trial_10 before trial_2 and run the units out of the order the runner charges them in.
+    scene = scene_from_trial("nominal_sfp", "nominal", _sample()["trials"]["trial_1"])
+    path = tmp_path / "engine.yaml"
+
+    write_yaml(path, engine_config([(scene, k) for k in range(11)], load_template(TEMPLATE)))
+
+    trials = yaml.safe_load(path.read_text("utf-8"))["trials"]
+    assert list(trials) == [f"trial_{n}" for n in range(1, 12)]
+    assert [next(iter(t["tasks"])) for t in trials.values()] == [
+        f"nominal_sfp_r{k}" for k in range(11)
+    ]
+    assert b"\r\n" not in path.read_bytes()  # LF on every OS
 
 
 def _drop(config: dict[str, Any], path: str) -> None:

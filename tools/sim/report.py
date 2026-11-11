@@ -5,8 +5,13 @@ the scorer's `scoring.yaml` entry, and the last insertion event of the trial's b
 scorer stores each one it receives, so the last one counts, `ScoringTier2.cc:444-447`). The
 port name is read as the scorer reads it: split on `/`, empty parts dropped, the first two
 parts the target module and the port (`:815-832`), so a leading `/` does not matter. A row
-agrees when our outcome and the scorer's insertion into the target port say the same thing.
-Every file read has a size bound.
+agrees when our outcome and the scorer's insertion into the target port say the same thing; a
+trial without a finished run or without its bag dump has no referee data to compare, so it
+neither agrees nor disagrees. Every file read has a size bound.
+
+The store must hold at most one finished attempt per unit: one engine run per store, as the
+tracer writes it. Joining a unit's attempts to the engine run that made each one comes with the
+full runner (#81); until then a second finished attempt is refused, never guessed at.
 
     python -m tools.sim.report --store S --config C --manifest M --scoring Y --bags DIR --setting A
 """
@@ -45,6 +50,7 @@ class TrialRow:
     run_id: str | None
     outcome: str | None
     verdicts: int
+    dumped: bool  # the trial's bag dump exists: the referee's insertion data
     inserted: str | None  # the port name of the last insertion event, as the bag holds it
     target: str  # <target module>/<port>
     tier3: float | None
@@ -60,8 +66,9 @@ class TrialRow:
 
     @property
     def agrees(self) -> bool | None:
-        """None without a run; else whether our outcome matches an insertion into the target."""
-        if self.outcome is None:
+        """None without a finished run or without the bag dump; else whether our outcome
+        matches an insertion into the target."""
+        if self.outcome is None or not self.dumped:
             return None
         return (self.outcome == "success") == self.into_target
 
@@ -97,7 +104,9 @@ def trial_rows(
                 if (r.scenario_id, r.seed, r.setting) == (placed.scenario_id, placed.seed, setting)
                 and r.finished
             ]
-            run = min(finished, key=lambda r: r.attempt) if finished else None
+            if len(finished) > 1:  # which engine run made which is not recorded yet (#81)
+                raise ReportInputError("store: a unit has more than one finished attempt")
+            run = finished[0] if finished else None
             outcome, verdicts = None, 0
             if run is not None:
                 for event in events.events(run.run_id):
@@ -107,6 +116,7 @@ def trial_rows(
                         case RunFinished(outcome=end):
                             outcome = end
             score = scores.get(trial_id) if isinstance(scores, dict) else None
+            dumped, inserted = _last_insertion(bags / f"{trial_id}.json")
             rows.append(
                 TrialRow(
                     trial_id=trial_id,
@@ -114,7 +124,8 @@ def trial_rows(
                     run_id=None if run is None else run.run_id,
                     outcome=outcome,
                     verdicts=verdicts,
-                    inserted=_last_insertion(bags / f"{trial_id}.json"),
+                    dumped=dumped,
+                    inserted=inserted,
                     target=f"{task['target_module_name']}/{task['port_name']}",
                     tier3=_tier(score, "tier_3"),
                     total=_total(score),
@@ -133,7 +144,7 @@ def format_rows(rows: Sequence[TrialRow]) -> str:
             r.run_id,
             r.outcome,
             r.verdicts,
-            r.inserted,
+            r.inserted if r.inserted is not None or not r.dumped else "none",
             r.target,
             r.tier3,
             None if r.total is None else round(r.total, 2),
@@ -162,14 +173,15 @@ def _yaml(path: Path, what: str) -> Any:
         raise ReportInputError(f"{what}: not YAML") from None
 
 
-def _last_insertion(path: Path) -> str | None:
+def _last_insertion(path: Path) -> tuple[bool, str | None]:
+    """Whether the bag dump exists, and the port of its last insertion event (None: none)."""
     if not path.exists():
-        return None
+        return False, None
     raw = _read(path, MAX_BAG_JSON_BYTES, "bag dump")  # its own refusal, not "not a bag dump"
     try:
         dump = json.loads(raw)
         insertions = dump["insertions"]
-        return str(insertions[-1]["port"]) if insertions else None
+        return True, (str(insertions[-1]["port"]) if insertions else None)
     except (ValueError, KeyError, TypeError, IndexError):
         raise ReportInputError("bag dump: not a bag dump") from None
 
