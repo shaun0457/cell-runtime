@@ -13,7 +13,7 @@ and what is out of scope on purpose. Phase specs and tickets are cut from the br
 | 1 | The same runtime drives the real AIC interface | the 3 sample-config tasks succeed end to end with no faults in a recorded, replayable run, and the rate over three clean runs is recorded (revised 2026-11-11, below) | laptop (adapter, fakes) + GCP VM (on-demand) | done (#73): 2 of the 3 clean runs with the merged hold (`0014a07`) seated all three plugs; SFP 6/6, SC 2/3. `cellrt replay` was not run on these sessions (`sim-results.md`) |
 | 2 | What recovery is worth, measured in the sim | A/B/C eval in Gazebo with injected faults, reconciled with the AIC score; B and C may show no gain | Spot VM | not started as a phase; draft in PR #42 (not merged), open decisions: #13. An injected dropout already ran A, B and C in Gazebo once, for Phase 3's triage (#60, #61) |
 | 3 | The LLM planner | LLM triage and task-to-tree generation pass the same validation gate; UNKNOWN promotion validated by replay | laptop + on-demand VM | mostly done; forking a run is open. Done: triage on the mock and in the sim, escalation, task-to-tree, UNKNOWN promotion (`phase3-*-results.md`, `sim-results.md`); open decisions: #14 |
-| 4 | Report and demo | eval report, README, demo video | laptop | in progress: demo video composed (kept outside the repository); README next |
+| 4 | Report and demo | eval report, README, demo video | laptop | in progress: demo video composed (kept outside the repository); README rewritten around the problem, design and three results; eval report next |
 
 Phase 1's criterion was revised when it closed. It first read "the 3 sample-config tasks succeed
 end to end with no faults, recorded and replayable", which can be read two ways:

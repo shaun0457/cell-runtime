@@ -54,8 +54,9 @@ Constraints:
 - The default must add no config part and no event to any run, so the committed baseline and
   #52's results read the same (ADR 010); the `code` part changes with any source edit, as for
   every change.
-- Same scenario and seed give the same result in mock mode (principle 5): replay reads the
-  plan from the log.
+- Same scenario and seed give the same result in mock mode with the scripted planners
+  (principle 5). With a model, replay reads the plan from the log, so a recorded run replays
+  the same, while a new eval asks the model again.
 
 ## Options
 
