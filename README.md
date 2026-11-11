@@ -192,7 +192,7 @@ uv run cellrt baseline eval/baselines/phase0-small.json            # check
 uv run cellrt baseline eval/baselines/phase0-small.json --write    # regenerate (A,B,C, 3 seeds, k 2)
 ```
 
-## The AIC cell (Phase 1, in progress)
+## The AIC cell (Phase 1)
 
 `adapters/aic/` runs the same runtime as an `aic_model` policy in the AIC simulation: launch
 the model with `policy:=adapters.aic.RuntimePolicy`, with cell-runtime installed in its

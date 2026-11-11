@@ -246,12 +246,16 @@ Phase goals, exit criteria and the capability map are in `docs/roadmap.md`. Phas
 cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
 
 - [x] Phase 0 — ROS-free runtime core + mock world + eval CLI
-- [ ] Phase 1 — AIC adapter and scripted skills; the 3 sample-config tasks end to end with no
-  faults, recorded and replayable (`docs/briefs/phase-1-aic-adapter.md`). The first sim run
-  (#28, `docs/phase1-run28-report.md`) did not reach 3/3: two seated plugs were judged stuck,
-  and the SC plug jams at the port entrance. Since #58 judges seating by height, the two SFP
-  tasks pass (scorer 75 each) in the clean runs of #61 and of its rerun; the SC jam is open
-  (`docs/sim-results.md`).
+- [x] Phase 1 — AIC adapter and scripted skills; a recorded, replayable run in which the 3
+  sample-config tasks succeed end to end with no faults, plus the rate over three clean runs
+  (criterion revised at the close, `docs/roadmap.md`; `docs/briefs/phase-1-aic-adapter.md`
+  keeps the first wording). The first sim run
+  (#28, `docs/phase1-run28-report.md`) did not reach 3/3. #58 judges seating by height, and
+  #73 adds align's entry hold above the port (ADR 024) and per-port seated bands. Three clean
+  runs with #73's merged hold (`0014a07`) went 3/3, 3/3 and 2/3 (SFP 6/6, SC 2/3, scorer 75
+  per seated plug; `cellrt replay` not run on them). The SC
+  plug sticking on the entrance rim is a known limit (`docs/sim-results.md`,
+  `docs/roadmap.md`).
 - [ ] Phase 2 — to be revised after #28 (the draft is PR #42, not merged): a cost-capped fault
   discovery, then a small A/B/C eval in Gazebo reconciled with the AIC score; ACT as
   `insert_act` optional
@@ -263,6 +267,7 @@ cut from `docs/briefs/`; open questions per phase are issues #12, #13 and #14.
   in the sim. Open: forking a run. A VLM check of "is the plug seated" is allowed as an
   experiment (ADR 015) but not planned: perception and VLMs are out of scope
   (`docs/roadmap.md`).
-- [ ] Phase 4 — eval report, README, demo video
+- [ ] Phase 4 — eval report, README, demo video. A demo of the Phase 1 close runs (C-rule
+  abort against C-LLM escalation, overview camera) is composed and kept outside the repository
 
 The re-plan after #28, and the review that shaped it: `docs/reviews/2026-11-09-plan-grill.md`.

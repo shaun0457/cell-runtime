@@ -195,6 +195,82 @@ run; goal2 and goal3 raised no UNKNOWN. The scorer agrees with the runtime on 8 
   0.10-0.18 mm in each run; every plug 0.5 mm or more off stuck on the rim. That reading led to
   align's hold above the entrance (ADR 024).
 
+## Phase 1 close: clean runs with the entry hold (#73)
+
+These runs were made on 2026-11-11 with the same VM, image and engine config. The store is
+`simclose.sqlite` on the results disk, with these sessions:
+- `scclean`: clean A, attempts a1 to a4;
+- `scrule`: C-rule;
+- `scllm`: C-LLM, attempts a1 (C-LLM #1) and a2 (C-LLM #2), with `CELLRT_MAX_TOKENS=4096` and
+  `CELLRT_REASONING=default`.
+
+The fault runs inject #61's dropout on goal1 only (`"goals": [1]`). Attempt a1 of `scclean` ran
+the first version of the hold (code of `439e58b`), and every other run ran `0014a07`, the version
+merged in #73. The runtime and the scorer's `scoring.yaml` agree on all 21 tasks. The numbers
+were read from a copy of the store with read-only scripts. `cellrt replay` was not run on these
+sessions before the VM was stopped.
+
+| Goal | clean A a1 (`439e58b`) | clean A a2 | clean A a3 | clean A a4 |
+|---|---|---|---|---|
+| goal1 SFP | success, 75 | success, 75 | success, 75 | success, 75 |
+| goal2 SFP | success, 75 | success, 75 | success, 75 | success, 75 |
+| goal3 SC | INSERT_STUCK in the bore (5.15 mm), 1 | success, 75 | success, 75 | INSERT_STUCK on the rim (13.46 mm), 0 |
+
+- **Phase 1's criterion.** Two of the three clean runs with `0014a07` seated all three plugs. The
+  trial scores of a2 were 93.09, 93.36 and 93.10. Over the three runs, SFP seated 6 of 6 and SC
+  2 of 3. Goal3 carries no fault in the setting-C runs below, and seated there all three times,
+  so SC seated in 5 of 6 runs with this code.
+  - Read as "one recorded run passes all three", the first criterion is met.
+  - Read as "every clean run passes", the reading ADR 024's time box used, it is not met.
+  - The criterion as revised at the close keeps the first reading and adds the rate over
+    three clean runs, with no threshold (`docs/roadmap.md`).
+  - a1 is not in the rate. Counting it, 2 of 4 clean runs with a hold passed all three, and SC
+    seated in 2 of 4.
+- **The hold does not stop the plug above the entrance.** At the stop the arm is commanded to
+  stay at its measured z_offset, yet in 8 of the 9 stops it sank 3.1-5.1 mm over 1.9-3.0 s and
+  ended under the entrance. The two SC stops that sank went from 16.4-16.6 mm down to
+  11.7-12.0 mm. The SFP stops went from 48.3-48.8 mm down to 43.6-45.6 mm. So the plugs went through the entrance at
+  1-2.3 mm/s on average over the stop, against CheatCode's 10 mm/s, while XY was corrected.
+  Under a1's version, which held the target last sent, the stops sank 5.3-6.8 mm. Why the arm
+  sinks under a target at its own pose was not read from the controller (#73 review, F11).
+- **The SC failure is the one stop that ended above the entrance.** In a4 the plug was already
+  on the axis at the stop point. The hold ended after its two confirming samples (0.10 s, at
+  15.5 mm, 0.11 mm off), and align went on at full speed. At the first sample at or under
+  14 mm (ADR 024's measure) the plug was 0.36 mm off, and it stuck on the rim 0.70 mm off,
+  at 12.8 N. The two SC plugs that seated reached 14 mm during a slow stop, 0.32 and 0.91 mm
+  off the axis. At the entrance itself, the first sample at or under 13.64 mm, they were 0.35
+  and 0.97 mm off (the figure in ADR 024). The second is further off than any of the 4 earlier
+  runs that seated,
+  among the 13 on record (ADR 024's table). So "every plug 0.5 mm or more off stuck on the
+  rim", from those 13 runs, no longer holds once the slow stop is in. Three runs
+  do not show which part of the stop helps. They are the record, not a tuning set, and SC on
+  the rim stays a known limit.
+
+### The demo runs: C-rule and C-LLM, dropout on goal1
+
+| Goal | C-rule | C-LLM #1 | C-LLM #2 |
+|---|---|---|---|
+| goal1 SFP, dropout | UNKNOWN, abort, 0 | UNKNOWN, **escalate**, 0 | fault with no effect: success, 75 |
+| goal2 SFP | success, 75 | success, 75 | success, 75 |
+| goal3 SC | success, 75 | success, 75 | success, 75 |
+
+- **The same stall, two planners.** In the two runs where the dropout took effect, it began
+  during align, about 14-15 s in. About 1 s into `insert_scripted` the Monitor called UNKNOWN (`insert_stalled`;
+  0.09 and -0.05 mm of progress, 2.1 and 0.65 N).
+  - The rule planner has no rule for UNKNOWN in `insert_scripted`, and aborted 0.05 s later.
+  - The model answered after 28.2 s of wall time, with 1898 completion tokens and
+    `finish_reason: tool_calls`. Its answer was `escalate`, giving as its reason "stalled with
+    UNKNOWN failure class and negative progress (-0.048 mm)". It asked for a human to inspect
+    the tool, part and setup. The link came back at 29.0 s of sim time, during the call; the
+    model cannot know that.
+  - Escalation is not a recovery, so both runs score 0 on goal1.
+  - With this fault and the same budget, the model has now answered `retry` three times (the
+    4096-token rerun, each seated, 75) and `escalate` once.
+- **C-LLM #2's dropout had no effect.** It began at 16.25 s in align, and the plug went on down
+  to its seat. No UNKNOWN was raised and no model was called.
+- **Model calls: 1** in this session. The plan capped it at 4: the fault on goal1 only, and a
+  second C-LLM run only if the first made at most 2 calls.
+
 ## Media
 
 Recorded in the VM from the three wrist cameras (headless Gazebo) and composed with the event
@@ -215,6 +291,13 @@ reviewed:
   three runs were recorded.
 - `demo.mp4` (55 s, 1.2 MB, 2x): four title cards and three of these clips in order: #61's
   retry that jumped, the F1 rerun's retry that stepped down, and this rerun's.
+- From the Phase 1 close runs, with an overview camera added to the world at run time (a
+  `gz` create service call, 1280x720 at 10 Hz) beside the wrist camera:
+  - `demo_close.mp4` (48 s, 1.7 MB): four title cards, C-rule's goal1 abort and C-LLM #1's
+    goal1 escalation. The clips run at 10x through the motion and 2x around the hold, the
+    verdict and the decision, with the event log as captions.
+  - Poster frames of both decisions, and a contact sheet. The clean runs' wrist cameras were
+    recorded too (a1 and a2).
 
 ## Reproduce
 
@@ -223,8 +306,8 @@ variables (README, "The AIC cell"): `CELLRT_SETTING`, `CELLRT_PLANNER`, `CELLRT_
 `llm` the key in `NVIDIA_API_KEY`. Session names were `s61clean` (clean), `s61` (A, B, C-rule) and
 `s61llm` (C-LLM, attempts a1 and a2); in the rerun, `sf1clean` and `sf1llm` (attempts a1 to a3)
 in their own store; in the 4096-token rerun, `srllm` (attempts a1 to a3, with
-`CELLRT_MAX_TOKENS=4096` and `CELLRT_REASONING=default`) in a third. Inspect a run from a copy
-of the store:
+`CELLRT_MAX_TOKENS=4096` and `CELLRT_REASONING=default`) in a third; in the Phase 1 close runs,
+`scclean`, `scrule` and `scllm` in `simclose.sqlite`. Inspect a run from a copy of the store:
 
 ```bash
 cellrt replay s61llm/goal1/task_1/C/0/a1 --db sim61-copy.sqlite
