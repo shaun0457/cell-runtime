@@ -172,7 +172,8 @@ outcome (ADR 026), so they do not count here.
   takes the next unfinished units of its setting in that order, at most 6 (ADR 028), and
   skips the families the checkpoint did not select. When one setting has no unfinished units
   left, the other's remaining engine runs follow one another; a rerun can cause this.
-- C-LLM runs only on families where the pilot found an UNKNOWN verdict, with the same scenes and
+- C-LLM runs only on families where the pilot found an UNKNOWN verdict (the Monitor's class; an
+  unclassified skill failure is not one, ADR 026), with the same scenes and
   repeats, at most 50 model calls and 1 hour of VM time. Its engine runs come after A's and
   B's, its units in B's order. Where it does not run, the report shows
   B's UNKNOWN count on the same families. C differs from B only on UNKNOWN, so a count of zero
@@ -195,10 +196,16 @@ outcome (ADR 026), so they do not count here.
   1. A's and B's pooled trial-level Wilson intervals do not overlap;
   2. an exact two-sided sign test over the held-out scenes gives p < 0.05. A scene where B
      succeeded in more of its 3 repeats than A counts for B, one where it succeeded in fewer
-     counts for A, and ties are dropped.
+     counts for A, and ties are dropped. A repeat lost to infrastructure is left out (ADR 026),
+     so the scene goes to the setting with the higher success rate over its counted trials;
+     with all repeats counted, that is the same rule. A scene with no counted trial in one
+     setting is left out of the sign test; its counted trials in the other setting still
+     count in that setting's pooled interval.
 
   The same rule, the other way round, says A beat B. Otherwise the table reads "no detectable
-  gain at this n".
+  gain at this n". The report (`tools/sim/report.py`) prints the claim only for the held-out
+  manifest, and only when told the commit its engine runs must name; on the pilot and tuning
+  manifests the A/B table is descriptive and carries no claim.
 - **Per family, and C against B, the numbers are descriptive.** Their intervals are shown, and
   no gain is claimed from them.
 - **The budget:** tuning about 3.5 h (US$3.2); held-out about 6 h (US$5.4); C-LLM at most 1 h.

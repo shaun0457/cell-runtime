@@ -192,15 +192,20 @@ class:
 | 5 | False alarm | The trial's first verdict counts as a false alarm: inserted before it, or a late insertion |
 | 6 | Recovered | The first verdict counts as recovered |
 | 7 | Natural failure, known class | The first verdict is a real failure, of a known class |
-| 8 | Natural failure, UNKNOWN | The first verdict is a real failure, and UNKNOWN |
+| 8 | Natural failure, UNKNOWN | The first verdict is a real failure, and UNKNOWN: the class C-LLM acts on (D6). The AIC skills report no class of their own, so in the sim this is always the Monitor's |
+| 9 | Natural failure, unclassified | The first verdict is a real failure, from a skill's own failed result that carries no class: `verify`'s "not seated", or a skill that raised. No setting recovers it |
 
 - A verdict is a Monitor verdict or a skill's own failed result. "Inserted" means into the
   target port; a wrong-port insertion is not, and the report names it (ADR 029).
-- Classes 5-8 hold whatever the runtime's own outcome was. Where it disagrees with the scorer
+- Classes 5-9 hold whatever the runtime's own outcome was. Where it disagrees with the scorer
   (a failure reported on a seated plug), the reconciliation table shows it.
-- An A run that stopped at a verdict, with no insertion, is a natural failure marked
-  **unconfirmed**: A stopped, so nobody knows whether the plug would have gone in. The pilot's
-  false-alarm count is therefore a lower bound.
+- Class 9 is not UNKNOWN. D6 adds C-LLM where the pilot finds the Monitor's UNKNOWN; an
+  unclassified skill failure does not count towards it, since C differs from B only on UNKNOWN.
+- A real failure with no `recovery_started` after it is marked **unconfirmed**: nothing acted on
+  it, so nobody knows whether the plug would have gone in. In A this is every real failure. In
+  B and C it is any failure no recovery followed: a spent budget, a class with no recovery
+  (class 9; UNKNOWN in B), or, in C, a planner that aborted, escalated, timed out or was
+  refused. The false-alarm count is therefore a lower bound in every setting.
 - A scene whose two A trials fall in different classes is **mixed**.
 
 **Recording.** A scene is not an injected fault: no `fault_injected` event. Its digest is part

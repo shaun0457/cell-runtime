@@ -104,15 +104,20 @@ reported.
 5. If either pair is more than 1 s of wall time from the insertion, the mapping fails for that
    trial.
 
+**Which insertion event.** The scorer scores its last insertion event. When that one is into the
+target port, the time used is that of the first event into the target: from then on the plug
+was in, as far as the scorer can tell. An earlier time can only turn a verdict into a false
+alarm, so the choice counts against the Monitor, as ties do.
+
 **Counting**, for each verdict in a trial (a Monitor verdict, or a skill's own failed result) at
 run-clock time t:
 
 | The scorer | The verdict counts as |
 |---|---|
 | Inserted at or before t + τ | A **false alarm**. A tie within τ counts here, and ties are counted |
-| Inserted after t + τ, with a `recovery_started` after the verdict and before the insertion | **Recovered**: the verdict was right, and what came after it fixed the failure |
-| Inserted after t + τ, with no recovery in between | A **false alarm**, also counted as a **late insertion**: nothing acted on the verdict, and the plug went in anyway |
-| Never inserted, or inserted into the wrong port | A **real failure**. When A stopped at that verdict, it is marked **unconfirmed** |
+| Inserted after t + τ, with a `recovery_started` after the verdict and more than τ before the insertion | **Recovered**: the verdict was right, and what came after it fixed the failure |
+| Inserted after t + τ, with no such recovery | A **false alarm**, also counted as a **late insertion**: nothing acted on the verdict, and the plug went in anyway |
+| Never inserted, or inserted into the wrong port | A **real failure**. When no `recovery_started` follows the verdict, it is marked **unconfirmed** |
 
 - "Inserted" means into the target port, here and in ADR 026's classes. A wrong-port insertion
   is never "inserted", and the report names it.
@@ -120,12 +125,18 @@ run-clock time t:
   slides in during the hold. Without the rule, A would show recoveries it cannot make. Shaun
   decided on 2026-11-11 (gate review of this ADR, F1) to count it against the Monitor, like a
   tie. A scene whose A trial ends this way gets no B run in the pilot (D2).
-- **Unconfirmed.** A stops at its first verdict, so whether the plug would have gone in is never
-  observed when it did not. The false-alarm count is therefore a lower bound, and the report
-  says so.
+- **A recovery within τ of the insertion.** The insertion's time is known only to within τ, so a
+  recovery that starts less than τ before it may have started with the plug already in. It
+  does not count as the recovery: against the Monitor, as a tie is.
+- **Unconfirmed.** A run that stops at a verdict never shows whether the plug would have gone
+  in. A real failure with no `recovery_started` after it is marked unconfirmed, in every
+  setting. In A that is every real failure, since A stops at its first verdict. In B and C it
+  is any failure no recovery followed (ADR 026 lists the cases: a spent budget, a class with no
+  recovery, a planner that did not act). The false-alarm count is therefore a lower bound, and
+  the report says so.
 - **Fallback, when the time mapping fails** (D1): the trial is judged as a whole, by ADR 015's
   rule. Every verdict in a trial the scorer saw inserted counts as a false alarm; every verdict
-  in a trial it did not counts as a real failure, unconfirmed in A as above. This is
+  in a trial it did not counts as a real failure, unconfirmed as above. This is
   conservative against the Monitor: it counts a recovered verdict as a false alarm. The report
   lists every trial that fell back, and gives the false-alarm count with and without them.
 - **Trials with no verdict:**
