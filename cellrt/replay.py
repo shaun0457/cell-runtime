@@ -18,6 +18,7 @@ from cellrt.runtime.events import (
     PlannerPreempted,
     PlannerResponded,
     PlannerTimedOut,
+    PoseRecord,
     PreconditionFailed,
     PromotedStopped,
     RecoveryStarted,
@@ -31,6 +32,7 @@ from cellrt.runtime.events import (
     TaskPlanned,
     TaskPlanRejected,
     TaskPlanResponded,
+    WorldReady,
 )
 
 
@@ -45,6 +47,12 @@ def describe(event: Event) -> str:
     match event.payload:
         case RunStarted() as p:
             return f"{p.scenario_id} setting={p.setting} seed={p.seed} attempt={p.attempt}"
+        case WorldReady() as p:
+            origin = "?" if p.sim_origin_s is None else f"{p.sim_origin_s:.3f}s"
+            return (
+                f"sim_origin={origin} port={_position(p.port)} plug={_position(p.plug)} "
+                f"gripper={_position(p.gripper)}"
+            )
         case TaskPlanResponded() as p:
             tokens = f"{_count(p.prompt_tokens)}+{_count(p.completion_tokens)}"
             return (
@@ -131,6 +139,14 @@ def describe(event: Event) -> str:
 
 def _count(tokens: int | None) -> str:
     return "?" if tokens is None else str(tokens)
+
+
+def _position(pose: PoseRecord | None) -> str:
+    """A pose's position in metres, to 0.1 mm; "?" for a reading that was not finite."""
+    if pose is None:
+        return "?"
+    x, y, z = pose.position
+    return f"({x:.4f},{y:.4f},{z:.4f})m"
 
 
 def _reused(origin: str | None) -> str:

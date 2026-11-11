@@ -109,6 +109,9 @@ class AicWorld:
         try:
             self._check_goal()  # fail fast, before reading anything else
             self._sim_s = node.sim_now_s()
+            # Read before any wait, so it is the sim time at the run clock's 0: every wait from
+            # here on reaches the clock through `on_wait` or a step.
+            self.sim_origin_s: float = self._sim_s
             self._wait_until_ready(on_wait)
         except WorldStopped:
             raise
@@ -195,10 +198,18 @@ class AicWorld:
             if node.wall_now_s() - waited_from >= self._stall_wall_s:
                 raise WorldStopped("sim_clock_stalled")
             node.wall_sleep(self._poll_wall_s)
-        self._sim_s = now
+        self._sim_s = now  # the reads judge the wrench's freshness against it
         if read:
-            self._geometry = self._read_geometry()
-            self._signals = self._read_signals()
+            try:
+                self._geometry = self._read_geometry()
+                self._signals = self._read_signals()
+            except Exception:
+                # A read that stops the run (ground truth lost) never returns this step's time
+                # to the run's clock: the next wait (the stop confirmation's settle) measures
+                # from the step's start instead and carries it, which keeps `sim_origin_s` +
+                # run time equal to the sim time (ADR 029).
+                self._sim_s = start
+                raise
             if self._dropout is not None:
                 self._dropout.observe(now, self._signals.height_mm)
         return now - start
