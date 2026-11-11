@@ -205,7 +205,10 @@ config again gives new attempts of the same scenarios, so set a new `CELLRT_SESS
 other engine config: two configs under one session would share scenario ids and their runs
 could not be told apart. Goal N matches the config's N-th task only when the engine sent every
 goal before it (a trial it skips shifts the later ones). `cellrt replay` reads those
-runs like any other.
+runs like any other. Engine runs started by the Phase 2 batch runner (`tools/sim/batch.py`) also
+set `CELLRT_MANIFEST`: each goal's task id is then its own unit, `<manifest>/<scene id>` with the
+repeat as its seed (ADR 027), and nothing is counted. A goal whose task id is not in the
+manifest, or whose task differs from its scene's, is refused before the arm moves.
 
 By default (setting A) the policy runs CheatCode's two phases split into skills: `approach`, `align`
 (down to z_offset 0.01 with CheatCode's XY correction, stopping once where the arm is, 3 mm

@@ -6,6 +6,7 @@ only the exception type logged."""
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import types
 from collections.abc import Iterator
@@ -16,6 +17,13 @@ import pytest
 from aic_fakes import FakeNode
 
 from adapters.aic.faults import SPEC_REFUSED
+from adapters.aic.manifest import (
+    MANIFEST_INVALID,
+    TASK_FIELDS,
+    TASK_MISMATCH,
+    TASK_NOT_IN_MANIFEST,
+    scene_digest,
+)
 from cellrt.runtime.events import RunFinished
 from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
@@ -88,6 +96,7 @@ def policy_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[t
     monkeypatch.setenv("CELLRT_STORE", str(tmp_path / "store" / "aic.sqlite"))
     monkeypatch.delenv("CELLRT_SESSION", raising=False)
     monkeypatch.delenv("CELLRT_FAULT", raising=False)
+    monkeypatch.delenv("CELLRT_MANIFEST", raising=False)
     _Port.closed, _Port.fail_on_init, _Port.fail_on_close = 0, False, False
     module = importlib.import_module("adapters.aic.RuntimePolicy")
     yield module
@@ -255,6 +264,92 @@ def test_the_fault_goes_to_the_goals_cellrt_fault_names(
             if any(e.payload.type == "fault_injected" for e in store.events(r.run_id))
         ]
     assert faulted == ["aic/goal2/trial_1_task_1"]
+
+
+# --- units named by a manifest (ADR 027) ---------------------------------------------------------
+# With CELLRT_MANIFEST, the task id names the unit: the manifest maps it to its scene and repeat.
+
+SCENE_TASK = Task(id="nominal_sfp_r1", time_limit=180.0)
+
+
+def _manifest(
+    path: Path, task_ids: list[str], scene: str = "nominal_sfp", **task_change: object
+) -> Path:
+    task = {k: v for k, v in SCENE_TASK.model_dump(mode="json").items() if k in TASK_FIELDS}
+    task["time_limit"] = int(SCENE_TASK.time_limit)  # whole seconds, as in an engine config
+    trial = {"scene": {}, "task": {**task, **task_change}}
+    data = {
+        "name": "tracer-v1",
+        "version": 1,
+        "scenes": {scene: {"family": "nominal", "digest": scene_digest(trial), "trial": trial}},
+        "units": {t: {"scene": scene, "seed": int(t.rsplit("_r", 1)[1])} for t in task_ids},
+    }
+    path.write_text(json.dumps(data), "utf-8")
+    return path
+
+
+def test_a_manifest_names_each_goal_by_its_scene_and_repeat(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CELLRT_MANIFEST", str(_manifest(tmp_path / "m.json", ["nominal_sfp_r1"])))
+    policy = policy_module.RuntimePolicy(_Node())
+
+    assert policy.insert_cable(SCENE_TASK, None, None, None) is True
+
+    with EventStore(tmp_path / "store" / "aic.sqlite") as store:
+        (run,) = store.runs()
+    assert run.run_id == "tracer-v1/nominal_sfp/A/1/a1"
+
+
+def test_with_a_manifest_an_unknown_task_id_is_refused_before_the_arm_moves(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _manifest(tmp_path / "m.json", ["other_r0"], scene="other")
+    monkeypatch.setenv("CELLRT_MANIFEST", str(path))
+    node = _Node()
+
+    assert policy_module.RuntimePolicy(node).insert_cable(SCENE_TASK, None, None, None) is False
+
+    assert node.logger.errors == [f"cell-runtime goal refused: {TASK_NOT_IN_MANIFEST}"]
+    assert _Port.closed == 1
+    assert not (tmp_path / "store" / "aic.sqlite").exists()  # no run, so no command
+
+
+def test_with_a_manifest_a_task_that_differs_from_its_scene_is_refused(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _manifest(tmp_path / "m.json", ["nominal_sfp_r1"], port_name="sfp_port_1")
+    monkeypatch.setenv("CELLRT_MANIFEST", str(path))
+    node = _Node()
+
+    assert policy_module.RuntimePolicy(node).insert_cable(SCENE_TASK, None, None, None) is False
+
+    assert node.logger.errors == [f"cell-runtime goal refused: {TASK_MISMATCH}"]
+    assert not (tmp_path / "store" / "aic.sqlite").exists()
+
+
+def test_a_manifest_that_does_not_load_refuses_every_goal(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "m.json"
+    path.write_text('{"name": "sk-123"', "utf-8")
+    monkeypatch.setenv("CELLRT_MANIFEST", str(path))
+    node = _Node()
+    policy = policy_module.RuntimePolicy(node)
+
+    assert [policy.insert_cable(SCENE_TASK, None, None, None) for _ in range(2)] == [False] * 2
+    assert node.logger.errors == [f"cell-runtime goal refused: {MANIFEST_INVALID}"] * 2
+    assert not (tmp_path / "store" / "aic.sqlite").exists()
+
+
+def test_a_blank_manifest_variable_keeps_the_goal_counting(
+    policy_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CELLRT_MANIFEST", "  ")
+
+    assert _insert(policy_module, _Node()) is True
+
+    assert _units(tmp_path) == [("aic/goal1/trial_1_task_1", 1)]
 
 
 def test_a_bad_fault_refuses_every_goal_with_the_fixed_message(

@@ -2,12 +2,14 @@
 
 `RuntimePolicy.insert_cable` calls `run_goal` in aic_model's action thread. Each goal gets its
 own asyncio loop (`asyncio.run`), its own `SimClock` starting at 0 and its own run in the
-store: the setting asked for (A by default), seed 0, the next attempt number, and the scenario
-the caller names (by default the task id). `RuntimePolicy` names one per goal with
-`goal_scenario_id`: aic_engine sends no trial id, and in its sample config every trial's task
-is `task_1`, and it takes the setting, the planner and the model planner's token budget and
-reasoning from the environment (`policy_setup`), and the fault to inject, if any, from
-`CELLRT_FAULT` (`fault_setup`, #60).
+store: the setting asked for (A by default), the seed and the scenario the caller names (by
+default 0 and the task id), and the next attempt number. With a scene manifest
+(`CELLRT_MANIFEST`, `manifest_setup`, ADR 027), `RuntimePolicy` takes each goal's scenario,
+seed (the repeat) and scene digest from it; the digest joins the scenario part of the run's
+configuration. Without one it names a unit per goal with `goal_scenario_id`: aic_engine sends
+no trial id, and in its sample config every trial's task is `task_1`. It takes the setting, the
+planner and the model planner's token budget and reasoning from the environment
+(`policy_setup`), and the fault to inject, if any, from `CELLRT_FAULT` (`fault_setup`, #60).
 
 Settings B and C build the same trees as the mock, from the AIC skills plus a wait for the
 F/T sensor. The executor runs in `live` mode (ADR 020): the sim does not stop while a planner
@@ -32,6 +34,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import cast
 
 import py_trees
@@ -39,6 +42,7 @@ from py_trees.common import Status
 
 from adapters.aic.faults import FAULT_ENV, CommandDropout, FaultSpec, FaultSpecError
 from adapters.aic.feedback import FeedbackRecorder
+from adapters.aic.manifest import MANIFEST_ENV, Manifest, ManifestError, load_manifest
 from adapters.aic.node import NodePort
 from adapters.aic.skills import (
     SLOWEST_SCALE,
@@ -100,6 +104,7 @@ REASONING_ENV = "CELLRT_REASONING"
 _MAX_TOKENS = re.compile(r"[0-9]{1,5}")  # ASCII digits only, and short enough to read as an int
 PLANNER_WAIT: PlannerWait = "live"  # the sim does not stop while a planner thinks (ADR 020)
 SEED = 0
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 GEOMETRY_SOURCE = "ground_truth"
 HOLD_SPEED_MM_S = 5.0
 HOLD_SAMPLES = 3
@@ -171,6 +176,19 @@ def fault_setup(environ: Mapping[str, str]) -> FaultSpec | None:
         raise PolicySetupError(str(exc)) from None
 
 
+def manifest_setup(environ: Mapping[str, str]) -> Manifest | None:
+    """The scene manifest `CELLRT_MANIFEST` names (ADR 027), or None if it is unset or blank.
+    Raises PolicySetupError with one of the manifest's fixed messages, which never repeat the
+    path or the file's content."""
+    raw = environ.get(MANIFEST_ENV, "")
+    if not raw.strip():
+        return None
+    try:
+        return load_manifest(Path(raw))
+    except ManifestError as exc:
+        raise PolicySetupError(str(exc)) from None
+
+
 def aic_registry(geometry: Callable[[], Geometry], port: PortProfile) -> SkillRegistry:
     """The AIC skills under the names the trees use: CheatCode's phases sharing one descent,
     for the task's port type, the retract, and the mock's wait for the F/T sensor, which only
@@ -223,14 +241,22 @@ def run_goal(
     planner: Planner | None = None,
     recovery: RecoveryConfig | None = None,
     fault: CommandDropout | None = None,
+    seed: int = SEED,
+    scene_digest: str | None = None,
 ) -> bool:
     """Run `task` to its end in the calling thread and record it; True if the run succeeded.
     The calling thread must not be running an event loop. `planner` is setting C's (the rule
     planner if None) and is ignored in A and B. `fault` is injected into the cell (#60).
-    A recovery slower than the skills allow, or a port type with no measured profile, raises
-    ValueError before anything runs."""
+    `seed` names the repeat of a sim unit, and `scene_digest` the scene it runs (ADR 027): the
+    digest joins the scenario part of the configuration. A recovery slower than the skills
+    allow, a port type with no measured profile, a seed that is not a whole number from 0, or a
+    digest that is not 64 lowercase hex digits raises ValueError before anything runs."""
     if setting not in SETTINGS:
         raise ValueError(f"setting must be one of: {', '.join(SETTINGS)}")
+    if type(seed) is not int or seed < 0:
+        raise ValueError("seed must be a whole number from 0")
+    if scene_digest is not None and not _DIGEST.fullmatch(scene_digest):
+        raise ValueError("scene_digest must be 64 lowercase hex digits")
     recovery = recovery or RecoveryConfig()
     if not SLOWEST_SCALE <= recovery.slow_speed_scale <= 1.0:
         raise ValueError(f"slow_speed_scale must be from {SLOWEST_SCALE} to 1")
@@ -243,6 +269,8 @@ def run_goal(
         stall_wall_s=stall_wall_s,
         poll_wall_s=poll_wall_s,
         fault=fault,
+        seed=seed,
+        scene_digest=scene_digest,
     )
     scenario = task.id if scenario_id is None else scenario_id
     return asyncio.run(_run_goal(node, task, scenario, store, goal))
@@ -250,8 +278,8 @@ def run_goal(
 
 @dataclasses.dataclass(frozen=True)
 class _Goal:
-    """How a goal runs: its port type's profile, setting, planner, recovery and Monitor, and
-    the world's waits."""
+    """How a goal runs: its port type's profile, setting, planner, recovery and Monitor, the
+    world's waits, and the repeat and scene of its unit."""
 
     port: PortProfile
     setting: Setting
@@ -261,22 +289,24 @@ class _Goal:
     stall_wall_s: float
     poll_wall_s: float
     fault: CommandDropout | None = None
+    seed: int = SEED
+    scene_digest: str | None = None
 
 
 async def _run_goal(
     node: NodePort, task: Task, scenario_id: str, store: EventStore, goal: _Goal
 ) -> bool:
-    attempt = store.next_attempt(scenario_id, goal.setting, SEED)
+    attempt = store.next_attempt(scenario_id, goal.setting, goal.seed)
     clock = SimClock()
     recorder = FeedbackRecorder(
-        f"{scenario_id}/{goal.setting}/{SEED}/a{attempt}", store, clock, node.send_feedback
+        f"{scenario_id}/{goal.setting}/{goal.seed}/a{attempt}", store, clock, node.send_feedback
     )
     parts = _config_parts(task, goal)
     recorder.emit(
         RunStarted(
             scenario_id=scenario_id,
             setting=goal.setting,
-            seed=SEED,
+            seed=goal.seed,
             attempt=attempt,
             task=task,
             config_hash=hash_parts(parts),
@@ -397,14 +427,17 @@ def _config_parts(task: Task, goal: _Goal) -> dict[str, str]:
     """One hash per part, as for mock runs (`cellrt.eval.runner.config_parts`): recovery for
     the settings that recover, the planner (with the wait mode) for setting C. An injected
     fault is part of the scenario, as a mock scenario holds its faults, so runs of one
-    setting stay one configuration for the agent report; without one the scenario part is
-    the task alone, as before #60."""
+    setting stay one configuration for the agent report, and so is the scene's digest
+    (ADR 027); without either the scenario part is the task alone, as before #60."""
     registry = aic_registry(_no_geometry, goal.port)
     planner = goal.planner
+    scenario: dict[str, object] = task.model_dump(mode="json")
+    if goal.fault is not None:
+        scenario["faults"] = [goal.fault.config()]
+    if goal.scene_digest is not None:
+        scenario["scene"] = goal.scene_digest
     config = {
-        "scenario": task.model_dump(mode="json")
-        if goal.fault is None
-        else {**task.model_dump(mode="json"), "faults": [goal.fault.config()]},
+        "scenario": scenario,
         "setting": goal.setting,
         "world": {
             "type": "AicWorld",

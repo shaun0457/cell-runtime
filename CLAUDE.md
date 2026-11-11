@@ -81,9 +81,13 @@ cellrt/
 adapters/
   aic/         RuntimePolicy.py (an aic_model Policy plugin), run.py (one goal, one run),
                world.py (AicWorld), skills.py (CheatCode's phases), faults.py (#60), node.py,
-               convert.py, geometry.py, force.py, feedback.py; ROS is imported only in
-               RuntimePolicy.py and ros_port.py
+               convert.py, geometry.py, force.py, feedback.py, manifest.py (scene names,
+               ADR 027); ROS is imported only in RuntimePolicy.py and ros_port.py
+tools/
+  sim/         the VM batch runner, outside config_hash (ADR 028): scenes.py (engine configs),
+               batch.py (one engine run), report.py, in_container/bag_dump.py (eval container)
 eval/scenarios/   *.yaml
+eval/sim/         engine_template.yaml (the engine sections of our engine configs)
 docs/decisions/   NNN-title.md (design decision records)
 tests/
 ```
