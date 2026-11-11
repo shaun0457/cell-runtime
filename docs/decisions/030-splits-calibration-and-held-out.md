@@ -119,10 +119,12 @@ The rules:
 - `pilot-v1` keeps ADR 026's 23 scenes.
 - No scene digest appears in two splits, except the two `nominal` scenes, which are the sample's
   own trials; they appear in the pilot and in tuning, never in the held-out.
-- The three manifests and `queue.json`, which holds each split's order of units per setting,
-  are committed with their SHA-256 (`eval/sim/SHA256SUMS`) before any VM run (#80). The engine
-  configs are not: the runner renders each one from its units' manifest entries and records its
-  SHA-256 in the ledger (ADR 028), so every config is fixed by committed files.
+- The three manifests, `queue.json` (each split's order of units per setting) and the engine
+  config template are committed with their SHA-256 (`eval/sim/SHA256SUMS`) before any VM run
+  (#80). The engine configs are not: the runner renders each one from the template and its
+  units' manifest entries, and records its SHA-256 in the ledger (ADR 028). So every trial a
+  config holds is fixed by committed files. Which units share a config, and in what order,
+  depends on which units were still unfinished; the ledger records it.
 
 **The checkpoint rule**, applied to the pilot's A trials. The pilot's B trials are picked by A's
 outcome (ADR 026), so they do not count here.
@@ -165,10 +167,14 @@ outcome (ADR 026), so they do not count here.
   6 × 4 × 2 × 3 = 144 trials.
 - Each engine run is one setting, and consecutive engine runs alternate A and B, starting with
   A. Within a setting, units are shuffled with `random.Random("heldout:order")`, A's order
-  drawn first. An engine run takes the next units of its setting in that order, at most 6
-  (ADR 028), and skips the families the checkpoint did not select.
+  drawn first, by the generator's own Fisher-Yates over `random()` (`tools/sim/generate.py`;
+  `Random.shuffle` gives another order), and `queue.json` holds the result. An engine run
+  takes the next unfinished units of its setting in that order, at most 6 (ADR 028), and
+  skips the families the checkpoint did not select. When one setting has no unfinished units
+  left, the other's remaining engine runs follow one another; a rerun can cause this.
 - C-LLM runs only on families where the pilot found an UNKNOWN verdict, with the same scenes and
-  repeats, at most 50 model calls and 1 hour of VM time. Where it does not run, the report shows
+  repeats, at most 50 model calls and 1 hour of VM time. Its engine runs come after A's and
+  B's, its units in B's order. Where it does not run, the report shows
   B's UNKNOWN count on the same families. C differs from B only on UNKNOWN, so a count of zero
   means C would have matched B.
 
