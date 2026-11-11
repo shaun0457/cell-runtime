@@ -16,7 +16,7 @@ and what is out of scope on purpose. Phase specs and tickets are cut from the br
 | 4 | Report and demo | eval report, README, demo video | laptop | in progress: demo video composed (kept outside the repository); README next |
 
 Phase 1's criterion was revised when it closed. It first read "the 3 sample-config tasks succeed
-end to end with no faults in a recorded, replayable run", which can be read two ways:
+end to end with no faults, recorded and replayable", which can be read two ways:
 - **One run passes all three.** Two of the three clean runs with the merged entry hold
   (ADR 024, `0014a07`) did, so this reading is met.
 - **Every clean run passes all three.** ADR 024's time box used this reading, and it is not
