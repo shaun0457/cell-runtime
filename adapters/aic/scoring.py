@@ -13,7 +13,8 @@ counts against the Monitor, as ADR 029's ties do.
 **Its time.** The insertion event has no header, so its receive time (wall clock) is mapped onto
 sim time through the wrench messages of the same bag, each a pair of a receive time and a header
 stamp in sim time:
-1. the pair just before the event's receive time and the pair just after it;
+1. the pair just before the event's receive time and the pair just after it (for pairs received
+   at that very time, the earliest and the latest of their stamps);
 2. linear interpolation between their stamps;
 3. τ, the tolerance, is the larger of 0.25 s and three times the sim-time gap between them;
 4. no mapping when either pair is more than 1 s of wall time from the event, or when their
@@ -30,6 +31,7 @@ from typing import Any
 from cellrt.eval.referee import RefereeTrial, port_parts
 
 MAX_PAIR_DISTANCE_NS = 1_000_000_000  # ADR 029: 1 s of wall time
+MAX_INT64 = 1 << 63  # rosbag2 times are int64 ns
 MIN_TOLERANCE_S = 0.25
 GAP_TOLERANCE_FACTOR = 3
 NOT_A_DUMP = "bag dump: not a bag dump"
@@ -71,6 +73,8 @@ def sim_time(recv_ns: int, pairs: Sequence[tuple[int, int]]) -> tuple[float, flo
     after = bisect_left(recvs, recv_ns)
     if before < 0 or after >= len(ordered):
         return None
+    if before > after:  # pairs received at the event's very time: the earliest and latest stamp
+        before, after = after, before
     (r0, s0), (r1, s1) = ordered[before], ordered[after]
     if recv_ns - r0 > MAX_PAIR_DISTANCE_NS or r1 - recv_ns > MAX_PAIR_DISTANCE_NS or s1 < s0:
         return None
@@ -104,7 +108,9 @@ def _list(value: object) -> list[Any]:
 
 
 def _int(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    """A bag's time in ns, or a count: a non-negative int64, so no arithmetic on it overflows a
+    float."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < MAX_INT64:
         raise ScoringInputError(NOT_A_DUMP)
     return value
 

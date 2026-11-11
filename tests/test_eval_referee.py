@@ -189,6 +189,12 @@ def test_an_inserted_trial_whose_time_cannot_be_mapped_is_judged_as_a_whole(unma
     assert (v.counted, v.tie, v.late) == ("false_alarm", False, False)  # ADR 015's rule
 
 
+def test_an_unmapped_insertion_with_no_verdict_is_not_a_fallback() -> None:
+    judged = judge(_run(_start(1.0), outcome="success"), _referee(at=None))
+
+    assert (judged.fallback, judged.inserted, judged.verdicts) == (False, True, ())
+
+
 def test_an_unmapped_trial_that_never_went_in_is_not_a_fallback() -> None:
     judged = judge(_run(_start(1.0), _verdict(10.0)), _referee(last=None, at=None))
 

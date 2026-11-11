@@ -74,7 +74,8 @@ cellrt/
   promotion/   groups.py, propose.py, replay.py, validate.py, adopt.py (UNKNOWN promotion)
   world/       base.py (World protocol, Signals), mock_world.py, faults.py
   eval/        scenarios.py, faults.py, metrics.py, runner.py, report.py, agent_report.py,
-               baseline.py
+               baseline.py, referee.py (sim verdicts against the scorer, ADR 029),
+               intervals.py (Wilson intervals and the sign test, ADR 030)
   replay.py, trace_export.py
   cli.py       `cellrt run | eval | baseline | replay | trace | smoke-llm | agent-report |
                promote group | validate | approve | propose`
@@ -82,10 +83,12 @@ adapters/
   aic/         RuntimePolicy.py (an aic_model Policy plugin), run.py (one goal, one run),
                world.py (AicWorld), skills.py (CheatCode's phases), faults.py (#60), node.py,
                convert.py, geometry.py, force.py, feedback.py, manifest.py (scene names,
-               ADR 027); ROS is imported only in RuntimePolicy.py and ros_port.py
+               ADR 027), scoring.py (the scorer's files as a trial's referee); ROS is
+               imported only in RuntimePolicy.py and ros_port.py
 tools/
   sim/         the VM batch runner, outside config_hash (ADR 028): scenes.py (engine configs),
-               batch.py (one engine run), report.py, in_container/bag_dump.py (eval container)
+               batch.py (one engine run), report.py, applied.py (did a scene's perturbation
+               take effect, ADR 026), in_container/bag_dump.py (eval container)
 eval/scenarios/   *.yaml
 eval/sim/         engine_template.yaml (the engine sections of our engine configs)
 docs/decisions/   NNN-title.md (design decision records)
