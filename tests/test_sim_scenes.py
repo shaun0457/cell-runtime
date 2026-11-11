@@ -362,6 +362,32 @@ def test_the_scenes_of_a_manifest_are_the_ones_it_was_built_from() -> None:
     assert rebuilt == {s.scene_id: s for s in scenes}
 
 
+def test_the_scenes_of_a_manifest_take_the_models_defaults() -> None:
+    manifest = build_manifest("pilot-v1", [_nominal()], repeats=1)
+    for key in ("hypothesis", "expected_class"):
+        del manifest["scenes"]["nominal_sfp"][key]
+
+    (scene,) = scenes_of(manifest).values()
+
+    assert (scene.hypothesis, scene.expected_class) == ("", "unknown")
+
+
+def test_the_scenes_of_a_manifest_with_a_wrong_digest_are_refused() -> None:
+    manifest = build_manifest("pilot-v1", [_nominal()], repeats=1)
+    manifest["scenes"]["nominal_sfp"]["digest"] = "0" * 64
+
+    with pytest.raises(ValueError):
+        scenes_of(manifest)
+
+
+@pytest.mark.parametrize(
+    "repeats", [{"nominal_sfp": 1}, {"nominal_sfp": 1, "nominal_sc": 1, "other": 1}]
+)
+def test_repeats_by_scene_must_name_exactly_the_scenes(repeats: dict[str, int]) -> None:
+    with pytest.raises(ValueError, match="exactly"):
+        build_manifest("pilot-v1", [_nominal(), _sc()], repeats=repeats)
+
+
 def test_a_file_is_read_up_to_its_bound_and_refused_past_it(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_bytes(b"#" * 16)

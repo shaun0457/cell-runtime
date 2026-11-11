@@ -103,7 +103,13 @@ def scene_from_trial(scene_id: str, family: str, trial: Mapping[str, Any]) -> Sc
 
 def load_template(path: Path) -> dict[str, Any]:
     """The engine sections every config starts from: `scoring` and `robot`, and no trials."""
-    template = yaml.safe_load(read_bounded(path))
+    return parse_template(read_bounded(path))
+
+
+def parse_template(text: str) -> dict[str, Any]:
+    """`load_template` on a template's text already read, so a caller that also hashes the
+    file hashes the very bytes it checked."""
+    template = yaml.safe_load(text)
     if not isinstance(template, dict) or set(template) != {"scoring", "robot"}:
         raise EngineConfigError("template: must hold exactly the keys scoring and robot")
     return template
@@ -136,6 +142,8 @@ def build_manifest(
     ids = [s.scene_id for s in scenes]
     if len(set(ids)) != len(ids):
         raise ValueError("two scenes share a scene id")
+    if not isinstance(repeats, int) and set(repeats) != set(ids):
+        raise ValueError("repeats must name exactly the manifest's scenes")
     counts = {i: repeats if isinstance(repeats, int) else repeats[i] for i in ids}
     if any(n < 1 for n in counts.values()):
         raise ValueError("repeats must be at least 1")
@@ -164,17 +172,23 @@ def build_manifest(
 
 def scenes_of(manifest: Mapping[str, Any]) -> dict[str, Scene]:
     """A manifest's scenes by id, as the runner renders them (ADR 028: an engine config is
-    rendered from the manifest's own scene entries)."""
-    return {
+    rendered from the manifest's own scene entries). The manifest is checked by the policy's
+    own model first (ValueError if it fails), so each scene's trial has the digest the manifest
+    holds, and an entry without a hypothesis or an expected class gets the model's default."""
+    checked = Manifest.model_validate(manifest)
+    scenes = {
         scene_id: Scene(
             scene_id=scene_id,
-            family=entry["family"],
-            hypothesis=entry["hypothesis"],
-            expected_class=entry["expected_class"],
-            trial=entry["trial"],
+            family=entry.family,
+            hypothesis=entry.hypothesis,
+            expected_class=entry.expected_class,
+            trial=entry.trial,
         )
-        for scene_id, entry in manifest["scenes"].items()
+        for scene_id, entry in checked.scenes.items()
     }
+    if any(scene.digest != checked.scenes[i].digest for i, scene in scenes.items()):
+        raise ValueError("a scene's trial does not have the digest its manifest holds")
+    return scenes
 
 
 def read_bounded(path: Path, limit: int = MAX_CONFIG_BYTES) -> str:

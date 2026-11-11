@@ -490,6 +490,49 @@ def test_each_scene_and_each_order_has_its_own_seed() -> None:
     assert sorted(seen) == sorted(expected)
 
 
+def _swapping(pairs: Mapping[str, str]) -> Any:
+    def rng_for(seed: str) -> random.Random:
+        return random.Random(pairs.get(seed, seed))
+
+    return rng_for
+
+
+def test_each_split_draws_from_its_own_seeds() -> None:
+    # The seed list above is sorted, so it cannot tell which scene drew which seed. Swapping
+    # the two splits' seeds must swap their scenes: each scene is pinned to its own seed.
+    pairs: dict[str, str] = {}
+    for family in FAMILIES:
+        for i in range(4):
+            pairs[f"tune:{family}:{i}"] = f"heldout:{family}:{i}"
+            pairs[f"heldout:{family}:{i}"] = f"tune:{family}:{i}"
+
+    files = render(_sample(), EVAL_SIM / TEMPLATE, rng_for=_swapping(pairs))
+
+    tune = json.loads(files[f"{TUNE}.json"])["scenes"]
+    heldout = json.loads((EVAL_SIM / f"{HELDOUT}.json").read_bytes())["scenes"]
+    assert {k: v for k, v in tune.items() if k in heldout} == heldout
+
+
+def test_each_scene_of_a_family_draws_from_its_own_index() -> None:
+    pairs = {"tune:tilt_sc:2": "tune:tilt_sc:3", "tune:tilt_sc:3": "tune:tilt_sc:2"}
+
+    files = render(_sample(), EVAL_SIM / TEMPLATE, rng_for=_swapping(pairs))
+
+    swapped = json.loads(files[f"{TUNE}.json"])["scenes"]
+    committed = json.loads((EVAL_SIM / f"{TUNE}.json").read_bytes())["scenes"]
+    assert swapped["tilt_sc_2"] == committed["tilt_sc_3"]
+    assert swapped["tilt_sc_3"] == committed["tilt_sc_2"]
+    assert swapped["tilt_sc_0"] == committed["tilt_sc_0"]
+
+
+def test_a_template_over_its_bound_is_refused(tmp_path: Path) -> None:
+    template = tmp_path / TEMPLATE
+    template.write_bytes((EVAL_SIM / TEMPLATE).read_bytes() + b"#" * (1 << 20))
+
+    with pytest.raises(EngineConfigError, match="over"):
+        render(_sample(), template)
+
+
 # --- inputs and the command ------------------------------------------------------------------
 
 

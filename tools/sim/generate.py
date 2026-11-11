@@ -59,7 +59,7 @@ from tools.sim.scenes import (
     Scene,
     build_manifest,
     engine_config,
-    load_template,
+    parse_template,
     read_bounded,
     scene_from_trial,
 )
@@ -230,7 +230,8 @@ def render(
     """Every file this module writes, by name. Each scene is rendered into a one-trial engine
     config and validated first (EngineConfigError if one fails)."""
     by_name = splits(sample, rng_for)
-    sections = load_template(template)
+    template_text = read_bounded(template)  # read once: the sums hash the bytes checked here
+    sections = parse_template(template_text)
     for split in by_name.values():
         for scene in split.scenes:
             engine_config([(scene, 0)], sections)
@@ -239,7 +240,7 @@ def render(
         for split in by_name.values()
     }
     files[QUEUE] = _json(build_queue(by_name, rng_for))
-    hashed = {**files, TEMPLATE: template.read_bytes()}
+    hashed = {**files, TEMPLATE: template_text.encode("utf-8")}
     files[SUMS] = "".join(
         f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(hashed.items())
     ).encode("ascii")
@@ -509,6 +510,17 @@ def _json(data: Mapping[str, Any]) -> bytes:
 # --- the command -----------------------------------------------------------------------------
 
 
+def _holds(path: Path, data: bytes) -> bool:
+    """Whether the regular file at `path` holds exactly `data`; reads at most one byte past it."""
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as source:
+            return source.read(len(data) + 1) == data
+    except OSError:
+        return False
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.sim.generate")
     parser.add_argument("--sample", type=Path, required=True, help="aic_engine's sample config")
@@ -524,11 +536,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"generate: the inputs could not be read ({type(ex).__name__})", file=sys.stderr)
         return 2
     if args.check:
-        stale = [
-            name
-            for name, data in files.items()
-            if not (args.out / name).is_file() or (args.out / name).read_bytes() != data
-        ]
+        stale = [name for name, data in files.items() if not _holds(args.out / name, data)]
         for name in stale:
             print(f"generate: {name} differs from the generated file", file=sys.stderr)
         return 1 if stale else 0
