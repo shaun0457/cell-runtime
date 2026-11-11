@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 import yaml
 
+import tools.sim.generate as generate
 from adapters.aic.manifest import load_manifest, scene_digest
 from tools.sim.generate import (
     FAMILIES,
@@ -513,6 +514,40 @@ def test_each_split_draws_from_its_own_seeds() -> None:
     assert {k: v for k, v in tune.items() if k in heldout} == heldout
 
 
+def _plain(trial: Any) -> Any:
+    return json.loads(json.dumps(trial))  # as the manifest file holds it
+
+
+def test_every_drawn_scene_is_the_draw_of_its_own_seed() -> None:
+    # Each scene is re-derived from its seed, written out as ADR 030 and ADR 026 name it, so a
+    # mix-up of seeds in the generator fails here whichever seeds it swaps (#80 gate F1).
+    sfp, sc = generate._bases(_sample())
+    for split, name in (("tune", TUNE), ("heldout", HELDOUT)):
+        committed = json.loads((EVAL_SIM / f"{name}.json").read_bytes())["scenes"]
+        for family in FAMILIES:
+            for i in range(4):
+                drawn = generate._DRAW[family](random.Random(f"{split}:{family}:{i}"), sfp, sc)
+                assert committed[f"{family}_{i}"]["trial"] == _plain(drawn), (split, family, i)
+    pilot = json.loads((EVAL_SIM / f"{PILOT}.json").read_bytes())["scenes"]
+    for family, draw, base in (
+        ("inrange_sfp", generate._inrange_sfp, sfp),
+        ("inrange_sc", generate._inrange_sc, sc),
+    ):
+        for i in range(4):
+            drawn = draw(random.Random(f"pilot:{family}:{i}"), base)
+            assert pilot[f"{family}_{i}"]["trial"] == _plain(drawn), (family, i)
+
+
+def test_each_queue_order_is_the_shuffle_of_its_own_seed(by_name: dict[str, Split]) -> None:
+    # ADR 030: random.Random("<split>:order"), A's order drawn first, then B's.
+    queue = json.loads((EVAL_SIM / QUEUE).read_bytes())["splits"]
+    for split, name in (("tune", TUNE), ("heldout", HELDOUT)):
+        rng = random.Random(f"{split}:order")
+        units = by_name[name].units()
+        assert queue[name]["A"] == generate._shuffled(units, rng), split
+        assert queue[name]["B"] == generate._shuffled(units, rng), split
+
+
 def test_each_scene_of_a_family_draws_from_its_own_index() -> None:
     pairs = {"tune:tilt_sc:2": "tune:tilt_sc:3", "tune:tilt_sc:3": "tune:tilt_sc:2"}
 
@@ -579,6 +614,23 @@ def test_the_command_writes_the_files(tmp_path: Path, files: dict[str, bytes]) -
 
     for name, data in files.items():
         assert (out / name).read_bytes() == data
+
+
+def test_check_says_a_file_it_cannot_read_is_unreadable_not_stale(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = _out(tmp_path)
+    main(["--sample", str(SAMPLE), "--out", str(out)])
+
+    def locked(path: Path, data: bytes) -> bool:
+        raise PermissionError("secret text from the OS")
+
+    monkeypatch.setattr(generate, "_holds", locked)
+
+    assert main(["--sample", str(SAMPLE), "--out", str(out), "--check"]) == 2
+    err = capsys.readouterr().err
+    assert "could not be read (PermissionError)" in err
+    assert "differs" not in err and "secret" not in err
 
 
 def test_check_passes_on_the_committed_files() -> None:

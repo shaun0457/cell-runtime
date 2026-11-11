@@ -511,14 +511,12 @@ def _json(data: Mapping[str, Any]) -> bytes:
 
 
 def _holds(path: Path, data: bytes) -> bool:
-    """Whether the regular file at `path` holds exactly `data`; reads at most one byte past it."""
+    """Whether `path` is a regular file holding exactly `data`; reads at most one byte past it.
+    A file that exists but cannot be read raises OSError: unreadable is not the same as stale."""
     if not path.is_file():
         return False
-    try:
-        with path.open("rb") as source:
-            return source.read(len(data) + 1) == data
-    except OSError:
-        return False
+    with path.open("rb") as source:
+        return source.read(len(data) + 1) == data
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -536,7 +534,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"generate: the inputs could not be read ({type(ex).__name__})", file=sys.stderr)
         return 2
     if args.check:
-        stale = [name for name, data in files.items() if not _holds(args.out / name, data)]
+        stale = []
+        for name, data in files.items():
+            try:
+                if not _holds(args.out / name, data):
+                    stale.append(name)
+            except OSError as ex:  # a file we could not read: its error text is not ours to print
+                print(f"generate: {name} could not be read ({type(ex).__name__})", file=sys.stderr)
+                return 2
         for name in stale:
             print(f"generate: {name} differs from the generated file", file=sys.stderr)
         return 1 if stale else 0
