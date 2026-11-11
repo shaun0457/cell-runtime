@@ -201,11 +201,14 @@ These runs were made on 2026-11-11 with the same VM, image and engine config. Th
 `simclose.sqlite` on the results disk, with these sessions:
 - `scclean`: clean A, attempts a1 to a4;
 - `scrule`: C-rule;
-- `scllm`: C-LLM, with `CELLRT_MAX_TOKENS=4096` and `CELLRT_REASONING=default`.
+- `scllm`: C-LLM, attempts a1 (C-LLM #1) and a2 (C-LLM #2), with `CELLRT_MAX_TOKENS=4096` and
+  `CELLRT_REASONING=default`.
 
-The fault runs inject #61's dropout on goal1 only (`"goals": [1]`). Attempt a1 ran the first
-version of the hold (code of `439e58b`), and every other run ran `0014a07`, the version merged in
-#73. The runtime and the scorer's `scoring.yaml` agree on all 21 tasks.
+The fault runs inject #61's dropout on goal1 only (`"goals": [1]`). Attempt a1 of `scclean` ran
+the first version of the hold (code of `439e58b`), and every other run ran `0014a07`, the version
+merged in #73. The runtime and the scorer's `scoring.yaml` agree on all 21 tasks. The numbers
+were read from a copy of the store with read-only scripts. `cellrt replay` was not run on these
+sessions before the VM was stopped.
 
 | Goal | clean A a1 (`439e58b`) | clean A a2 | clean A a3 | clean A a4 |
 |---|---|---|---|---|
@@ -216,9 +219,13 @@ version of the hold (code of `439e58b`), and every other run ran `0014a07`, the 
 - **Phase 1's criterion.** Two of the three clean runs with `0014a07` seated all three plugs. The
   trial scores of a2 were 93.09, 93.36 and 93.10. Over the three runs, SFP seated 6 of 6 and SC
   2 of 3. Goal3 carries no fault in the setting-C runs below, and seated there all three times,
-  so SC seated in 5 of 6 runs with this code. That meets the criterion as revised at the close
-  (a recorded run that passes all three, plus the rate over three clean runs; `docs/roadmap.md`),
-  not the first one's 3/3 as a rate.
+  so SC seated in 5 of 6 runs with this code.
+  - Read as "one recorded run passes all three", the first criterion is met.
+  - Read as "every clean run passes", the reading ADR 024's time box used, it is not met.
+  - The criterion as revised at the close keeps the first reading and adds the rate over
+    three clean runs, with no threshold (`docs/roadmap.md`).
+  - a1 is not in the rate. Counting it, 2 of 4 clean runs with a hold passed all three, and SC
+    seated in 2 of 4.
 - **The hold does not stop the plug above the entrance.** At the stop the arm is commanded to
   stay at its measured z_offset, yet in 8 of the 9 stops it sank 3.1-5.1 mm over 1.9-3.0 s and
   ended under the entrance. The two SC stops that sank went from 16.4-16.6 mm down to
@@ -231,7 +238,9 @@ version of the hold (code of `439e58b`), and every other run ran `0014a07`, the 
   15.5 mm, 0.11 mm off), and align went on at full speed. At the first sample at or under
   14 mm (ADR 024's measure) the plug was 0.36 mm off, and it stuck on the rim 0.70 mm off,
   at 12.8 N. The two SC plugs that seated reached 14 mm during a slow stop, 0.32 and 0.91 mm
-  off the axis. The second of those is further off than any of the 4 earlier runs that seated,
+  off the axis. At the entrance itself, the first sample at or under 13.64 mm, they were 0.35
+  and 0.97 mm off (the figure in ADR 024). The second is further off than any of the 4 earlier
+  runs that seated,
   among the 13 on record (ADR 024's table). So "every plug 0.5 mm or more off stuck on the
   rim", from those 13 runs, no longer holds once the slow stop is in. Three runs
   do not show which part of the stop helps. They are the record, not a tuning set, and SC on
@@ -245,8 +254,8 @@ version of the hold (code of `439e58b`), and every other run ran `0014a07`, the 
 | goal2 SFP | success, 75 | success, 75 | success, 75 |
 | goal3 SC | success, 75 | success, 75 | success, 75 |
 
-- **The same stall, two planners.** In both faulted runs the dropout began during align, about
-  14-15 s in. About 1 s into `insert_scripted` the Monitor called UNKNOWN (`insert_stalled`;
+- **The same stall, two planners.** In the two runs where the dropout took effect, it began
+  during align, about 14-15 s in. About 1 s into `insert_scripted` the Monitor called UNKNOWN (`insert_stalled`;
   0.09 and -0.05 mm of progress, 2.1 and 0.65 N).
   - The rule planner has no rule for UNKNOWN in `insert_scripted`, and aborted 0.05 s later.
   - The model answered after 28.2 s of wall time, with 1898 completion tokens and
