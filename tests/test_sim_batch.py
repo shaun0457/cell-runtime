@@ -8,9 +8,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import runpy
 import shlex
 import signal
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -924,3 +926,18 @@ def test_one_poll_reads_at_most_its_bound_of_chunks(
     assert source.reads == MAX_CHUNKS_PER_POLL
     assert scan.offset == 8 * MAX_CHUNKS_PER_POLL
     assert scan.find(source) == ALL_DONE  # the next poll goes on from there
+
+
+def test_run_with_dash_m_it_runs_the_imported_module_not_a_second_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`python -m tools.sim.batch` runs this file as `__main__`; the session imports
+    `tools.sim.batch`. Both must be one module, or `run_engine` cannot catch the runner's
+    EngineRunError."""
+    monkeypatch.setattr(batch, "main", lambda: 7)
+
+    with warnings.catch_warnings(), pytest.raises(SystemExit) as stop:
+        warnings.simplefilter("ignore", RuntimeWarning)  # runpy: the module is already imported
+        runpy.run_module("tools.sim.batch", run_name="__main__")
+
+    assert stop.value.code == 7  # the imported module's main, not the copy's own

@@ -40,14 +40,14 @@ C-LLM is not run here yet: its call cap (D6) comes with the held-out session.
 power-off for what is left of its split's guard after the session's hours, so the guard bounds
 the session, not one invocation; when none is left, it sets one minute and stops. Before each
 engine run, the session's hours and the phase's hours (the whole results disk) plus the run's
-worst case (`worst_case_h`: every wait and call bound reached, the copy's included) must stay
-within their ceilings, at `USD_PER_HOUR`.
+worst case (`worst_case_h`: every wait and call bound reached, the container's creation when
+it is not there, the copy's included) must stay within their ceilings, at `USD_PER_HOUR`.
 
 **One invocation per session.** It holds `session.lock` in the session's directory, taken with
 O_EXCL and removed when it returns; a lock left by a hard kill must be removed by hand. It also
 refuses to start while a sim or a policy runs (a runner killed alone leaves them running).
-The checkout's `cellrt/`, `adapters/` and `uv.lock` must be its commit's, as the ledger records
-it.
+The checkout's `cellrt/`, `adapters/`, `tools/` and `uv.lock` must be its commit's, as the
+ledger records it.
 
 **Resuming.** Just before each engine run starts, the loop notes it in the run directory
 (`started.json`: its tag, setting, units, commit and wall-clock start). An engine run killed
@@ -88,6 +88,7 @@ from tools.sim.batch import (
     CREATE_TIMEOUT_S,
     POLICY_ERRORS,
     POLICY_READY_S,
+    POLL_S,
     REPO,
     ROS_SETUP,
     SIM_READY_S,
@@ -100,6 +101,7 @@ from tools.sim.batch import (
     arm_guard,
     check_path,
     checkout_commit,
+    container_exists,
     dump_bags,
     run_engine,
     snapshot_store,
@@ -119,9 +121,11 @@ MAX_PILOT_B = 12  # D2
 MAX_ENGINE_RUNS = 200  # one invocation; the pilot needs about 10
 MAX_ENGINE_FAILURES = 2  # in a row, before any trial (ADR 028)
 MAX_STALLED_RUNS = 2  # in a row that add no counted trial, for any reason
-# The bounded calls of one engine run outside its waits (`run_engine`): the teardown's three
-# before and three after, the container check, its creation and the image id.
-ENGINE_CALLS_S = 8 * CALL_TIMEOUT_S + CREATE_TIMEOUT_S
+# What one engine run (`run_engine`) can take beyond its waits' bounds: the bounded calls (the
+# teardown's three before and three after, the container check, the image id, the two starts),
+# and what each of its three waits can run past its deadline (a poll, then one `alive` call per
+# session it watches: 1, 2 and 2). A container's creation is added when it is not there.
+ENGINE_CALLS_S = (8 + 2 + 5) * CALL_TIMEOUT_S + 3 * POLL_S
 MAX_LOG_SCAN_BYTES = 256 << 20  # a sim log read past this names no trial
 MAX_LEDGERS = 2000  # ledger files read for the phase's hours
 MAX_QUEUE_BYTES = 1 << 20
@@ -138,10 +142,10 @@ OUTPUTS = "outputs.json"
 STARTED = "started.json"  # the loop's note that it started the run's engine (module doc)
 LOCK = "session.lock"  # one invocation per session
 KILLED = "killed"  # the exit of a run recorded from its note
-# The code the policy runs: `config_hash` covers cellrt/ (`code_fingerprint`) and uv.lock
-# (`lock_fingerprint`), and adapters/ holds the AIC skills, so none may differ from the commit a
-# session records.
-POLICY_CODE_PATHS = ("cellrt", "adapters", "uv.lock")
+# The code a session runs: `config_hash` covers cellrt/ (`code_fingerprint`) and uv.lock
+# (`lock_fingerprint`), adapters/ holds the AIC skills, and tools/ renders the engine configs,
+# dumps the bags and decides what runs; none may differ from the commit a session records.
+CHECKOUT_PATHS = ("cellrt", "adapters", "tools", "uv.lock")
 STORE = "store.sqlite"
 RUNS = "runs"
 SUMS = "SHA256SUMS"
@@ -358,9 +362,9 @@ def check_queue(manifest: Manifest, queue: SplitQueue) -> None:
 
 def checkout_clean(runner: Runner, repo: Path) -> bool:
     """True when the policy's code in the checkout is its commit's: nothing changed, staged or
-    not, and nothing untracked under `POLICY_CODE_PATHS`. False when git cannot tell."""
+    not, and nothing untracked under `CHECKOUT_PATHS`. False when git cannot tell."""
     argv = ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all", "--"]
-    out = runner.output([*argv, *POLICY_CODE_PATHS], timeout_s=CALL_TIMEOUT_S)
+    out = runner.output([*argv, *CHECKOUT_PATHS], timeout_s=CALL_TIMEOUT_S)
     return out is not None and out.strip() == ""
 
 
@@ -665,12 +669,14 @@ def _selected(session: Session, task_id: str) -> bool:
 # --- cost --------------------------------------------------------------------------------------
 
 
-def worst_case_h(plan: EnginePlan) -> float:
+def worst_case_h(plan: EnginePlan, *, create: bool = True) -> float:
     """The longest the engine run and the copy of its outputs can take, in hours, every bound
     of both reached (ADR 028): the waits for the sim, the policy and the trials, the bounded
-    calls around them (a container created from scratch among them), and per trial a bag dump,
-    then the container's stop and the snapshot's grace."""
+    calls around them (`ENGINE_CALLS_S`), the container's creation when `create`, and per trial
+    a bag dump, then the container's stop and the snapshot's grace."""
     run_s = SIM_READY_S + POLICY_READY_S + plan.trials_bound_s() + ENGINE_CALLS_S
+    if create:
+        run_s += CREATE_TIMEOUT_S
     copy_s = len(plan.units) * BAG_DUMP_TIMEOUT_S + CALL_TIMEOUT_S + SNAPSHOT_GRACE_S
     return (run_s + copy_s) / 3600.0
 
@@ -716,9 +722,13 @@ def session_hours(records: Sequence[Record]) -> float:
     return sum(r.hours for r in records)
 
 
-def check_cost(session: Session, records: Sequence[Record], plan: EnginePlan) -> None:
+def check_cost(
+    session: Session, records: Sequence[Record], plan: EnginePlan, *, create: bool = True
+) -> None:
+    """SessionError when the run's worst case (`create`: with the container's creation) would
+    pass the session's or the phase's ceiling."""
     ceiling_usd, _ = CEILINGS[session.split]
-    worst = worst_case_h(plan)
+    worst = worst_case_h(plan, create=create)
     spent = session_hours(records)
     if (spent + worst) * USD_PER_HOUR > ceiling_usd:
         raise SessionError("the session's ceiling would be passed: the queue stops here")
@@ -811,7 +821,9 @@ def _run_locked(
                 return 0
             setting, units = step
             plan = session.plan(next_tag(session, records), setting, units)
-            check_cost(session, records, plan)
+            # Nothing removes the container between this check and the run's own (the teardown
+            # stops it): a run that finds it there does not pay for its creation.
+            check_cost(session, records, plan, create=not container_exists(runner))
             config = session.render(plan)
             plan.config.parent.mkdir(parents=True)  # a new run directory, never an old one
             write_yaml(plan.config, config)
@@ -886,7 +898,9 @@ def main_session(
         if commit == "unknown":
             return refuse("the checkout's commit could not be read")
         if not checkout_clean(runner, repo):  # ADR 028: one session, one configuration
-            return refuse("the checkout's cellrt/, adapters/ or uv.lock is not its commit's")
+            return refuse(
+                "the checkout's cellrt/, adapters/, tools/ or uv.lock is not its commit's"
+            )
         session = Session(
             name=args.session,
             root=args.results_mount / args.session,

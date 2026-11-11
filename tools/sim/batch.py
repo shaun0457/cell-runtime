@@ -393,8 +393,13 @@ def _inspect(*args: str) -> list[str]:
     return ["sudo", "docker", "inspect", "--type", "container", *args, CONTAINER]
 
 
+def container_exists(runner: Runner) -> bool:
+    """Whether the eval container is there, so an engine run will not have to create it."""
+    return runner.call(_inspect(), timeout_s=CALL_TIMEOUT_S) == 0
+
+
 def _ensure_container(runner: Runner) -> None:
-    if runner.call(_inspect(), timeout_s=CALL_TIMEOUT_S) == 0:
+    if container_exists(runner):
         return
     create = [*_DBX, "create", "-r", "--nvidia", "--yes", "-i", IMAGE, CONTAINER]
     if runner.call(create, timeout_s=CREATE_TIMEOUT_S) != 0:
@@ -731,4 +736,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Run as `tools.sim.batch`, not as a second copy of it named `__main__`: the session imports
+    # `tools.sim.batch`, and `run_engine`'s `except EngineRunError` must catch the class the
+    # runner made here raises.
+    from tools.sim import batch
+
+    sys.exit(batch.main())

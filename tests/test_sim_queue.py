@@ -136,6 +136,7 @@ class Machine:
     guard_rc: int = 0
     commit_out: str | None = COMMIT + "\n"
     status_out: str | None = ""  # `git status --porcelain` of the policy's code: clean
+    container: bool = True  # the eval container is there (`docker inspect` succeeds)
     wall_at: float = 0.0  # the wall clock the loop's start notes read
     running: frozenset[str] = frozenset()  # tmux sessions still up
     calls: list[list[str]] = field(default_factory=list)
@@ -143,12 +144,14 @@ class Machine:
     def call(self, argv: list[str], *, timeout_s: float) -> int:
         assert timeout_s > 0
         self.calls.append(list(argv))
-        return self.guard_rc if argv[:3] == ["sudo", "shutdown", "-h"] else 0
+        if argv[:3] == ["sudo", "shutdown", "-h"]:
+            return self.guard_rc
+        return 1 if "inspect" in argv and not self.container else 0
 
     def output(self, argv: list[str], *, timeout_s: float) -> str | None:
         assert timeout_s > 0
         if "status" in argv:
-            assert argv[-3:] == list(queue.POLICY_CODE_PATHS)
+            assert argv[-4:] == list(queue.CHECKOUT_PATHS)
             return self.status_out
         return self.commit_out
 
@@ -551,6 +554,26 @@ def test_the_copies_hours_count_against_the_sessions_ceiling(tmp_path: Path) -> 
     assert vm.said[-1] == "session: the session's ceiling would be passed: the queue stops here"
     (record,) = read_session(session)
     assert record.hours == pytest.approx(1000.0 / 3600.0 + 6.0)
+
+
+def test_a_run_pays_for_the_containers_creation_only_when_it_is_not_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = _pilot(tmp_path)
+    plan = session.plan("s1-001", "A", ("p0_r0",))
+    assert queue.worst_case_h(plan) - queue.worst_case_h(plan, create=False) == pytest.approx(
+        batch.CREATE_TIMEOUT_S / 3600.0
+    )
+    monkeypatch.setattr(queue, "CREATE_TIMEOUT_S", 1e6)  # a creation no ceiling allows
+    missing, there = FakeVm(), FakeVm()
+
+    assert _go(session, missing, Machine(container=False)) == 1
+    assert missing.plans == []
+    assert (
+        missing.said[-1] == "session: the session's ceiling would be passed: the queue stops here"
+    )
+    assert _go(session, there, Machine(container=True)) == 0
+    assert there.plans
 
 
 def test_the_phases_hours_hold_every_runs_row_and_copy(tmp_path: Path) -> None:
@@ -968,7 +991,14 @@ def test_main_refuses_a_sums_file_or_input_past_its_bound(
 
 
 @pytest.mark.parametrize(
-    "status", [" M cellrt/eval/referee.py\n", "?? adapters/aic/x.py\n", " M uv.lock\n", None]
+    "status",
+    [
+        " M cellrt/eval/referee.py\n",
+        "?? adapters/aic/x.py\n",
+        " M tools/sim/queue.py\n",
+        " M uv.lock\n",
+        None,
+    ],
 )
 def test_main_refuses_a_checkout_whose_policy_code_is_not_its_commits(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], status: str | None
@@ -981,7 +1011,7 @@ def test_main_refuses_a_checkout_whose_policy_code_is_not_its_commits(
     )
 
     assert code == 2 and vm.plans == []
-    assert "cellrt/, adapters/ or uv.lock is not its commit's" in capsys.readouterr().err
+    assert "cellrt/, adapters/, tools/ or uv.lock is not its commit's" in capsys.readouterr().err
 
 
 def test_a_queue_naming_a_unit_the_manifest_lacks_is_refused(tmp_path: Path) -> None:
