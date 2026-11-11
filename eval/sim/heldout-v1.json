@@ -1,0 +1,5344 @@
+{
+ "name": "heldout-v1",
+ "scenes": {
+  "beyond_sc_0": {
+   "digest": "99a4a45b124d1ccd6557b2b04badc7ae43199c708616a412d90038e613952c32",
+   "expected_class": "unknown",
+   "family": "beyond_sc",
+   "hypothesis": "A grasp 5 mm off in x, past the challenge's ~2 mm. The plug's pose comes from the oracle: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.005,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.18782,
+       "y": 0.022013,
+       "yaw": 2.957808,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sc_1": {
+   "digest": "66030831c3a925bf0c91c886bab50bdc9698f68ebbd3c60076d418448b0a4782",
+   "expected_class": "unknown",
+   "family": "beyond_sc",
+   "hypothesis": "A grasp 5 mm off in x, past the challenge's ~2 mm. The plug's pose comes from the oracle: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.005,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.158197,
+       "y": 0.024486,
+       "yaw": 3.005474,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sc_2": {
+   "digest": "954c406f60b1227562071f2271c3692925eea284968b7293de37267d15123377",
+   "expected_class": "unknown",
+   "family": "beyond_sc",
+   "hypothesis": "A grasp 5 mm off in x, past the challenge's ~2 mm. The plug's pose comes from the oracle: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.005,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.171717,
+       "y": -0.034161,
+       "yaw": 2.897934,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sc_3": {
+   "digest": "aeb5e746e1e27f1613f1a49ff6ef60191fb41c94773190e2c47b8f200e4f9d15",
+   "expected_class": "unknown",
+   "family": "beyond_sc",
+   "hypothesis": "A grasp 5 mm off in x, past the challenge's ~2 mm. The plug's pose comes from the oracle: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.005,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.186373,
+       "y": 0.002105,
+       "yaw": 2.948312,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sfp_0": {
+   "digest": "abe273339c44801e07bd4f37502db2793d9cd7be5b945554a18bd227146cedbd",
+   "expected_class": "unknown",
+   "family": "beyond_sfp",
+   "hypothesis": "A value past the challenge's range: NIC yaw 20\u00b0, a grasp 5 mm off in x, or grasp roll +0.12 rad. The oracle still gives every pose: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.3490658503988659
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.136932,
+       "y": -0.198441,
+       "yaw": 3.002318,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sfp_1": {
+   "digest": "20552fee046846e5d4ce6fff8b26fdf8fa0bd171447d898fe4f8587c563433ab",
+   "expected_class": "unknown",
+   "family": "beyond_sfp",
+   "hypothesis": "A value past the challenge's range: NIC yaw 20\u00b0, a grasp 5 mm off in x, or grasp roll +0.12 rad. The oracle still gives every pose: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.5632,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.134702,
+       "y": -0.215876,
+       "yaw": 3.096895,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sfp_2": {
+   "digest": "5c973a73cfbfabbd92a04133fe764984736590a53614a45865dc1b4500c36a51",
+   "expected_class": "unknown",
+   "family": "beyond_sfp",
+   "hypothesis": "A value past the challenge's range: NIC yaw 20\u00b0, a grasp 5 mm off in x, or grasp roll +0.12 rad. The oracle still gives every pose: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.005,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.153615,
+       "y": -0.204556,
+       "yaw": 3.03912,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "beyond_sfp_3": {
+   "digest": "6e8cf0abeb00d74278c8fdc91f991f81a0fa17b7bb5134d215b3ceed72623ff7",
+   "expected_class": "unknown",
+   "family": "beyond_sfp",
+   "hypothesis": "A value past the challenge's range: NIC yaw 20\u00b0, a grasp 5 mm off in x, or grasp roll +0.12 rad. The oracle still gives every pose: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.5632,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.150872,
+       "y": -0.210022,
+       "yaw": 3.141672,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "empty_rail_sfp_0": {
+   "digest": "03e6783dd58f2acaeb4e4011fc43b3fce76804805f2c419cf4713a0d6c78e3a2",
+   "expected_class": "unknown",
+   "family": "empty_rail_sfp",
+   "hypothesis": "The target rail is empty, the card on the next rail: the target port has no frame. Expected adapter abort (ground_truth_unavailable); no recovery can help.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.137815,
+       "y": -0.161272,
+       "yaw": 3.024317,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_4",
+     "time_limit": 180
+    }
+   }
+  },
+  "empty_rail_sfp_1": {
+   "digest": "7acedf1ab772a720bfa87b71345cdf42b3b126164c95c10259c52e6ed34b09ff",
+   "expected_class": "unknown",
+   "family": "empty_rail_sfp",
+   "hypothesis": "The target rail is empty, the card on the next rail: the target port has no frame. Expected adapter abort (ground_truth_unavailable); no recovery can help.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.152836,
+       "y": -0.182504,
+       "yaw": 3.147782,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_4",
+     "time_limit": 180
+    }
+   }
+  },
+  "empty_rail_sfp_2": {
+   "digest": "b0044ec57a6e11a122358ae473c90fc4b3328e84c2489af4448c0d084f45182e",
+   "expected_class": "unknown",
+   "family": "empty_rail_sfp",
+   "hypothesis": "The target rail is empty, the card on the next rail: the target port has no frame. Expected adapter abort (ground_truth_unavailable); no recovery can help.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_name": "nic_card_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.14729,
+       "y": -0.207171,
+       "yaw": 3.097045,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "empty_rail_sfp_3": {
+   "digest": "231e7b4cb2bb7f9f595e0e313fd58cb761621aa55fe1cfb491697cbe7328022b",
+   "expected_class": "unknown",
+   "family": "empty_rail_sfp",
+   "hypothesis": "The target rail is empty, the card on the next rail: the target port has no frame. Expected adapter abort (ground_truth_unavailable); no recovery can help.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_name": "nic_card_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.147073,
+       "y": -0.220534,
+       "yaw": 3.143145,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sc_0": {
+   "digest": "7a910d448fc58597553fba18c1cd6839f6f87da23c10c954d6582ee4d013cf60",
+   "expected_class": "unknown",
+   "family": "inrange_sc",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": -9.2e-05,
+         "y": 0.01727,
+         "z": 0.040644
+        },
+        "pitch": -0.516193,
+        "roll": 0.442842,
+        "yaw": 1.347331
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.180903,
+       "y": 0.049697,
+       "yaw": 3.128812,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.041973,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sc_1": {
+   "digest": "5eef53500175b18dd46ed7b2273831767749c0e2a4d5f52976f4d44e26c419e2",
+   "expected_class": "unknown",
+   "family": "inrange_sc",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.001609,
+         "y": 0.015453,
+         "z": 0.041268
+        },
+        "pitch": -0.485035,
+        "roll": 0.463586,
+        "yaw": 1.307093
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.182976,
+       "y": -0.014541,
+       "yaw": 2.968214,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.018026,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sc_2": {
+   "digest": "ddc5571aa5cb8da98c1bffe06e109e8fee1e6790b15864d353e807325fbab0f5",
+   "expected_class": "unknown",
+   "family": "inrange_sc",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": -0.000854,
+         "y": 0.017259,
+         "z": 0.038829
+        },
+        "pitch": -0.463494,
+        "roll": 0.476282,
+        "yaw": 1.314456
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.151861,
+       "y": 0.036583,
+       "yaw": 2.932336,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.018209,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sc_3": {
+   "digest": "811b67fa2b5c3bf1704edda8ad5c7b4c6ef3351de76b2bc7d7999c22cc13d368",
+   "expected_class": "unknown",
+   "family": "inrange_sc",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.001348,
+         "y": 0.015825,
+         "z": 0.039898
+        },
+        "pitch": -0.493078,
+        "roll": 0.416794,
+        "yaw": 1.318773
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.182032,
+       "y": -0.026404,
+       "yaw": 3.059619,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.039389,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sfp_0": {
+   "digest": "ee5f8dd8b76ca316ddd33f2d63781c743c9b38ff3c98ee74c04e8f5dc848ec14",
+   "expected_class": "unknown",
+   "family": "inrange_sfp",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.001841,
+         "y": 0.013502,
+         "z": 0.042066
+        },
+        "pitch": -0.509592,
+        "roll": 0.471858,
+        "yaw": 1.29732
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_name": "nic_card_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.030681,
+        "yaw": 0.124135
+       },
+       "entity_present": true
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.148502,
+       "y": -0.247591,
+       "yaw": 3.274726,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_2",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sfp_1": {
+   "digest": "e06acb2c51d784e9c278093c093f4f4ac835c63d0fe1e7d426e9e094e68a3798",
+   "expected_class": "unknown",
+   "family": "inrange_sfp",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": -0.000209,
+         "y": 0.013477,
+         "z": 0.043202
+        },
+        "pitch": -0.483276,
+        "roll": 0.461529,
+        "yaw": 1.295702
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_name": "nic_card_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.016741,
+        "yaw": -0.076303
+       },
+       "entity_present": true
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.136624,
+       "y": -0.241361,
+       "yaw": 3.237449,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_1",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sfp_2": {
+   "digest": "784466ade565317a069dc78e874ac7819ea17b58520c34ba2d723cb85888949f",
+   "expected_class": "unknown",
+   "family": "inrange_sfp",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.000554,
+         "y": 0.013556,
+         "z": 0.040548
+        },
+        "pitch": -0.479022,
+        "roll": 0.407278,
+        "yaw": 1.362573
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.019716,
+        "yaw": -0.171792
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.151797,
+       "y": -0.215324,
+       "yaw": 3.288426,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "inrange_sfp_3": {
+   "digest": "3b28b65888fd506650ba3ba666600daf57fafc0749863c832b4b284e9af6e139",
+   "expected_class": "unknown",
+   "family": "inrange_sfp",
+   "hypothesis": "Inside the challenge's own ranges. The skills read the oracle's poses every step, so the change is followed: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.000885,
+         "y": 0.013524,
+         "z": 0.044428
+        },
+        "pitch": -0.495911,
+        "roll": 0.455825,
+        "yaw": 1.347888
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_name": "nic_card_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.016978,
+        "yaw": -0.131484
+       },
+       "entity_present": true
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.133447,
+       "y": -0.150082,
+       "yaw": 3.027621,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_1",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sc_0": {
+   "digest": "ca996c50048f89e73a092c72e25314892030b17adccca194c5bba9bc7f137c26",
+   "expected_class": "unknown",
+   "family": "tilt_sc",
+   "hypothesis": "The SC port rolled 2-4\u00b0. The entrance, 13.64 mm up, sits 0.48-0.95 mm to the side of the descent, where SC plugs stuck on the rim before: expected to stick, at times.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.173843,
+       "y": 0.049696,
+       "yaw": 3.117424,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.049111,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sc_1": {
+   "digest": "74845e6e66c4c89f154bbb9ee9934d3af7803724d13a764bd67a5a521dc270f5",
+   "expected_class": "unknown",
+   "family": "tilt_sc",
+   "hypothesis": "The SC port rolled 2-4\u00b0. The entrance, 13.64 mm up, sits 0.48-0.95 mm to the side of the descent, where SC plugs stuck on the rim before: expected to stick, at times.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.189081,
+       "y": 0.031078,
+       "yaw": 3.085136,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.057686,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sc_2": {
+   "digest": "ec379bf4ef7cdfb69316860cfcfe6a281fb309da2f839c887d2b5e254dce31a3",
+   "expected_class": "unknown",
+   "family": "tilt_sc",
+   "hypothesis": "The SC port rolled 2-4\u00b0. The entrance, 13.64 mm up, sits 0.48-0.95 mm to the side of the descent, where SC plugs stuck on the rim before: expected to stick, at times.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.173495,
+       "y": 0.00983,
+       "yaw": 2.877457,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.069623,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sc_3": {
+   "digest": "56697da52b4a9bbd0d32c3a4eeb9e187177d3db15a00182c3b6b94ccb1954387",
+   "expected_class": "unknown",
+   "family": "tilt_sc",
+   "hypothesis": "The SC port rolled 2-4\u00b0. The entrance, 13.64 mm up, sits 0.48-0.95 mm to the side of the descent, where SC plugs stuck on the rim before: expected to stick, at times.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.188573,
+       "y": -0.043767,
+       "yaw": 2.881232,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.066126,
+        "translation": -0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sfp_0": {
+   "digest": "64eb48b5f276f032b8ef71560390637465f6010afcdc9d66d5e34d897b7c013c",
+   "expected_class": "unknown",
+   "family": "tilt_sfp",
+   "hypothesis": "The NIC card rolled 2-4\u00b0. The descent runs along base z above the port origin, so the entrance, 45.8 mm up, sits 1.6-3.2 mm to the side: expected to stick at the entrance.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.062101,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.159927,
+       "y": -0.17677,
+       "yaw": 3.063729,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sfp_1": {
+   "digest": "12a916bbd848f117d8b1ae47c8404cfd08c8cc57c291ef64b02d91be2c73cf7a",
+   "expected_class": "unknown",
+   "family": "tilt_sfp",
+   "hypothesis": "The NIC card rolled 2-4\u00b0. The descent runs along base z above the port origin, so the entrance, 45.8 mm up, sits 1.6-3.2 mm to the side: expected to stick at the entrance.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.063358,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.147288,
+       "y": -0.194878,
+       "yaw": 3.214789,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sfp_2": {
+   "digest": "f5ae3fd2118c4624ee8ad4ac3fd8467ed06aa1dcfe8376412a1a16c5c9d8e3a8",
+   "expected_class": "unknown",
+   "family": "tilt_sfp",
+   "hypothesis": "The NIC card rolled 2-4\u00b0. The descent runs along base z above the port origin, so the entrance, 45.8 mm up, sits 1.6-3.2 mm to the side: expected to stick at the entrance.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.068164,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.164475,
+       "y": -0.237764,
+       "yaw": 3.231093,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "tilt_sfp_3": {
+   "digest": "692222f6c6a73cbd7595ad630fd3055679c651fef96b142360c25a28b222a50f",
+   "expected_class": "unknown",
+   "family": "tilt_sfp",
+   "hypothesis": "The NIC card rolled 2-4\u00b0. The descent runs along base z above the port origin, so the entrance, 45.8 mm up, sits 1.6-3.2 mm to the side: expected to stick at the entrance.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.035786,
+        "translation": 0.036,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.157437,
+       "y": -0.24777,
+       "yaw": 3.13559,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sc_0": {
+   "digest": "83c4f781df82194eed4aa8808722e984f840593920c4997215ee83d63ec2bc25",
+   "expected_class": "unknown",
+   "family": "trans_edge_sc",
+   "hypothesis": "The SC port at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.154562,
+       "y": -0.038336,
+       "yaw": 2.890774,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sc_1": {
+   "digest": "f11ef0447ec055a13a99a1be5c96d68f8312e79760b7f42fab2a531cb2a91521",
+   "expected_class": "unknown",
+   "family": "trans_edge_sc",
+   "hypothesis": "The SC port at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.167005,
+       "y": -0.023432,
+       "yaw": 2.970462,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sc_2": {
+   "digest": "60902c68b26da4c01376c0622fd66d37101b85d26a1788d483afa548abacf48b",
+   "expected_class": "unknown",
+   "family": "trans_edge_sc",
+   "hypothesis": "The SC port at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.167429,
+       "y": -0.019357,
+       "yaw": 2.921966,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sc_3": {
+   "digest": "289126a2c41933ccbdfb2339d741f31fdf86d1ca6a1236281f9fc7f23b7d987f",
+   "expected_class": "unknown",
+   "family": "trans_edge_sc",
+   "hypothesis": "The SC port at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_1": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable_reversed",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04045
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_present": false
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.04,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_present": false
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.173467,
+       "y": -0.044196,
+       "yaw": 2.933065,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_2",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_present": false
+      },
+      "sc_rail_1": {
+       "entity_name": "sc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.055,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.05,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_1",
+     "cable_type": "sfp_sc",
+     "plug_name": "sc_tip",
+     "plug_type": "sc",
+     "port_name": "sc_port_base",
+     "port_type": "sc",
+     "target_module_name": "sc_port_1",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sfp_0": {
+   "digest": "ed53a13b8e1728f5f4cedefbfeb76ffdbffdc0fb638bec5312e7dd645704465a",
+   "expected_class": "unknown",
+   "family": "trans_edge_sfp",
+   "hypothesis": "The NIC card at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.048,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.168936,
+       "y": -0.235274,
+       "yaw": 3.247529,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sfp_1": {
+   "digest": "b32412666b0d4b7bfebc406e541488501dce6f2e89c9aa8b7fdce2c8e23b65b2",
+   "expected_class": "unknown",
+   "family": "trans_edge_sfp",
+   "hypothesis": "The NIC card at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.048,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.168281,
+       "y": -0.185517,
+       "yaw": 3.141045,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sfp_2": {
+   "digest": "e6397e01fd13d35c31dd8aa6d18b6ae68fbadb0c838df6dbd92f495e9376c8fc",
+   "expected_class": "unknown",
+   "family": "trans_edge_sfp",
+   "hypothesis": "The NIC card at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.048,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.143996,
+       "y": -0.203546,
+       "yaw": 2.996818,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "trans_edge_sfp_3": {
+   "digest": "a143cbadee072bb326fbc6a48fc046a995ff5a237d4c2f06abcd3b422c423bc4",
+   "expected_class": "unknown",
+   "family": "trans_edge_sfp",
+   "hypothesis": "The NIC card at the far end of the engine's rail clamp. The port is followed wherever it sits: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.048,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.13897,
+       "y": -0.192411,
+       "yaw": 3.179742,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "yaw_edge_sfp_0": {
+   "digest": "d2b266ee07ffef122561b5c07fdebd977d98676bec629164c237fdfaddb4e93f",
+   "expected_class": "unknown",
+   "family": "yaw_edge_sfp",
+   "hypothesis": "The NIC card at an end of its \u00b110\u00b0 yaw range. The plug is turned to the port's orientation: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": 0.17453292519943295
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.162051,
+       "y": -0.214819,
+       "yaw": 3.274835,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "yaw_edge_sfp_1": {
+   "digest": "7799090edbd2622ced3c3288dcf8bd2598ee0125d3a3e8b53567451244cf9c17",
+   "expected_class": "unknown",
+   "family": "yaw_edge_sfp",
+   "hypothesis": "The NIC card at an end of its \u00b110\u00b0 yaw range. The plug is turned to the port's orientation: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": -0.17453292519943295
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.150496,
+       "y": -0.196359,
+       "yaw": 3.059132,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "yaw_edge_sfp_2": {
+   "digest": "818bbe624cbd61ab8fa3af558d33cf245bb64cded26a51382f15056f119c45cd",
+   "expected_class": "unknown",
+   "family": "yaw_edge_sfp",
+   "hypothesis": "The NIC card at an end of its \u00b110\u00b0 yaw range. The plug is turned to the port's orientation: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": -0.17453292519943295
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.144632,
+       "y": -0.210259,
+       "yaw": 3.223141,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  },
+  "yaw_edge_sfp_3": {
+   "digest": "40bfaa4be769c74f4cd68e2d8f5e29f437efe5a4582c8e3294881ae4828aa53e",
+   "expected_class": "unknown",
+   "family": "yaw_edge_sfp",
+   "hypothesis": "The NIC card at an end of its \u00b110\u00b0 yaw range. The plug is turned to the port's orientation: expected compensated.",
+   "trial": {
+    "scene": {
+     "cables": {
+      "cable_0": {
+       "attach_cable_to_gripper": true,
+       "cable_type": "sfp_sc_cable",
+       "pose": {
+        "gripper_offset": {
+         "x": 0.0,
+         "y": 0.015385,
+         "z": 0.04245
+        },
+        "pitch": -0.4838,
+        "roll": 0.4432,
+        "yaw": 1.3303
+       }
+      }
+     },
+     "task_board": {
+      "lc_mount_rail_0": {
+       "entity_name": "lc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "lc_mount_rail_1": {
+       "entity_name": "lc_mount_1",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.01,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "nic_rail_0": {
+       "entity_name": "nic_card_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.036,
+        "yaw": -0.17453292519943295
+       },
+       "entity_present": true
+      },
+      "nic_rail_1": {
+       "entity_present": false
+      },
+      "nic_rail_2": {
+       "entity_present": false
+      },
+      "nic_rail_3": {
+       "entity_present": false
+      },
+      "nic_rail_4": {
+       "entity_present": false
+      },
+      "pose": {
+       "pitch": 0.0,
+       "roll": 0.0,
+       "x": 0.1463,
+       "y": -0.164808,
+       "yaw": 3.171057,
+       "z": 1.14
+      },
+      "sc_mount_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": -0.02,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sc_mount_rail_1": {
+       "entity_present": false
+      },
+      "sc_rail_0": {
+       "entity_name": "sc_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.042,
+        "yaw": 0.1
+       },
+       "entity_present": true
+      },
+      "sc_rail_1": {
+       "entity_present": false
+      },
+      "sfp_mount_rail_0": {
+       "entity_name": "sfp_mount_0",
+       "entity_pose": {
+        "pitch": 0.0,
+        "roll": 0.0,
+        "translation": 0.03,
+        "yaw": 0.0
+       },
+       "entity_present": true
+      },
+      "sfp_mount_rail_1": {
+       "entity_present": false
+      }
+     }
+    },
+    "task": {
+     "cable_name": "cable_0",
+     "cable_type": "sfp_sc",
+     "plug_name": "sfp_tip",
+     "plug_type": "sfp",
+     "port_name": "sfp_port_0",
+     "port_type": "sfp",
+     "target_module_name": "nic_card_mount_0",
+     "time_limit": 180
+    }
+   }
+  }
+ },
+ "units": {
+  "beyond_sc_0_r0": {
+   "scene": "beyond_sc_0",
+   "seed": 0
+  },
+  "beyond_sc_0_r1": {
+   "scene": "beyond_sc_0",
+   "seed": 1
+  },
+  "beyond_sc_0_r2": {
+   "scene": "beyond_sc_0",
+   "seed": 2
+  },
+  "beyond_sc_1_r0": {
+   "scene": "beyond_sc_1",
+   "seed": 0
+  },
+  "beyond_sc_1_r1": {
+   "scene": "beyond_sc_1",
+   "seed": 1
+  },
+  "beyond_sc_1_r2": {
+   "scene": "beyond_sc_1",
+   "seed": 2
+  },
+  "beyond_sc_2_r0": {
+   "scene": "beyond_sc_2",
+   "seed": 0
+  },
+  "beyond_sc_2_r1": {
+   "scene": "beyond_sc_2",
+   "seed": 1
+  },
+  "beyond_sc_2_r2": {
+   "scene": "beyond_sc_2",
+   "seed": 2
+  },
+  "beyond_sc_3_r0": {
+   "scene": "beyond_sc_3",
+   "seed": 0
+  },
+  "beyond_sc_3_r1": {
+   "scene": "beyond_sc_3",
+   "seed": 1
+  },
+  "beyond_sc_3_r2": {
+   "scene": "beyond_sc_3",
+   "seed": 2
+  },
+  "beyond_sfp_0_r0": {
+   "scene": "beyond_sfp_0",
+   "seed": 0
+  },
+  "beyond_sfp_0_r1": {
+   "scene": "beyond_sfp_0",
+   "seed": 1
+  },
+  "beyond_sfp_0_r2": {
+   "scene": "beyond_sfp_0",
+   "seed": 2
+  },
+  "beyond_sfp_1_r0": {
+   "scene": "beyond_sfp_1",
+   "seed": 0
+  },
+  "beyond_sfp_1_r1": {
+   "scene": "beyond_sfp_1",
+   "seed": 1
+  },
+  "beyond_sfp_1_r2": {
+   "scene": "beyond_sfp_1",
+   "seed": 2
+  },
+  "beyond_sfp_2_r0": {
+   "scene": "beyond_sfp_2",
+   "seed": 0
+  },
+  "beyond_sfp_2_r1": {
+   "scene": "beyond_sfp_2",
+   "seed": 1
+  },
+  "beyond_sfp_2_r2": {
+   "scene": "beyond_sfp_2",
+   "seed": 2
+  },
+  "beyond_sfp_3_r0": {
+   "scene": "beyond_sfp_3",
+   "seed": 0
+  },
+  "beyond_sfp_3_r1": {
+   "scene": "beyond_sfp_3",
+   "seed": 1
+  },
+  "beyond_sfp_3_r2": {
+   "scene": "beyond_sfp_3",
+   "seed": 2
+  },
+  "empty_rail_sfp_0_r0": {
+   "scene": "empty_rail_sfp_0",
+   "seed": 0
+  },
+  "empty_rail_sfp_0_r1": {
+   "scene": "empty_rail_sfp_0",
+   "seed": 1
+  },
+  "empty_rail_sfp_0_r2": {
+   "scene": "empty_rail_sfp_0",
+   "seed": 2
+  },
+  "empty_rail_sfp_1_r0": {
+   "scene": "empty_rail_sfp_1",
+   "seed": 0
+  },
+  "empty_rail_sfp_1_r1": {
+   "scene": "empty_rail_sfp_1",
+   "seed": 1
+  },
+  "empty_rail_sfp_1_r2": {
+   "scene": "empty_rail_sfp_1",
+   "seed": 2
+  },
+  "empty_rail_sfp_2_r0": {
+   "scene": "empty_rail_sfp_2",
+   "seed": 0
+  },
+  "empty_rail_sfp_2_r1": {
+   "scene": "empty_rail_sfp_2",
+   "seed": 1
+  },
+  "empty_rail_sfp_2_r2": {
+   "scene": "empty_rail_sfp_2",
+   "seed": 2
+  },
+  "empty_rail_sfp_3_r0": {
+   "scene": "empty_rail_sfp_3",
+   "seed": 0
+  },
+  "empty_rail_sfp_3_r1": {
+   "scene": "empty_rail_sfp_3",
+   "seed": 1
+  },
+  "empty_rail_sfp_3_r2": {
+   "scene": "empty_rail_sfp_3",
+   "seed": 2
+  },
+  "inrange_sc_0_r0": {
+   "scene": "inrange_sc_0",
+   "seed": 0
+  },
+  "inrange_sc_0_r1": {
+   "scene": "inrange_sc_0",
+   "seed": 1
+  },
+  "inrange_sc_0_r2": {
+   "scene": "inrange_sc_0",
+   "seed": 2
+  },
+  "inrange_sc_1_r0": {
+   "scene": "inrange_sc_1",
+   "seed": 0
+  },
+  "inrange_sc_1_r1": {
+   "scene": "inrange_sc_1",
+   "seed": 1
+  },
+  "inrange_sc_1_r2": {
+   "scene": "inrange_sc_1",
+   "seed": 2
+  },
+  "inrange_sc_2_r0": {
+   "scene": "inrange_sc_2",
+   "seed": 0
+  },
+  "inrange_sc_2_r1": {
+   "scene": "inrange_sc_2",
+   "seed": 1
+  },
+  "inrange_sc_2_r2": {
+   "scene": "inrange_sc_2",
+   "seed": 2
+  },
+  "inrange_sc_3_r0": {
+   "scene": "inrange_sc_3",
+   "seed": 0
+  },
+  "inrange_sc_3_r1": {
+   "scene": "inrange_sc_3",
+   "seed": 1
+  },
+  "inrange_sc_3_r2": {
+   "scene": "inrange_sc_3",
+   "seed": 2
+  },
+  "inrange_sfp_0_r0": {
+   "scene": "inrange_sfp_0",
+   "seed": 0
+  },
+  "inrange_sfp_0_r1": {
+   "scene": "inrange_sfp_0",
+   "seed": 1
+  },
+  "inrange_sfp_0_r2": {
+   "scene": "inrange_sfp_0",
+   "seed": 2
+  },
+  "inrange_sfp_1_r0": {
+   "scene": "inrange_sfp_1",
+   "seed": 0
+  },
+  "inrange_sfp_1_r1": {
+   "scene": "inrange_sfp_1",
+   "seed": 1
+  },
+  "inrange_sfp_1_r2": {
+   "scene": "inrange_sfp_1",
+   "seed": 2
+  },
+  "inrange_sfp_2_r0": {
+   "scene": "inrange_sfp_2",
+   "seed": 0
+  },
+  "inrange_sfp_2_r1": {
+   "scene": "inrange_sfp_2",
+   "seed": 1
+  },
+  "inrange_sfp_2_r2": {
+   "scene": "inrange_sfp_2",
+   "seed": 2
+  },
+  "inrange_sfp_3_r0": {
+   "scene": "inrange_sfp_3",
+   "seed": 0
+  },
+  "inrange_sfp_3_r1": {
+   "scene": "inrange_sfp_3",
+   "seed": 1
+  },
+  "inrange_sfp_3_r2": {
+   "scene": "inrange_sfp_3",
+   "seed": 2
+  },
+  "tilt_sc_0_r0": {
+   "scene": "tilt_sc_0",
+   "seed": 0
+  },
+  "tilt_sc_0_r1": {
+   "scene": "tilt_sc_0",
+   "seed": 1
+  },
+  "tilt_sc_0_r2": {
+   "scene": "tilt_sc_0",
+   "seed": 2
+  },
+  "tilt_sc_1_r0": {
+   "scene": "tilt_sc_1",
+   "seed": 0
+  },
+  "tilt_sc_1_r1": {
+   "scene": "tilt_sc_1",
+   "seed": 1
+  },
+  "tilt_sc_1_r2": {
+   "scene": "tilt_sc_1",
+   "seed": 2
+  },
+  "tilt_sc_2_r0": {
+   "scene": "tilt_sc_2",
+   "seed": 0
+  },
+  "tilt_sc_2_r1": {
+   "scene": "tilt_sc_2",
+   "seed": 1
+  },
+  "tilt_sc_2_r2": {
+   "scene": "tilt_sc_2",
+   "seed": 2
+  },
+  "tilt_sc_3_r0": {
+   "scene": "tilt_sc_3",
+   "seed": 0
+  },
+  "tilt_sc_3_r1": {
+   "scene": "tilt_sc_3",
+   "seed": 1
+  },
+  "tilt_sc_3_r2": {
+   "scene": "tilt_sc_3",
+   "seed": 2
+  },
+  "tilt_sfp_0_r0": {
+   "scene": "tilt_sfp_0",
+   "seed": 0
+  },
+  "tilt_sfp_0_r1": {
+   "scene": "tilt_sfp_0",
+   "seed": 1
+  },
+  "tilt_sfp_0_r2": {
+   "scene": "tilt_sfp_0",
+   "seed": 2
+  },
+  "tilt_sfp_1_r0": {
+   "scene": "tilt_sfp_1",
+   "seed": 0
+  },
+  "tilt_sfp_1_r1": {
+   "scene": "tilt_sfp_1",
+   "seed": 1
+  },
+  "tilt_sfp_1_r2": {
+   "scene": "tilt_sfp_1",
+   "seed": 2
+  },
+  "tilt_sfp_2_r0": {
+   "scene": "tilt_sfp_2",
+   "seed": 0
+  },
+  "tilt_sfp_2_r1": {
+   "scene": "tilt_sfp_2",
+   "seed": 1
+  },
+  "tilt_sfp_2_r2": {
+   "scene": "tilt_sfp_2",
+   "seed": 2
+  },
+  "tilt_sfp_3_r0": {
+   "scene": "tilt_sfp_3",
+   "seed": 0
+  },
+  "tilt_sfp_3_r1": {
+   "scene": "tilt_sfp_3",
+   "seed": 1
+  },
+  "tilt_sfp_3_r2": {
+   "scene": "tilt_sfp_3",
+   "seed": 2
+  },
+  "trans_edge_sc_0_r0": {
+   "scene": "trans_edge_sc_0",
+   "seed": 0
+  },
+  "trans_edge_sc_0_r1": {
+   "scene": "trans_edge_sc_0",
+   "seed": 1
+  },
+  "trans_edge_sc_0_r2": {
+   "scene": "trans_edge_sc_0",
+   "seed": 2
+  },
+  "trans_edge_sc_1_r0": {
+   "scene": "trans_edge_sc_1",
+   "seed": 0
+  },
+  "trans_edge_sc_1_r1": {
+   "scene": "trans_edge_sc_1",
+   "seed": 1
+  },
+  "trans_edge_sc_1_r2": {
+   "scene": "trans_edge_sc_1",
+   "seed": 2
+  },
+  "trans_edge_sc_2_r0": {
+   "scene": "trans_edge_sc_2",
+   "seed": 0
+  },
+  "trans_edge_sc_2_r1": {
+   "scene": "trans_edge_sc_2",
+   "seed": 1
+  },
+  "trans_edge_sc_2_r2": {
+   "scene": "trans_edge_sc_2",
+   "seed": 2
+  },
+  "trans_edge_sc_3_r0": {
+   "scene": "trans_edge_sc_3",
+   "seed": 0
+  },
+  "trans_edge_sc_3_r1": {
+   "scene": "trans_edge_sc_3",
+   "seed": 1
+  },
+  "trans_edge_sc_3_r2": {
+   "scene": "trans_edge_sc_3",
+   "seed": 2
+  },
+  "trans_edge_sfp_0_r0": {
+   "scene": "trans_edge_sfp_0",
+   "seed": 0
+  },
+  "trans_edge_sfp_0_r1": {
+   "scene": "trans_edge_sfp_0",
+   "seed": 1
+  },
+  "trans_edge_sfp_0_r2": {
+   "scene": "trans_edge_sfp_0",
+   "seed": 2
+  },
+  "trans_edge_sfp_1_r0": {
+   "scene": "trans_edge_sfp_1",
+   "seed": 0
+  },
+  "trans_edge_sfp_1_r1": {
+   "scene": "trans_edge_sfp_1",
+   "seed": 1
+  },
+  "trans_edge_sfp_1_r2": {
+   "scene": "trans_edge_sfp_1",
+   "seed": 2
+  },
+  "trans_edge_sfp_2_r0": {
+   "scene": "trans_edge_sfp_2",
+   "seed": 0
+  },
+  "trans_edge_sfp_2_r1": {
+   "scene": "trans_edge_sfp_2",
+   "seed": 1
+  },
+  "trans_edge_sfp_2_r2": {
+   "scene": "trans_edge_sfp_2",
+   "seed": 2
+  },
+  "trans_edge_sfp_3_r0": {
+   "scene": "trans_edge_sfp_3",
+   "seed": 0
+  },
+  "trans_edge_sfp_3_r1": {
+   "scene": "trans_edge_sfp_3",
+   "seed": 1
+  },
+  "trans_edge_sfp_3_r2": {
+   "scene": "trans_edge_sfp_3",
+   "seed": 2
+  },
+  "yaw_edge_sfp_0_r0": {
+   "scene": "yaw_edge_sfp_0",
+   "seed": 0
+  },
+  "yaw_edge_sfp_0_r1": {
+   "scene": "yaw_edge_sfp_0",
+   "seed": 1
+  },
+  "yaw_edge_sfp_0_r2": {
+   "scene": "yaw_edge_sfp_0",
+   "seed": 2
+  },
+  "yaw_edge_sfp_1_r0": {
+   "scene": "yaw_edge_sfp_1",
+   "seed": 0
+  },
+  "yaw_edge_sfp_1_r1": {
+   "scene": "yaw_edge_sfp_1",
+   "seed": 1
+  },
+  "yaw_edge_sfp_1_r2": {
+   "scene": "yaw_edge_sfp_1",
+   "seed": 2
+  },
+  "yaw_edge_sfp_2_r0": {
+   "scene": "yaw_edge_sfp_2",
+   "seed": 0
+  },
+  "yaw_edge_sfp_2_r1": {
+   "scene": "yaw_edge_sfp_2",
+   "seed": 1
+  },
+  "yaw_edge_sfp_2_r2": {
+   "scene": "yaw_edge_sfp_2",
+   "seed": 2
+  },
+  "yaw_edge_sfp_3_r0": {
+   "scene": "yaw_edge_sfp_3",
+   "seed": 0
+  },
+  "yaw_edge_sfp_3_r1": {
+   "scene": "yaw_edge_sfp_3",
+   "seed": 1
+  },
+  "yaw_edge_sfp_3_r2": {
+   "scene": "yaw_edge_sfp_3",
+   "seed": 2
+  }
+ },
+ "version": 1
+}

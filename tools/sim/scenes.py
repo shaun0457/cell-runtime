@@ -30,7 +30,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from adapters.aic.manifest import scene_digest
+from adapters.aic.manifest import TASK_FIELDS, Family, Manifest, SceneId, scene_digest
 
 # aic_engine.cpp:1791-1796: the trial's own `task_board_limits` would replace these; the sample
 # config's root-level block is never read.
@@ -55,16 +55,7 @@ BOARD_KEYS = frozenset({"pose", *NIC_RAILS, *SC_RAILS, *MOUNT_RAILS})
 BOARD_POSE_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
 ENTITY_POSE_KEYS = ("translation", "roll", "pitch", "yaw")
 CABLE_POSE_KEYS = ("gripper_offset", "roll", "pitch", "yaw")
-TASK_KEYS = (
-    "cable_type",
-    "cable_name",
-    "plug_type",
-    "plug_name",
-    "port_type",
-    "port_name",
-    "target_module_name",
-    "time_limit",
-)
+TASK_KEYS = TASK_FIELDS  # the keys `Trial::Trial` reads in a task are the ones a scene fixes
 _TILT_EPS = 1e-12
 
 
@@ -78,10 +69,10 @@ class Scene(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    scene_id: str = Field(pattern=r"^[a-z0-9_]{1,56}$")
-    family: str = Field(pattern=r"^[a-z0-9_]{1,40}$")
+    scene_id: SceneId  # the manifest's own field types (adapters/aic/manifest.py)
+    family: Family
     hypothesis: str = Field(default="", max_length=300)
-    expected_class: str = Field(default="unknown", pattern=r"^[a-z0-9_]{1,40}$")
+    expected_class: Family = "unknown"
     trial: dict[str, Any]
 
     @property
@@ -136,11 +127,19 @@ def engine_config(
     return config
 
 
-def build_manifest(name: str, scenes: Sequence[Scene], *, repeats: int) -> dict[str, Any]:
-    """The manifest (ADR 027) for `scenes`, each with repeats 0 to `repeats` - 1."""
-    if repeats < 1:
+def build_manifest(
+    name: str, scenes: Sequence[Scene], *, repeats: int | Mapping[str, int]
+) -> dict[str, Any]:
+    """The manifest (ADR 027) for `scenes`, each with repeats 0 to n - 1: n is `repeats`, or
+    `repeats[scene_id]` when it is a map. The result is checked by the policy's own model
+    (`Manifest`), so a manifest written here is one the policy loads."""
+    ids = [s.scene_id for s in scenes]
+    if len(set(ids)) != len(ids):
+        raise ValueError("two scenes share a scene id")
+    counts = {i: repeats if isinstance(repeats, int) else repeats[i] for i in ids}
+    if any(n < 1 for n in counts.values()):
         raise ValueError("repeats must be at least 1")
-    return {
+    manifest = {
         "name": name,
         "version": 1,
         "scenes": {
@@ -154,8 +153,27 @@ def build_manifest(name: str, scenes: Sequence[Scene], *, repeats: int) -> dict[
             for s in scenes
         },
         "units": {
-            s.task_id(k): {"scene": s.scene_id, "seed": k} for s in scenes for k in range(repeats)
+            s.task_id(k): {"scene": s.scene_id, "seed": k}
+            for s in scenes
+            for k in range(counts[s.scene_id])
         },
+    }
+    Manifest.model_validate(manifest)
+    return manifest
+
+
+def scenes_of(manifest: Mapping[str, Any]) -> dict[str, Scene]:
+    """A manifest's scenes by id, as the runner renders them (ADR 028: an engine config is
+    rendered from the manifest's own scene entries)."""
+    return {
+        scene_id: Scene(
+            scene_id=scene_id,
+            family=entry["family"],
+            hypothesis=entry["hypothesis"],
+            expected_class=entry["expected_class"],
+            trial=entry["trial"],
+        )
+        for scene_id, entry in manifest["scenes"].items()
     }
 
 
