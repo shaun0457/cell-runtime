@@ -138,8 +138,10 @@ fake process runner):
   current `config_hash` **and** its referee data: its `scoring.yaml` entry and its bag dump.
 - **One session, one commit, one store.** Each session writes its own store, and the runner
   refuses to add an engine run to a session whose ledger names another commit. The report
-  counts, per unit, the first attempt in that session's store that has referee data; it never
-  filters by the `config_hash` of the checkout it runs from. So the pilot table, the checkpoint
+  counts, per unit, the first attempt in that session's store that both finished and has its
+  referee data, the queue's own rule; it never filters by the `config_hash` of the checkout it
+  runs from. An attempt whose policy process died has a bag and a score but no finished run, so
+  it is not counted, and the queue reruns it. So the pilot table, the checkpoint
   and the held-out each count the runs of one configuration.
 - **Attempts are counted by the runner's ledger, not by `run_started`**, because most ways an
   engine run fails happen before any run starts:
@@ -186,7 +188,7 @@ snapshots, and no trial.
 
 - **Outside the hash, because the runner is plumbing, not part of the system under test.**
   The hash exists so that a changed Monitor rule can never reuse old results (ADR 010). A fixed
-  typo in a log path should not cost a rerun of every finished trial. The weakness to name
+  typo in a log path should not mark the system under test as changed. The weakness to name
   first: a runner change can still alter results by changing what is spawned. That is why the
   digest is taken over the trial the engine reads, not over the generator's parameters, and
   why the ledger records the commit and the engine config's hash.
@@ -205,8 +207,10 @@ snapshots, and no trial.
 ## Consequences
 
 - The out-of-repo scripts are retired once the tracer run (#78) passes on the VM.
-- The batch runner can be fixed during the campaign without rerunning anything. The tag
-  `phase2-heldout` (ADR 030) still freezes it for the held-out session.
+- The batch runner can be fixed between sessions without rerunning a finished session. A fix
+  in the middle of a session changes the commit, so the runner refuses to continue that
+  session: its units are rerun in a new session, with its own store. The tag `phase2-heldout`
+  (ADR 030) still freezes the runner for the held-out session.
 - Every test of a bound uses the fake runner: a sim that never becomes ready, a policy that
   never connects, an engine that never finishes, each error line, a missing mount, a full disk.
 - A VM stop mid-run costs at most one engine run of trials, and the ledger shows it.
