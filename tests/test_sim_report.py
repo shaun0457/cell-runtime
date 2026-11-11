@@ -963,8 +963,8 @@ def test_the_calibration_table_pools_the_counted_trials_per_port_type(tmp_path: 
         f"| all | 2 | 22 | {period} | 2 | 4 | {free} | undefined | {align} |"
         f" 4 verdicts, 0 repeats, 0 untimed; {stuck} | 6 verdicts, 2 repeats, 2 untimed; {limit} |",
     ]
-    assert "INSERT_STUCK from the start of the run above 10 N; FORCE_LIMIT from" in table
-    assert "first step over 20 N" in table
+    assert "INSERT_STUCK from the first of the consecutive fresh samples above 10 N" in table
+    assert "added to the Monitor's sum over 20 N" in table
 
 
 def test_a_class_without_verdicts_is_none(tmp_path: Path) -> None:

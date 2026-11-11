@@ -1001,9 +1001,11 @@ def calibration_table(trials: Sequence[Trial]) -> str:
         "free space: every fresh sample of approach; at rest: a fresh sample after the plug"
         f" moved under {REST_MM} mm in each of {REST_STEPS} steps, over {REST_CLEARANCE_MM} mm"
         " above the port's entrance",
-        f"rise: INSERT_STUCK from the start of the run above {STUCK_N:g} N; FORCE_LIMIT from the"
-        f" run's first step over {LIMIT_N:g} N, its verdict's summed time over the limit against"
-        " the Monitor's trigger; only the first verdict of a rise or run is timed",
+        f"rise: INSERT_STUCK from the first of the consecutive fresh samples above {STUCK_N:g} N"
+        " within the skill; FORCE_LIMIT from the start of the task's first step that added to"
+        f" the Monitor's sum over {LIMIT_N:g} N, shown with the verdict's sum (over the limit)"
+        " against the Monitor's trigger; only the first verdict of a rise, or of the task for"
+        " FORCE_LIMIT, is timed",
         "measured only: a threshold changes under ADR 030's D5, with ADR 032",
     ]
     return _table(CALIBRATION, rows) + "\n\n" + "\n".join(f"- {n}" for n in notes)

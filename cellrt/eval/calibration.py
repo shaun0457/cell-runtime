@@ -13,22 +13,25 @@ after a world step (`executor/runner.py`), and from the skill running when it wa
   against the 10 N of `stuck_force_n`.
 - **Tare residual at rest**: the tared force magnitude in fresh samples where the plug has moved
   less than `REST_MM` in each of the last `REST_STEPS` steps (height and both axis offsets) and
-  is higher above the port than `free_above_mm` (the caller's entrance height): the plug still
-  and clear of the port. Kept apart for `approach` and `align`: align holds near the board
-  (ADR 024), so a difference between the two hints at contact or a cable resting on something,
-  which the plug's height cannot rule out.
+  is higher above the port than `free_above_mm` (the height the caller takes as clear of the
+  port; None takes any): the plug still and clear of the port. Kept apart for `approach` and
+  `align`: align holds near the board (ADR 024), so a difference between the two hints at
+  contact or a cable resting on something, which the plug's height cannot rule out.
 - **Force verdicts**: each INSERT_STUCK and FORCE_LIMIT verdict, timed from the start of its
-  rise:
-  - INSERT_STUCK: from the first fresh sample above `stuck_n` of the run of such samples the
-    verdict ends; a sample whose wrench is not fresh neither starts nor ends a run, as the
-    Monitor's window does not.
-  - FORCE_LIMIT: from the run's first step over the limit, as the Monitor counts one: a fresh
-    sample above `limit_n`, or time over the limit in the F/T stream during the step
-    (`force_over_limit_s`, which catches spikes between samples). The Monitor sums that time
-    over the whole task, so this is the time the sum took to reach its trigger. The verdict's
-    `over_s` (the sum when it fired) is kept, against the 0.5 s trigger and the 1 s budget.
+  rise, as the Monitor counts it:
+  - INSERT_STUCK: from the first of the consecutive fresh samples above `stuck_n` that lead to
+    the verdict, within the skill: the Monitor's insertion window starts again with each skill
+    (`Monitor.reset`). A sample whose wrench is not fresh neither starts nor ends the series.
+  - FORCE_LIMIT: from the start of the first step that added time to the Monitor's sum over
+    the limit (`runtime/state.py`), that is from the sample before it (the task's start for
+    its first sample). A step adds the F/T stream's time over the limit (`force_over_limit_s`,
+    which catches spikes between samples) where the world reads one, else the whole step when
+    its fresh sample is above `limit_n`. The sum runs over the whole task, so the rise never
+    ends. The verdict's `over_s` (the sum when it fired) is kept, against the 0.5 s trigger
+    and the 1 s budget; the rise is at least as long, and longer by the time in it under the
+    limit.
 
-  Only the first verdict of a rise (INSERT_STUCK) or of the run (FORCE_LIMIT) is timed: the
+  Only the first verdict of a rise (INSERT_STUCK) or of the task (FORCE_LIMIT) is timed: the
   Monitor repeats a FORCE_LIMIT verdict on every further sample over the limit. A verdict with
   no rise before it is untimed. Both are counted.
 
@@ -48,6 +51,7 @@ from cellrt.monitor.classifier import FailureClass, MonitorConfig
 from cellrt.runtime.events import (
     Event,
     MonitorVerdict,
+    RunStarted,
     SignalSampled,
     SkillCancelled,
     SkillFinished,
@@ -72,7 +76,7 @@ class ForceVerdict:
 
     failure_class: str
     rise_s: float | None  # None: a repeat, or untimed (no rise before it)
-    repeat: bool = False  # not the first verdict of its rise (INSERT_STUCK) or run (FORCE_LIMIT)
+    repeat: bool = False  # not the first verdict of its rise (INSERT_STUCK) or task (FORCE_LIMIT)
     over_s: float | None = None  # FORCE_LIMIT: the Monitor's sum over the limit when it fired
 
 
@@ -134,12 +138,16 @@ def measure(
     rest: dict[str, list[float]] = {skill: [] for skill in REST_SKILLS}
     verdicts: list[ForceVerdict] = []
     skill: str | None = None
+    started: float | None = None
     last: tuple[float, SignalSampled] | None = None
     rises = {INSERT_STUCK: _Rise(), FORCE_LIMIT: _Rise()}
     for event in events:
         match event.payload:
+            case RunStarted():
+                started = event.ts
             case SkillStarted(skill=name):
                 skill = name
+                rises[INSERT_STUCK].end()  # the Monitor's insertion window starts again
             case SkillFinished(skill=name) | SkillCancelled(skill=name) if name == skill:
                 skill = None
             case MonitorVerdict(failure_class=failure_class, evidence=evidence) if (
@@ -163,13 +171,14 @@ def measure(
                     and (free_above_mm is None or s.height_mm > free_above_mm)
                 ):
                     rest[skill].append(s.force_n)
-                if s.wrench_valid:  # a stale sample neither starts nor ends a run above it
+                if s.wrench_valid:  # a stale sample neither starts nor ends a series above it
                     if s.force_n > stuck_n:
                         rises[INSERT_STUCK].start(event.ts)
                     else:
                         rises[INSERT_STUCK].end()
-                if (s.wrench_valid and s.force_n > limit_n) or bool(s.force_over_limit_s):
-                    rises[FORCE_LIMIT].start(event.ts)  # summed over the run: it never ends
+                if _adds_over_limit(s, limit_n):  # summed over the task: it never ends
+                    since = last[0] if last is not None else started
+                    rises[FORCE_LIMIT].start(event.ts if since is None else since)
                 last = (event.ts, s)
     return Measured(
         samples=samples,
@@ -198,6 +207,15 @@ def summarize(values: Iterable[float], *, min_values: int = MIN_VALUES) -> Summa
         p95=ordered[math.ceil(0.95 * n) - 1],
         max=ordered[-1],
     )
+
+
+def _adds_over_limit(s: SignalSampled, limit_n: float) -> bool:
+    """Whether this sample's step adds time to the Monitor's sum over the limit, as the fold
+    adds it (`runtime/state.py`): the F/T stream's time where the world reads one, else the
+    fresh sample's force."""
+    if s.force_over_limit_s is not None:
+        return s.force_over_limit_s > 0
+    return s.wrench_valid and s.force_n > limit_n
 
 
 def _still(before: SignalSampled, s: SignalSampled) -> bool:

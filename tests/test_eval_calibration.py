@@ -18,17 +18,21 @@ from cellrt.eval.calibration import (
     measure,
     summarize,
 )
-from cellrt.monitor.classifier import MonitorConfig
+from cellrt.executor.samples import signals_of
+from cellrt.monitor.classifier import Monitor, MonitorConfig
 from cellrt.runtime.events import (
+    SCHEMA_VERSION,
     Event,
     MonitorVerdict,
     PreconditionFailed,
+    RunStarted,
     SignalSampled,
     SkillCancelled,
     SkillFinished,
     SkillStarted,
 )
-from cellrt.runtime.state import FORCE_LIMIT_N
+from cellrt.runtime.state import FORCE_LIMIT_N, RunState, apply
+from cellrt.runtime.task import Task
 
 STUCK_N, LIMIT_N = calibration.STUCK_N, calibration.LIMIT_N
 FREE_ABOVE_MM = 50.0
@@ -216,10 +220,26 @@ def test_insert_stuck_is_timed_from_the_start_of_its_run_above_the_threshold() -
     assert second == ForceVerdict("INSERT_STUCK", None, repeat=True)
 
 
-def test_force_limit_is_timed_from_the_runs_first_step_over_the_limit() -> None:
+def test_insert_stuck_starts_again_with_each_skill() -> None:
     m = _measure(
-        (0.05, _sample(3.0)),
-        (0.10, _sample(15.0, over_limit_s=0.02)),  # a spike between samples (AIC)
+        (0.0, SkillStarted(skill="align", attempt=1)),
+        (0.05, _sample(12.0)),
+        (0.10, _sample(12.0)),
+        (0.10, SkillFinished(skill="align", ok=True)),
+        (0.10, SkillStarted(skill="insert_scripted", attempt=1)),  # the Monitor resets
+        *_held(10, t0=0.10, force=12.0),
+        (0.60, _verdict("INSERT_STUCK")),
+    )
+
+    (v,) = m.force_verdicts
+    assert v.rise_s == pytest.approx(0.45)
+
+
+def test_force_limit_is_timed_from_the_first_step_that_adds_to_the_monitors_sum() -> None:
+    m = _measure(
+        (0.00, _sample(3.0)),
+        (0.05, _sample(25.0, over_limit_s=0.0)),  # the stream was not over it: the sum adds 0
+        (0.10, _sample(15.0, over_limit_s=0.02)),  # a spike between samples (AIC): this step
         (0.15, _sample(3.0, over_limit_s=0.0)),  # under again: the Monitor's sum goes on
         (0.70, _sample(15.0, over_limit_s=0.03)),
         (0.70, _verdict("FORCE_LIMIT", over_s=0.52)),
@@ -228,20 +248,68 @@ def test_force_limit_is_timed_from_the_runs_first_step_over_the_limit() -> None:
     )
 
     (first, second) = m.force_verdicts
-    assert first.rise_s == pytest.approx(0.60) and first.over_s == 0.52
+    assert first.rise_s == pytest.approx(0.65) and first.over_s == 0.52
     assert second == ForceVerdict("FORCE_LIMIT", None, repeat=True, over_s=0.57)
 
 
-def test_a_fresh_sample_over_the_limit_starts_force_limit_where_no_stream_is_read() -> None:
+def test_a_fresh_sample_over_the_limit_adds_its_step_where_no_stream_is_read() -> None:
     m = _measure(
         (0.05, _sample(LIMIT_N)),  # at the limit is not over it
-        (0.10, _sample(LIMIT_N + 1.0)),  # the mock: no force_over_limit_s
+        (0.10, _sample(LIMIT_N + 1.0)),  # the mock: no force_over_limit_s; adds 0.05 to 0.10
         (0.60, _sample(LIMIT_N + 1.0)),
-        (0.60, _verdict("FORCE_LIMIT", over_s=0.5)),
+        (0.60, _verdict("FORCE_LIMIT", over_s=0.55)),
     )
 
     (v,) = m.force_verdicts
-    assert v.rise_s == pytest.approx(0.50)
+    assert v.rise_s == pytest.approx(0.55)
+
+
+@pytest.mark.parametrize(("started", "rise"), [(True, 0.50), (False, 0.45)])
+def test_a_first_sample_over_the_limit_is_timed_from_the_tasks_start(
+    started: bool, rise: float
+) -> None:
+    run_started = RunStarted(scenario_id="s", setting="A", seed=0, attempt=1, task=Task(),
+                             config_hash="h", schema_version=SCHEMA_VERSION)  # fmt: skip
+    m = _measure(
+        *([(0.0, run_started)] if started else []),
+        *_held(10, force=LIMIT_N + 1.0),
+        (0.50, _verdict("FORCE_LIMIT", over_s=0.5)),
+    )
+
+    (v,) = m.force_verdicts
+    assert v.rise_s == pytest.approx(rise)  # without a start, from the sample itself
+
+
+@pytest.mark.parametrize(
+    ("stream", "rise", "over"), [(False, 0.50, 0.50), (True, 0.55, 0.53)], ids=["mock", "aic"]
+)
+def test_the_force_limit_rise_covers_the_monitors_own_sum(
+    stream: bool, rise: float, over: float
+) -> None:
+    """The real fold and Monitor: the force goes over the limit in the 3rd step (0.03 s into it
+    on the AIC path, where the stream reads it) and stays over it."""
+    state = RunState()
+    monitor = Monitor(STEP, MonitorConfig(), force_time=lambda: state.over_limit_s)
+    monitor.reset("motion", skill="align")
+    events: list[Event] = []
+    for k in range(1, 40):
+        ts = round(STEP * k, 6)
+        over_limit_s = None if not stream else (0.03 if k == 3 else STEP if k > 3 else 0.0)
+        sample = _sample(LIMIT_N + 5.0 if k >= 3 else 3.0, over_limit_s=over_limit_s)
+        events.append(Event(run_id="r", seq=len(events) + 1, ts=ts, wall_ts=ts, payload=sample))
+        state = apply(state, events[-1])
+        if (v := monitor.observe(signals_of(sample))) is not None:
+            verdict = MonitorVerdict(
+                skill="align", failure_class=v.failure_class.value, rule=v.rule, evidence=v.evidence
+            )
+            events.append(
+                Event(run_id="r", seq=len(events) + 1, ts=ts, wall_ts=ts, payload=verdict)
+            )
+            break
+
+    (fv,) = measure(events, free_above_mm=None).force_verdicts
+    assert (fv.rise_s, fv.over_s) == pytest.approx((rise, over))
+    assert fv.rise_s >= fv.over_s
 
 
 def test_a_verdict_without_a_rise_is_counted_untimed() -> None:
