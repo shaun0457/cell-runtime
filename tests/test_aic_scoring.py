@@ -51,6 +51,13 @@ def test_a_receive_time_on_a_pair_takes_its_stamp() -> None:
     assert sim_time(10 * S, [(10 * S, 100 * S), (11 * S, 101 * S)]) == (100.0, 0.25)
 
 
+def test_pairs_received_at_the_events_time_give_the_earliest_stamp_and_their_spread() -> None:
+    pairs = [(9 * S, 99 * S), (10 * S, 100 * S + 200_000_000), (10 * S, 100 * S), (11 * S, 101 * S)]
+
+    assert sim_time(10 * S, pairs) == (100.0, pytest.approx(0.6))  # 3 x the 0.2 s between them
+    assert sim_time(10 * S, pairs[1:3]) == (100.0, pytest.approx(0.6))  # no pair on either side
+
+
 @pytest.mark.parametrize(
     "recv",
     [9 * S, 12 * S],  # before the first pair, after the last
@@ -167,6 +174,11 @@ def test_a_missing_or_odd_score_is_none(score: object) -> None:
         {"version": 1, "insertions": [], "contacts": [], "pairs": [[1, 2, 3]]},
         {"version": 1, "insertions": [], "contacts": [], "pairs": [[1, 2.5]]},
         {"version": 1, "insertions": "x", "contacts": [], "pairs": []},
+        # Beyond int64 (a float overflow in the mapping), or negative: not a bag's time.
+        {"version": 1, "insertions": [], "contacts": [], "pairs": [[1 << 63, 2]]},
+        {"version": 1, "insertions": [], "contacts": [], "pairs": [[1, 10**400]]},
+        {"version": 1, "insertions": [{"recv_ns": -1, "port": "p"}], "contacts": [], "pairs": []},
+        {"version": 1, "insertions": [], "contacts": [{"recv_ns": 1, "count": -2}], "pairs": []},
     ],
 )
 def test_a_malformed_dump_is_refused_with_a_fixed_message(dump: object) -> None:

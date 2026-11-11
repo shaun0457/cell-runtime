@@ -27,11 +27,24 @@ report refuses rather than count its units as infrastructure. Attempts before th
 run given are another session's and are not checked, so a left-out first or last engine run is
 not seen.
 
+**A perturbation that did not take effect** (ADR 026). Each scene of a family that changes one
+value is checked on its counted trials' `world_ready` readbacks against its port type's
+reference (`tools/sim/applied.py`): the first counted trial of a `nominal` scene, in the
+session's own manifest or else in a reference session's (`--reference-manifest` and
+`--reference-run`, whose engine runs need not be all of that session's). The held-out manifest
+holds no `nominal` scene, so its report needs the tuning session as its reference, and refuses
+a counted scene of a checked family that could not be checked against one. A scene with a trial
+outside its tolerance is "not applied": listed, and left out of the A/B table, the claim and the
+confusion table. Each reference is printed with its engine run's commit and the spread of its
+port type's other nominal trials about it.
+
 **The claim.** ADR 030 makes its one pooled claim on the held-out manifest (its name starts with
 `heldout`); on any other manifest the A/B table is descriptive and no claim is printed.
 
 **The tables.**
 - Discovery: per scene, each trial's class per setting (ADR 026), and whether A's are mixed.
+- Applied: per scene, the value its request changes, the readback farthest from it, and whether
+  the perturbation took effect.
 - Reconciliation: per trial, our outcome against the insertion, our time over 20 N against the
   scorer's force penalty, the bag's contact messages against the scorer's contacts score, and
   whether the insertion's time was mapped (ADR 029). The port of a wrong-port insertion is
@@ -44,6 +57,7 @@ not seen.
 Every file read has a size bound, and every refusal is a fixed message naming the input.
 
     python -m tools.sim.report --manifest M --run DIR [--run DIR ...] [--commit SHA]
+        [--reference-manifest M --reference-run DIR [--reference-run DIR ...]]
 """
 
 from __future__ import annotations
@@ -77,8 +91,24 @@ from cellrt.eval.referee import (
     RefereeTrial,
     judge,
 )
-from cellrt.runtime.events import Event
+from cellrt.runtime.events import Event, WorldReady
 from cellrt.runtime.store import EventStore, RunInfo
+from tools.sim.applied import (
+    GRASP_SHIFT,
+    GRASP_SHIFT_TURN_TOLERANCE,
+    GRASP_TURN,
+    SHIFT,
+    TILT,
+    TOLERANCES,
+    Change,
+    Reading,
+    Spread,
+    checked_family,
+    read_back,
+    reads_back,
+    requested_change,
+    spread,
+)
 from tools.sim.batch import SETTINGS
 
 LEDGER = Path("ledger.jsonl")
@@ -89,10 +119,14 @@ STORE_COPY = Path("snapshot") / "store.sqlite"
 
 MAX_YAML_BYTES = 1 << 20
 MAX_BAG_JSON_BYTES = 16 << 20
+MAX_STORE_COPY_BYTES = 2 << 30  # a held-out session's store is about 0.1 GiB
 MAX_LEDGER_BYTES = 64 << 10
 MAX_RUNS = 500
 POOLED = "all"
 HELD_OUT_PREFIX = "heldout"  # ADR 030: the manifest the claim is made on
+NOMINAL_PREFIX = "nominal"  # ADR 026: the control scenes, each port type's reference
+APPLIED, NOT_APPLIED = "applied", "not applied"
+NOT_CHECKED, NO_REFERENCE, NO_READBACK = "not checked", "no reference", "no readback"
 
 _TRIAL_ID = re.compile(r"trial_[0-9]{1,4}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -100,6 +134,8 @@ _COMMIT = re.compile(r"[0-9a-f]{40}|unknown")
 _FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 _TAG = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")  # as tools/sim/batch.py checks a plan's tag
 _EXIT = re.compile(r"[a-z0-9_]{1,64}")  # "ok" or a reason code
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")  # C0, DEL and C1
+_PORT_TYPE = re.compile(r"[a-z0-9_]{1,40}")  # "sfp", "sc": a reference's key, printed
 _NOT_A_ROW = "ledger: not a ledger row"
 _NOT_OURS = "store copy: an event the schema does not hold"
 
@@ -139,6 +175,7 @@ class Trial:
     judged: JudgedTrial | None
     referee: RefereeTrial | None
     summary: RunSummary | None
+    ready: WorldReady | None = None  # the counted run's readback of the spawned scene
 
     @property
     def trial_class(self) -> str:
@@ -152,6 +189,33 @@ class _Attempt:
     judged: JudgedTrial | None = None
     referee: RefereeTrial | None = None
     summary: RunSummary | None = None
+    ready: WorldReady | None = None
+
+
+@dataclass(frozen=True)
+class Reference:
+    """A port type's reference (ADR 026): its `nominal` scene's request, and the readback of
+    the first counted trial of it that read every pose; the commit of the engine run it came
+    from, and how far the port type's other such trials read from it."""
+
+    trial: Mapping[str, Any]
+    ready: WorldReady
+    run_id: str
+    commit: str = "-"  # "-": the engine runs were not given
+    spread: Spread | None = None
+
+
+@dataclass(frozen=True)
+class Applied:
+    """Whether a scene's perturbation took effect, from its counted trials' readbacks."""
+
+    scene: str
+    family: str
+    status: str
+    change: Change | None = None
+    worst: Reading | None = None  # the readback farthest from the request
+    read: int = 0  # counted trials read back
+    counted: int = 0
 
 
 @dataclass(frozen=True)
@@ -301,8 +365,12 @@ def _bag_dump(path: Path) -> Any | None:
 # counting ---------------------------------------------------------------------------------------
 
 
-def collect(manifest: Manifest, runs: Sequence[EngineRun]) -> list[Trial]:
-    """Each unit and setting the engine runs held, with the trial that counts (ADR 028)."""
+def collect(
+    manifest: Manifest, runs: Sequence[EngineRun], *, every_run: bool = True
+) -> list[Trial]:
+    """Each unit and setting the engine runs held, with the trial that counts (ADR 028).
+    `every_run` False skips the check that no engine run was left out: for a reference session,
+    whose nominal trials are all that is read."""
     ordered = sorted(runs, key=lambda r: r.started_wall)
     by_unit: dict[tuple[str, str], list[_Attempt]] = defaultdict(list)
     latest: list[_Stored] = []
@@ -312,8 +380,9 @@ def collect(manifest: Manifest, runs: Sequence[EngineRun]) -> list[Trial]:
             latest = stored  # each copy holds the whole store as it was after its engine run
         for task_id, attempt in attempts:
             by_unit[(task_id, run.setting)].append(attempt)
-    scenarios = {manifest.lookup(task_id).scenario_id for task_id in manifest.units}
-    _check_every_run_given(ordered, latest, scenarios)
+    if every_run:
+        scenarios = {manifest.lookup(task_id).scenario_id for task_id in manifest.units}
+        _check_every_run_given(ordered, latest, scenarios)
     trials = []
     for (task_id, setting), attempts in sorted(by_unit.items()):
         unit = manifest.units[task_id]
@@ -331,6 +400,7 @@ def collect(manifest: Manifest, runs: Sequence[EngineRun]) -> list[Trial]:
                 judged=None if counted is None else counted.judged,
                 referee=None if counted is None else counted.referee,
                 summary=None if counted is None else counted.summary,
+                ready=None if counted is None else counted.ready,
             )
         )
     return trials
@@ -362,6 +432,7 @@ def _attempts(
     store_path = run.path / STORE_COPY
     if not store_path.exists():  # nothing wrote to the store: no attempt reached the policy
         return [(task_id, _Attempt(run, trial_id)) for trial_id, task_id, _ in run.trials], None
+    _check_store_copy(store_path)
     try:
         with EventStore(store_path, read_only=True) as store:
             stored = [_Stored(info, _first(store, info.run_id).wall_ts) for info in store.runs()]
@@ -378,6 +449,24 @@ def _attempts(
     except sqlite3.Error:
         raise ReportInputError("store copy: unreadable") from None
     return out, stored
+
+
+def _check_store_copy(path: Path) -> None:
+    """A store copy is a regular file, and with its WAL within `MAX_STORE_COPY_BYTES`: every run
+    in it is read."""
+    size = 0
+    for part in (path, path.with_name(path.name + "-wal")):
+        try:
+            mode = part.stat()
+        except FileNotFoundError:
+            continue  # a store closed cleanly has no WAL
+        except OSError:
+            raise ReportInputError("store copy: unreadable") from None
+        if not stat.S_ISREG(mode.st_mode):
+            raise ReportInputError("store copy: not a regular file")
+        size += mode.st_size
+    if size > MAX_STORE_COPY_BYTES:
+        raise ReportInputError(f"store copy: over {MAX_STORE_COPY_BYTES} bytes")
 
 
 def _attempt(
@@ -401,7 +490,8 @@ def _attempt(
         judged = judge(events, referee)
     except ValueError:  # finished, yet not run_started ... run_finished: the copy is not ours
         raise ReportInputError("store copy: a finished run out of order") from None
-    return _Attempt(run, trial_id, judged, referee, summarize_run(events))
+    ready = next((e.payload for e in events if isinstance(e.payload, WorldReady)), None)
+    return _Attempt(run, trial_id, judged, referee, summarize_run(events), ready)
 
 
 def _first(store: EventStore, run_id: str) -> Event:
@@ -417,21 +507,130 @@ def _events(store: EventStore, run_id: str, limit: int | None = None) -> list[Ev
         raise ReportInputError(_NOT_OURS) from None
 
 
+# applied ----------------------------------------------------------------------------------------
+
+
+def references(
+    manifest: Manifest, trials: Sequence[Trial], runs: Sequence[EngineRun] = ()
+) -> dict[str, Reference]:
+    """Per port type, the first counted trial of a `nominal` scene (by setting, seed and unit)
+    whose readback gives every pose the checks read (`reads_back`), with the commit of its
+    engine run (one of `runs`) and the spread of the port type's other such trials about it."""
+    commit_of = {r.tag: r.commit for r in runs}
+    found: dict[str, list[tuple[Trial, Mapping[str, Any], WorldReady, str]]] = defaultdict(list)
+    for t in sorted(trials, key=lambda t: (t.setting, t.seed, t.task_id)):
+        ready, judged = t.ready, t.judged
+        if not t.family.startswith(NOMINAL_PREFIX) or judged is None or ready is None:
+            continue
+        request = manifest.scenes[t.scene].trial
+        port_type = _port_type(request)
+        if port_type is not None and reads_back(request, ready):
+            found[port_type].append((t, request, ready, judged.run_id))
+    out = {}
+    for port_type, ((t, request, ready, run_id), *others) in found.items():
+        out[port_type] = Reference(
+            request,
+            ready,
+            run_id,
+            commit_of.get(t.tag or "", "-"),
+            spread(request, ready, [(r, w) for _, r, w, _ in others]),
+        )
+    return out
+
+
+def applied_scenes(
+    manifest: Manifest, trials: Sequence[Trial], refs: Mapping[str, Reference]
+) -> dict[str, Applied]:
+    """Each scene's check (module docstring), by scene id."""
+    by_scene: dict[str, list[Trial]] = defaultdict(list)
+    for t in trials:
+        by_scene[t.scene].append(t)
+    out = {}
+    for scene, members in sorted(by_scene.items()):
+        family = manifest.scenes[scene].family
+        request = manifest.scenes[scene].trial
+        counted = [t for t in members if t.judged is not None]
+        ref = refs.get(_port_type(request) or "")
+        change = None if ref is None else requested_change(request, ref.trial)
+        if not checked_family(family) or (ref is not None and change is None):
+            out[scene] = Applied(scene, family, NOT_CHECKED, counted=len(counted))
+            continue
+        if ref is None or change is None:
+            out[scene] = Applied(scene, family, NO_REFERENCE, counted=len(counted))
+            continue
+        readings = [
+            reading
+            for t in counted
+            if t.ready is not None
+            and (reading := read_back(change, request, t.ready, ref.trial, ref.ready)) is not None
+        ]
+        if not readings:
+            out[scene] = Applied(scene, family, NO_READBACK, change, counted=len(counted))
+            continue
+        status = APPLIED if all(r.applied for r in readings) else NOT_APPLIED
+        worst = max(readings, key=lambda r: r.badness)
+        out[scene] = Applied(scene, family, status, change, worst, len(readings), len(counted))
+    return out
+
+
+def not_applied(applied: Mapping[str, Applied]) -> set[str]:
+    return {scene for scene, a in applied.items() if a.status == NOT_APPLIED}
+
+
+def check_held_out(applied: Mapping[str, Applied]) -> None:
+    """ADR 030's claim leaves out the scenes whose perturbation did not take effect, so on the
+    held-out manifest every counted scene of a checked family must have been checked: refuse
+    one with no reference, or whose request does not change one value from its reference's (a
+    wrong reference session, or a manifest the check does not fit). A scene with no readback
+    stays in, named by the Applied table."""
+    unchecked = [
+        a
+        for a in applied.values()
+        if a.counted and checked_family(a.family) and a.status in (NO_REFERENCE, NOT_CHECKED)
+    ]
+    if unchecked:
+        raise ReportInputError(
+            "--reference-run: a held-out scene of a checked family could not be checked against"
+            f" a reference ({len(unchecked)} scenes)"
+        )
+
+
+def _port_type(trial: Mapping[str, Any]) -> str | None:
+    task = trial.get("task")
+    port_type = task.get("port_type") if isinstance(task, Mapping) else None
+    if not isinstance(port_type, str) or not _PORT_TYPE.fullmatch(port_type):
+        return None
+    return port_type
+
+
 # tables -----------------------------------------------------------------------------------------
 
 
-def render(runs: Sequence[EngineRun], trials: Sequence[Trial], *, held_out: bool) -> str:
+def render(
+    runs: Sequence[EngineRun],
+    trials: Sequence[Trial],
+    *,
+    held_out: bool,
+    applied: Mapping[str, Applied] | None = None,
+    refs: Mapping[str, Reference] | None = None,
+) -> str:
+    """The tables; the scenes `applied` marks "not applied" are left out of every rate."""
+    applied = applied or {}
+    left_out = not_applied(applied)
+    rated = [t for t in trials if t.scene not in left_out]
     return "\n\n".join(
         (
             session_line(runs),
             "## Discovery",
             discovery_table(trials),
+            "## Applied",
+            applied_table(applied, refs or {}),
             "## Reconciliation",
             reconciliation_table(trials),
             "## A/B",
-            ab_table(trials, held_out=held_out),
+            ab_table(rated, held_out=held_out),
             "## Confusion",
-            confusion_table(trials),
+            confusion_table(rated),
         )
     )
 
@@ -464,6 +663,91 @@ def _mixed(trials: Sequence[Trial]) -> str | None:
     if len(counted) < 2:
         return None
     return "yes" if len(set(counted)) > 1 else "no"
+
+
+APPLIED_TABLE = (
+    "scene",
+    "family",
+    "change",
+    "requested",
+    "read back",
+    "tolerance",
+    "read",
+    "status",
+)
+
+
+def applied_table(applied: Mapping[str, Applied], refs: Mapping[str, Reference]) -> str:
+    rows: list[list[object]] = []
+    for scene in sorted(applied):
+        a = applied[scene]
+        c, w = a.change, a.worst
+        rows.append(
+            [
+                a.scene,
+                a.family,
+                None if c is None else c.kind,
+                None if c is None else _amount(c.kind, c.size),
+                None if w is None else _reading(w),
+                None if c is None else _tolerance(c.kind),
+                f"{a.read}/{a.counted}",
+                a.status,
+            ]
+        )
+    named = "; ".join(
+        f"{port_type}: {r.run_id} (commit {r.commit})" for port_type, r in sorted(refs.items())
+    )
+    left_out = sorted(not_applied(applied))
+    notes = [
+        f"reference per port type: {named or 'none'}",
+        *(_spread_note(port_type, r.spread) for port_type, r in sorted(refs.items())),
+        "left out of every rate (not applied): " + (", ".join(left_out) or "none"),
+    ]
+    if any(a.status == NO_REFERENCE for a in applied.values()):
+        notes.append(
+            "no reference: no counted nominal trial of the port type read every pose; the"
+            " held-out session takes the tuning session's (--reference-manifest, --reference-run)"
+        )
+    unread = sorted(scene for scene, a in applied.items() if a.status == NO_READBACK)
+    if unread:
+        notes.append(
+            "kept in every rate, unchecked (no readback: no counted trial read the poses its"
+            " check needs): " + ", ".join(unread)
+        )
+    lines = "\n".join(f"- {_CONTROL.sub('?', n)}" for n in notes)
+    return _table(APPLIED_TABLE, rows) + "\n\n" + lines
+
+
+def _spread_note(port_type: str, s: Spread | None) -> str:
+    if s is None or s.trials == 0:
+        return f"nominal spread, {port_type}: no other nominal trial read every pose"
+    wider = "; wider than a tolerance" if s.wider_than_a_tolerance else ""
+    return (
+        f"nominal spread, {port_type}: {s.trials} other trials; port"
+        f" {_amount(TILT, s.port_turn)}, {_amount(SHIFT, s.port_shift)} in the board's frame;"
+        f" plug {_amount(GRASP_SHIFT, s.plug_shift)}, {_amount(GRASP_TURN, s.plug_turn)} in the"
+        f" gripper's frame{wider}"
+    )
+
+
+def _amount(kind: str, value: float) -> str:
+    if kind in (SHIFT, GRASP_SHIFT):
+        return f"{value * 1000.0:.2f} mm"
+    if kind == GRASP_TURN:
+        return f"{value:.3f} rad"
+    return f"{math.degrees(value):.2f} deg"
+
+
+def _reading(r: Reading) -> str:
+    turn = "" if r.turn is None else f", turned {r.turn:.3f} rad"
+    return _amount(r.change.kind, r.measured) + turn
+
+
+def _tolerance(kind: str) -> str:
+    within = _amount(kind, TOLERANCES[kind])
+    if kind == GRASP_SHIFT:
+        return f"{within}; turn {GRASP_SHIFT_TURN_TOLERANCE:.3f} rad"
+    return within
 
 
 RECONCILIATION = (
@@ -506,11 +790,21 @@ def reconciliation_table(trials: Sequence[Trial]) -> str:
                 r.contact_messages,
                 r.contacts_score,
                 None if r.total is None else round(r.total, 2),
-                "mapped" if j.insertion_t is not None else ("whole trial" if j.fallback else None),
+                _mapping(j),
                 j.trial_class,
             ]
         )
     return _table(RECONCILIATION, rows)
+
+
+def _mapping(j: JudgedTrial) -> str | None:
+    """How the insertion's time was placed: on the run's clock, not at all with verdicts to
+    judge (the whole-trial fallback), or not at all with none; None: no insertion."""
+    if j.insertion_t is not None:
+        return "mapped"
+    if j.fallback:
+        return "whole trial"
+    return "unmapped" if j.inserted else None
 
 
 def _insertion(r: RefereeTrial) -> str:
@@ -663,10 +957,12 @@ def _table(header: Sequence[str], rows: Iterable[Sequence[object]]) -> str:
 
 def _cell(value: object) -> str:
     """A table cell: a `|` or a line break in a value read from a file (a port name, a class)
-    cannot split the row."""
+    cannot split the row, and a control character (an ESC sequence) cannot reach the
+    terminal."""
     if value is None:
         return "-"
-    return " ".join(str(value).splitlines()).replace("|", "\\|")
+    text = _CONTROL.sub("?", " ".join(str(value).splitlines()))
+    return text.replace("|", "\\|")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -676,6 +972,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--commit", help="the commit every engine run must name; required for the held-out"
     )
+    parser.add_argument(
+        "--reference-manifest",
+        type=Path,
+        help="the manifest of a session whose nominal trials are the references (ADR 026);"
+        " required for the held-out",
+    )
+    parser.add_argument(
+        "--reference-run", type=Path, action="append", default=[], dest="reference_runs"
+    )
     args = parser.parse_args(argv)
     try:
         manifest = load_manifest(args.manifest)
@@ -684,14 +989,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ReportInputError("--commit: the held-out manifest needs its commit named")
         if args.commit is not None and not _FULL_COMMIT.fullmatch(args.commit):
             raise ReportInputError("--commit: not a commit's 40 hex digits")  # nor "unknown"
+        if (args.reference_manifest is None) != (not args.reference_runs):
+            raise ReportInputError("--reference-manifest and --reference-run go together")
+        if held_out and args.reference_manifest is None:
+            raise ReportInputError(
+                "--reference-manifest: the held-out manifest holds no nominal scene; name the"
+                " tuning session's"
+            )
         runs = load_runs(args.runs)
         if args.commit is not None and any(r.commit != args.commit for r in runs):
             raise ReportInputError("ledger: an engine run names another commit than --commit")
         trials = collect(manifest, runs)
+        refs: dict[str, Reference] = {}
+        if args.reference_manifest is not None:
+            other = load_manifest(args.reference_manifest)
+            other_runs = load_runs(args.reference_runs)
+            refs = references(other, collect(other, other_runs, every_run=False), other_runs)
+        refs |= references(manifest, trials, runs)  # the session's own, where it has one, win
+        applied = applied_scenes(manifest, trials, refs)
+        if held_out:
+            check_held_out(applied)
     except (ReportInputError, ManifestError, ScoringInputError) as ex:  # fixed messages only
         print(f"report: {ex}", file=sys.stderr)
         return 1
-    print(render(runs, trials, held_out=held_out))
+    print(render(runs, trials, held_out=held_out, applied=applied, refs=refs))
     return 0
 
 

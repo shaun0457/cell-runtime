@@ -5,8 +5,10 @@ store copies hold synthetic runs, so each test fixes the verdicts and the insert
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import math
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ from cellrt.runtime.events import (
     SCHEMA_VERSION,
     Event,
     MonitorVerdict,
+    PoseRecord,
     RecoveryStarted,
     RunFinished,
     RunStarted,
@@ -32,6 +35,7 @@ from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 from tools.sim.report import ReportInputError, Trial, collect, load_runs, main
 from tools.sim.scenes import (
+    Scene,
     build_manifest,
     engine_config,
     load_template,
@@ -46,6 +50,30 @@ NAME = "pilot-v1"
 TARGET = "nic_card_mount_0/sfp_port_0"
 ORIGIN = 100.0  # the runs' sim time at run time 0
 COMMIT = "a" * 40
+REF_COMMIT = "b" * 40  # the reference (tuning) session's
+BASE_TRIAL = scene_from_trial("base", "base", SAMPLE["trials"]["trial_1"]).trial
+
+
+def _tilted_trial(degrees: float) -> dict[str, Any]:
+    trial = copy.deepcopy(BASE_TRIAL)
+    trial["scene"]["task_board"]["nic_rail_0"]["entity_pose"]["roll"] = math.radians(degrees)
+    return trial
+
+
+def _pose(position: tuple[float, float, float], turn_deg: float = 0.0) -> PoseRecord:
+    """A pose turned by `turn_deg` about the base's x axis."""
+    half = math.radians(turn_deg) / 2
+    return PoseRecord(position=position, orientation=(math.cos(half), math.sin(half), 0.0, 0.0))
+
+
+def _ready(port_turn_deg: float = 0.0, *, port: bool = True) -> WorldReady:
+    """A readback whose port is turned `port_turn_deg` from the nominal one's."""
+    return WorldReady(
+        sim_origin_s=ORIGIN,
+        port=_pose((0.5, 0.1, 0.2), port_turn_deg) if port else None,
+        plug=_pose((0.4, 0.0, 0.3)),
+        gripper=_pose((0.4, 0.0, 0.35)),
+    )
 
 
 @dataclass(frozen=True)
@@ -66,19 +94,31 @@ class Unit:
     contacts: int = 0
     dump: bool = True
     score: bool = True
+    ready: WorldReady | None = None  # the run's readback; None: no pose read
 
 
 class Session:
-    """A results disk: a manifest and engine-run directories that share one growing store."""
+    """A results disk: a manifest and engine-run directories that share one growing store.
+    `kinds` gives scene i's family and trial; by default every scene is the sample's trial_1,
+    alternately as `inrange_sfp` and `tilt_sfp`."""
 
-    def __init__(self, root: Path, scenes: int = 6, name: str = NAME) -> None:
+    def __init__(
+        self,
+        root: Path,
+        scenes: int = 6,
+        name: str = NAME,
+        kinds: Sequence[tuple[str, dict[str, Any]]] | None = None,
+    ) -> None:
+        root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self.name = name
+        if kinds is None:
+            kinds = [
+                ("inrange_sfp" if i % 2 == 0 else "tilt_sfp", BASE_TRIAL) for i in range(scenes)
+            ]
         self.scenes = [
-            scene_from_trial(
-                f"s{i}", "inrange_sfp" if i % 2 == 0 else "tilt_sfp", SAMPLE["trials"]["trial_1"]
-            )
-            for i in range(scenes)
+            Scene(scene_id=f"s{i}", family=family, trial=trial)
+            for i, (family, trial) in enumerate(kinds)
         ]
         self.manifest = root / f"{name}.json"
         self.manifest.write_text(json.dumps(build_manifest(name, self.scenes, repeats=3)), "utf-8")
@@ -193,11 +233,8 @@ def _events(unit: Unit, setting: str, wall: float, name: str = NAME) -> list[Eve
         config_hash="h",
         schema_version=SCHEMA_VERSION,
     )
-    payloads: list[tuple[float, Any]] = [
-        (0.0, start),
-        (0.0, WorldReady(sim_origin_s=ORIGIN, port=None, plug=None, gripper=None)),
-        *body,
-    ]
+    ready = unit.ready or WorldReady(sim_origin_s=ORIGIN, port=None, plug=None, gripper=None)
+    payloads: list[tuple[float, Any]] = [(0.0, start), (0.0, ready), *body]
     if unit.finished:
         payloads.append((end, RunFinished(outcome=unit.outcome, reason="r", steps=1, duration=end)))  # type: ignore[arg-type]
     run_id = f"{name}/s{unit.scene}/{setting}/{unit.seed}/a{unit.attempt}"
@@ -260,6 +297,16 @@ def test_a_trial_the_scorer_saw_inserted_is_compensated_and_agrees(tmp_path: Pat
     (line,) = _lines(report.reconciliation_table([t]))
     assert "| target | yes |" in line and "| mapped | compensated |" in line
     assert "| 86.0 |" in line  # tiers 1 + 2 + 3
+
+
+def test_an_unmapped_insertion_with_no_verdict_is_not_judged_as_a_whole(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+    (t,) = s.trials(s.run("A", [Unit(0, mapped=False)]))
+
+    (line,) = _lines(report.reconciliation_table([t]))
+
+    assert "| unmapped | compensated |" in line
+    assert "- judged as a whole (no time mapping): none" in report.confusion_table([t])
 
 
 def test_a_success_the_scorer_did_not_see_is_a_false_success(tmp_path: Path) -> None:
@@ -631,6 +678,61 @@ def test_a_finished_run_out_of_order_is_refused(tmp_path: Path) -> None:
         s.trials(path)
 
 
+def test_a_store_copy_past_its_bound_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = Session(tmp_path)
+    path = s.run("A", [Unit(0)])
+    size = (path / "snapshot" / "store.sqlite").stat().st_size
+    monkeypatch.setattr(report, "MAX_STORE_COPY_BYTES", size - 1)
+
+    with pytest.raises(ReportInputError, match="store copy: over"):
+        s.trials(path)
+
+
+def test_a_store_copy_whose_wal_takes_it_past_its_bound_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = Session(tmp_path)
+    path = s.run("A", [Unit(0)])
+    copy = path / "snapshot" / "store.sqlite"
+    monkeypatch.setattr(report, "MAX_STORE_COPY_BYTES", copy.stat().st_size + 9)
+    s.trials(path)  # alone, within the bound
+    (path / "snapshot" / "store.sqlite-wal").write_bytes(b"\0" * 10)
+
+    with pytest.raises(ReportInputError, match="store copy: over"):
+        s.trials(path)
+
+
+def test_a_store_copy_whose_wal_cannot_be_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = Session(tmp_path)
+    path = s.run("A", [Unit(0)])
+    real = Path.stat
+
+    def stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith("-wal"):
+            raise PermissionError("denied")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+
+    with pytest.raises(ReportInputError, match="store copy: unreadable"):
+        s.trials(path)
+
+
+def test_a_store_copy_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+    path = s.run("A", [Unit(0)])
+    copy = path / "snapshot" / "store.sqlite"
+    copy.unlink()
+    copy.mkdir()
+
+    with pytest.raises(ReportInputError, match="store copy: not a regular file"):
+        s.trials(path)
+
+
 def test_the_store_copy_is_read_without_writing_to_it(tmp_path: Path) -> None:
     s = Session(tmp_path)
     path = s.run("A", [Unit(0)])
@@ -736,6 +838,15 @@ def test_a_pipe_in_a_port_name_cannot_split_a_row(tmp_path: Path) -> None:
     assert line.replace("\\|", "").count("|") == len(report.RECONCILIATION) + 1
 
 
+def test_a_control_character_in_a_port_name_does_not_reach_the_terminal(tmp_path: Path) -> None:
+    s = Session(tmp_path)
+    (t,) = s.trials(s.run("A", [Unit(0, port="/nic\x1b[2J\x07\x9b/sfp_port_0")]))
+
+    (line,) = _lines(report.reconciliation_table([t]))
+
+    assert "| wrong port: nic?[2J??/sfp_port_0 |" in line
+
+
 def test_the_session_line_names_the_runs_that_did_not_end_ok(tmp_path: Path) -> None:
     s = Session(tmp_path)
     runs = load_runs([s.run("A", [Unit(0)]), s.run("A", [Unit(1)], exit="trials_not_processed")])
@@ -747,31 +858,253 @@ def test_the_session_line_names_the_runs_that_did_not_end_ok(tmp_path: Path) -> 
     )
 
 
-def test_main_prints_the_four_tables(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_prints_the_five_tables(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     s = Session(tmp_path)
     path = s.run("A", [Unit(0)])
 
     assert main(["--manifest", str(s.manifest), "--run", str(path)]) == 0
 
     out = capsys.readouterr().out
-    for heading in ("## Discovery", "## Reconciliation", "## A/B", "## Confusion"):
+    for heading in ("## Discovery", "## Applied", "## Reconciliation", "## A/B", "## Confusion"):
         assert heading in out
     assert report.NO_CLAIM_HERE in out  # the pilot's manifest
 
 
-def test_main_claims_on_the_held_out_manifest_only_with_its_commit(
+def _reference(
+    root: Path, runs: int = 1, ready: WorldReady | None = None
+) -> tuple[Session, list[Path]]:
+    """A tuning session whose nominal SFP trials read `ready`, by default every pose."""
+    ref = Session(root, name="tune-v1", kinds=[("nominal_sfp", BASE_TRIAL)])
+    ready = ready or _ready()
+    return ref, [
+        ref.run("A", [Unit(0, seed=k, ready=ready)], commit=REF_COMMIT) for k in range(runs)
+    ]
+
+
+def test_main_claims_on_the_held_out_manifest_only_with_its_commit_and_references(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    s = Session(tmp_path, name="heldout-v1")
+    s = Session(tmp_path / "heldout", name="heldout-v1")
     paths = [str(p) for p in (s.run("A", [Unit(0)]), s.run("B", [Unit(0)]))]
     argv = ["--manifest", str(s.manifest), "--run", paths[0], "--run", paths[1]]
+    ref, (ref_path,) = _reference(tmp_path / "tune")
 
     assert main(argv) == 1
     assert capsys.readouterr().err.strip() == (
         "report: --commit: the held-out manifest needs its commit named"
     )
-    assert main([*argv, "--commit", COMMIT]) == 0
+    assert main([*argv, "--commit", COMMIT]) == 1
+    assert capsys.readouterr().err.strip() == (
+        "report: --reference-manifest: the held-out manifest holds no nominal scene; name the"
+        " tuning session's"
+    )
+    references = ["--reference-manifest", str(ref.manifest), "--reference-run", str(ref_path)]
+    assert main([*argv, "--commit", COMMIT, *references]) == 0
     assert "claim (pooled, ADR 030)" in capsys.readouterr().out
+
+
+def test_a_tilt_that_did_not_take_effect_is_left_out_of_every_rate(tmp_path: Path) -> None:
+    kinds = [
+        ("nominal_sfp", BASE_TRIAL),
+        ("tilt_sfp", _tilted_trial(2.0)),
+        ("tilt_sfp", _tilted_trial(4.0)),
+    ]
+    s = Session(tmp_path, kinds=kinds)
+    units = [
+        Unit(0, ready=_ready()),
+        Unit(1, ready=_ready(2.0)),
+        Unit(2, ready=_ready(), outcome="failed", verdict_at=20.0, insert_at=None),  # not tilted
+    ]
+    path = s.run("A", units)
+    manifest, trials = load_manifest(s.manifest), s.trials(path)
+
+    refs = report.references(manifest, trials)
+    applied = report.applied_scenes(manifest, trials, refs)
+
+    assert refs["sfp"].run_id == f"{NAME}/s0/A/0/a1"
+    assert {k: a.status for k, a in applied.items()} == {
+        "s0": "not checked",
+        "s1": "applied",
+        "s2": "not applied",
+    }
+    table = report.applied_table(applied, refs)
+    assert _lines(table) == [
+        "| s0 | nominal_sfp | - | - | - | - | 0/1 | not checked |",
+        "| s1 | tilt_sfp | tilt | 2.00 deg | 2.00 deg | 0.25 deg | 1/1 | applied |",
+        "| s2 | tilt_sfp | tilt | 4.00 deg | 0.00 deg | 0.25 deg | 1/1 | not applied |",
+    ]
+    out = report.render(load_runs([path]), trials, held_out=False, applied=applied, refs=refs)
+    assert f"- reference per port type: sfp: {NAME}/s0/A/0/a1" in out
+    assert "- left out of every rate (not applied): s2" in out
+    (pooled,) = [line for line in out.splitlines() if line.startswith("| all | A |")]
+    assert pooled.startswith("| all | A | 2 | 2 |")  # s2's failed trial is not among them
+    assert "| A | INSERT_STUCK |" not in out  # nor among the verdicts
+    assert "| s2 | tilt_sfp | natural_failure_known |" in out  # the discovery table lists it
+
+
+def test_a_scene_without_a_reference_is_kept_and_named(tmp_path: Path) -> None:
+    s = Session(tmp_path)  # tilt_sfp scenes, no nominal one
+    trials = s.trials(s.run("A", [Unit(0), Unit(1, ready=_ready())]))
+    manifest = load_manifest(s.manifest)
+
+    applied = report.applied_scenes(manifest, trials, report.references(manifest, trials))
+
+    assert {k: a.status for k, a in applied.items()} == {"s0": "not checked", "s1": "no reference"}
+    assert "- no reference: no counted nominal trial" in report.applied_table(applied, {})
+
+
+def test_a_nominal_trial_that_did_not_read_every_pose_is_no_reference(tmp_path: Path) -> None:
+    s = Session(tmp_path, kinds=[("nominal_sfp", BASE_TRIAL), ("tilt_sfp", _tilted_trial(2.0))])
+    trials = s.trials(s.run("A", [Unit(0, ready=_ready(port=False)), Unit(1, ready=_ready(2.0))]))
+
+    assert report.references(load_manifest(s.manifest), trials) == {}
+
+
+def test_a_scene_whose_trials_read_no_pose_has_no_readback(tmp_path: Path) -> None:
+    s = Session(tmp_path, kinds=[("nominal_sfp", BASE_TRIAL), ("tilt_sfp", _tilted_trial(2.0))])
+    trials = s.trials(s.run("A", [Unit(0, ready=_ready()), Unit(1, ready=_ready(port=False))]))
+    manifest = load_manifest(s.manifest)
+
+    applied = report.applied_scenes(manifest, trials, report.references(manifest, trials))
+
+    assert applied["s1"].status == "no readback" and applied["s1"].read == 0
+    assert report.applied_table(applied, {}).endswith(
+        "- kept in every rate, unchecked (no readback: no counted trial read the poses its check"
+        " needs): s1"
+    )
+
+
+def test_a_nominal_trial_whose_readback_gives_no_reading_is_passed_over(tmp_path: Path) -> None:
+    s = Session(tmp_path, kinds=[("nominal_sfp", BASE_TRIAL)])
+    flat = _ready().model_copy(
+        update={"port": PoseRecord(position=(0.5, 0.1, 0.2), orientation=(0.0, 0.0, 0.0, 0.0))}
+    )
+    trials = s.trials(s.run("A", [Unit(0, ready=flat), Unit(0, seed=1, ready=_ready())]))
+
+    refs = report.references(load_manifest(s.manifest), trials)
+
+    assert refs["sfp"].run_id == f"{NAME}/s0/A/1/a1"  # seed 0's port has a zero quaternion
+
+
+def test_the_reference_session_need_not_be_given_whole(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    s = Session(tmp_path / "pilot", kinds=[("tilt_sfp", _tilted_trial(2.0))])
+    path = s.run("A", [Unit(0, ready=_ready(2.0))])
+    ref, ref_paths = _reference(tmp_path / "tune", runs=3)
+    gapped = ["--reference-run", str(ref_paths[0]), "--reference-run", str(ref_paths[2])]
+
+    argv = ["--manifest", str(s.manifest), "--run", str(path), "--reference-manifest"]
+    assert main([*argv, str(ref.manifest), *gapped]) == 0
+
+    out = capsys.readouterr().out
+    assert "| s0 | tilt_sfp | tilt | 2.00 deg | 2.00 deg | 0.25 deg | 1/1 | applied |" in out
+    assert f"- reference per port type: sfp: tune-v1/s0/A/0/a1 (commit {REF_COMMIT})\n" in out
+    assert "- nominal spread, sfp: 1 other trials; port 0.00 deg, 0.00 mm" in out
+
+
+@pytest.mark.parametrize(
+    ("turn_deg", "wider"), [(0.1, ""), (0.3, "; wider than a tolerance")], ids=["within", "wider"]
+)
+def test_the_sessions_own_reference_wins_with_its_commit_and_spread(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], turn_deg: float, wider: str
+) -> None:
+    kinds = [("nominal_sfp", BASE_TRIAL), ("tilt_sfp", _tilted_trial(2.0))]
+    s = Session(tmp_path / "pilot", kinds=kinds)
+    units = [Unit(0, ready=_ready()), Unit(0, seed=1, ready=_ready(turn_deg))]
+    path = s.run("A", [*units, Unit(1, ready=_ready(2.0))])
+    ref, (ref_path,) = _reference(tmp_path / "tune")
+    argv = ["--manifest", str(s.manifest), "--run", str(path)]
+    references = ["--reference-manifest", str(ref.manifest), "--reference-run", str(ref_path)]
+
+    assert main([*argv, *references]) == 0
+
+    out = capsys.readouterr().out
+    assert f"- reference per port type: sfp: {NAME}/s0/A/0/a1 (commit {COMMIT})\n" in out
+    assert (
+        f"- nominal spread, sfp: 1 other trials; port {turn_deg:.2f} deg, 0.00 mm in the board's"
+        f" frame; plug 0.00 mm, 0.000 rad in the gripper's frame{wider}\n- left out"
+    ) in out
+
+
+@pytest.mark.parametrize(
+    ("trial", "ready", "refused"),
+    [
+        (_tilted_trial(2.0), _ready(), False),
+        (_tilted_trial(2.0), _ready(port=False), True),  # the reference read no port: none
+        (BASE_TRIAL, _ready(), True),  # a tilt scene that tilts nothing
+    ],
+    ids=["checked", "no reference", "changes no value"],
+)
+def test_a_held_out_scene_that_could_not_be_checked_is_refused(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    trial: dict[str, Any],
+    ready: WorldReady,
+    refused: bool,
+) -> None:
+    s = Session(tmp_path / "heldout", name="heldout-v1", kinds=[("tilt_sfp", trial)])
+    path = s.run("A", [Unit(0, ready=_ready(2.0))])
+    ref, (ref_path,) = _reference(tmp_path / "tune", ready=ready)
+    argv = ["--manifest", str(s.manifest), "--run", str(path), "--commit", COMMIT]
+    references = ["--reference-manifest", str(ref.manifest), "--reference-run", str(ref_path)]
+
+    assert main([*argv, *references]) == (1 if refused else 0)
+
+    err = capsys.readouterr().err.strip()
+    assert err == (
+        (
+            "report: --reference-run: a held-out scene of a checked family could not be checked"
+            " against a reference (1 scenes)"
+        )
+        if refused
+        else ""
+    )
+
+
+def test_a_held_out_scene_with_no_counted_trial_is_not_refused() -> None:
+    applied = {"s0": report.Applied("s0", "tilt_sfp", report.NO_REFERENCE, counted=0)}
+
+    report.check_held_out(applied)  # nothing to leave out of a rate
+
+
+@pytest.mark.parametrize(
+    ("port_type", "read"),
+    [
+        ("sfp", "sfp"),
+        ("sc", "sc"),
+        ("SFP", None),
+        ("sfp\x1b[2J", None),
+        ("x" * 41, None),
+        (3, None),
+    ],
+)
+def test_a_port_type_is_read_only_as_a_short_lowercase_name(
+    port_type: object, read: str | None
+) -> None:
+    assert report._port_type({"task": {"port_type": port_type}}) == read
+
+
+def test_a_control_character_in_a_reference_does_not_reach_the_terminal() -> None:
+    ref = report.Reference(BASE_TRIAL, _ready(), "run\x1b[2J\x9b", COMMIT)
+
+    table = report.applied_table({}, {"sfp": ref})
+
+    assert f"- reference per port type: sfp: run?[2J? (commit {COMMIT})" in table
+    assert not report._CONTROL.search(table.replace("\n", ""))
+
+
+@pytest.mark.parametrize("given", ["--reference-manifest", "--reference-run"])
+def test_the_reference_flags_go_together(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str
+) -> None:
+    s = Session(tmp_path)
+    path = s.run("A", [Unit(0)])
+
+    assert main(["--manifest", str(s.manifest), "--run", str(path), given, str(path)]) == 1
+    assert capsys.readouterr().err.strip() == (
+        "report: --reference-manifest and --reference-run go together"
+    )
 
 
 def test_main_reports_a_refusal_by_its_fixed_message(

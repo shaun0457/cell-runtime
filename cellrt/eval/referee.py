@@ -137,7 +137,7 @@ class JudgedTrial:
     inserted: bool
     wrong_port: bool
     insertion_t: float | None  # run-clock time of the insertion, when it could be mapped
-    fallback: bool  # judged as a whole: an insertion whose time could not be mapped
+    fallback: bool  # judged as a whole: verdicts, and an insertion whose time could not be mapped
 
 
 def judge(events: Sequence[Event], referee: RefereeTrial) -> JudgedTrial:
@@ -153,7 +153,9 @@ def judge(events: Sequence[Event], referee: RefereeTrial) -> JudgedTrial:
     insertion_t = None
     if referee.inserted and referee.insertion_sim_s is not None and origin is not None:
         insertion_t = referee.insertion_sim_s - origin
-    fallback = referee.inserted and insertion_t is None
+    fallback = (
+        bool(raw) and referee.inserted and insertion_t is None
+    )  # no verdict: nothing to judge
     judged = tuple(
         _count(v, referee.inserted, insertion_t, referee.tolerance_s or 0.0, recoveries)
         for v in raw
