@@ -17,16 +17,19 @@ from typing import Any
 import pytest
 import yaml
 
+from adapters.aic.manifest import Manifest
 from tools.sim.scenes import (
     CLAMP_M,
     MAX_CONFIG_BYTES,
     MAX_TILT_RAD,
     EngineConfigError,
     Scene,
+    build_manifest,
     engine_config,
     load_template,
     read_bounded,
     scene_from_trial,
+    scenes_of,
     validate_engine_config,
     write_yaml,
 )
@@ -318,6 +321,71 @@ def test_a_template_with_trials_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(EngineConfigError, match="template"):
         load_template(path)
+
+
+def _sc() -> Scene:
+    return scene_from_trial("nominal_sc", "nominal", _sample()["trials"]["trial_3"])
+
+
+def test_a_manifest_can_give_each_scene_its_own_repeats() -> None:
+    manifest = build_manifest(
+        "pilot-v1", [_nominal(), _sc()], repeats={"nominal_sfp": 2, "nominal_sc": 1}
+    )
+
+    assert list(manifest["units"]) == ["nominal_sfp_r0", "nominal_sfp_r1", "nominal_sc_r0"]
+    assert Manifest.model_validate(manifest).name == "pilot-v1"
+
+
+@pytest.mark.parametrize("repeats", [0, {"nominal_sfp": 1, "nominal_sc": 0}])
+def test_a_manifest_with_a_scene_of_no_repeats_is_refused(repeats: object) -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        build_manifest("pilot-v1", [_nominal(), _sc()], repeats=repeats)  # type: ignore[arg-type]
+
+
+def test_a_manifest_with_two_scenes_of_one_id_is_refused() -> None:
+    other = scene_from_trial("nominal_sfp", "nominal", _sample()["trials"]["trial_3"])
+
+    with pytest.raises(ValueError, match="share a scene id"):
+        build_manifest("pilot-v1", [_nominal(), other], repeats=1)
+
+
+def test_a_manifest_the_policy_would_refuse_is_never_built() -> None:
+    with pytest.raises(ValueError):  # the name breaks the policy's pattern
+        build_manifest("Pilot V1", [_nominal()], repeats=1)
+
+
+def test_the_scenes_of_a_manifest_are_the_ones_it_was_built_from() -> None:
+    scenes = [_nominal(), _sc()]
+
+    rebuilt = scenes_of(build_manifest("pilot-v1", scenes, repeats=1))
+
+    assert rebuilt == {s.scene_id: s for s in scenes}
+
+
+def test_the_scenes_of_a_manifest_take_the_models_defaults() -> None:
+    manifest = build_manifest("pilot-v1", [_nominal()], repeats=1)
+    for key in ("hypothesis", "expected_class"):
+        del manifest["scenes"]["nominal_sfp"][key]
+
+    (scene,) = scenes_of(manifest).values()
+
+    assert (scene.hypothesis, scene.expected_class) == ("", "unknown")
+
+
+def test_the_scenes_of_a_manifest_with_a_wrong_digest_are_refused() -> None:
+    manifest = build_manifest("pilot-v1", [_nominal()], repeats=1)
+    manifest["scenes"]["nominal_sfp"]["digest"] = "0" * 64
+
+    with pytest.raises(ValueError):
+        scenes_of(manifest)
+
+
+@pytest.mark.parametrize(
+    "repeats", [{"nominal_sfp": 1}, {"nominal_sfp": 1, "nominal_sc": 1, "other": 1}]
+)
+def test_repeats_by_scene_must_name_exactly_the_scenes(repeats: dict[str, int]) -> None:
+    with pytest.raises(ValueError, match="exactly"):
+        build_manifest("pilot-v1", [_nominal(), _sc()], repeats=repeats)
 
 
 def test_a_file_is_read_up_to_its_bound_and_refused_past_it(tmp_path: Path) -> None:
