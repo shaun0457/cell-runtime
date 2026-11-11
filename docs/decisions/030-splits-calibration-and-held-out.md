@@ -119,8 +119,10 @@ The rules:
 - `pilot-v1` keeps ADR 026's 23 scenes.
 - No scene digest appears in two splits, except the two `nominal` scenes, which are the sample's
   own trials; they appear in the pilot and in tuning, never in the held-out.
-- The three manifests, their engine configs and an interleaved `queue.json` are committed with
-  their SHA-256 before any VM run.
+- The three manifests and `queue.json`, which holds each split's order of units per setting,
+  are committed with their SHA-256 (`eval/sim/SHA256SUMS`) before any VM run (#80). The engine
+  configs are not: the runner renders each one from its units' manifest entries and records its
+  SHA-256 in the ledger (ADR 028), so every config is fixed by committed files.
 
 **The checkpoint rule**, applied to the pilot's A trials. The pilot's B trials are picked by A's
 outcome (ADR 026), so they do not count here.
@@ -139,6 +141,8 @@ outcome (ADR 026), so they do not count here.
 - the selected families' `tune-v1` scenes, once with A and once with B: at most 6 × 4 × 2 = 48
   trials;
 - clean repeats of the two `nominal` scenes, 6 per scene per setting: 24 trials;
+- run by the held-out's order rule below, with `random.Random("tune:order")`; the `nominal`
+  repeats are not a family, so they always run;
 - one forced VM stop mid-queue, then a resume.
 
 **Calibration scope.**
@@ -159,8 +163,10 @@ outcome (ADR 026), so they do not count here.
 **The held-out session** (#86):
 - 4 `heldout-v1` scenes per selected family, A and B, 3 repeats each (seeds 0-2): at most
   6 × 4 × 2 × 3 = 144 trials.
-- Each engine run is one setting, and consecutive engine runs alternate A and B. Within a
-  setting, units are shuffled with `random.Random("heldout:order")`.
+- Each engine run is one setting, and consecutive engine runs alternate A and B, starting with
+  A. Within a setting, units are shuffled with `random.Random("heldout:order")`, A's order
+  drawn first. An engine run takes the next units of its setting in that order, at most 6
+  (ADR 028), and skips the families the checkpoint did not select.
 - C-LLM runs only on families where the pilot found an UNKNOWN verdict, with the same scenes and
   repeats, at most 50 model calls and 1 hour of VM time. Where it does not run, the report shows
   B's UNKNOWN count on the same families. C differs from B only on UNKNOWN, so a count of zero

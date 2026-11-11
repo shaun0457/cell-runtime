@@ -173,7 +173,8 @@ trials, whose board x is 0.15 or 0.17 m and whose yaw is 3.0 or 3.1415 rad.
    order is:
    1. scenes where both A trials qualify;
    2. scenes where one does;
-   3. within each group, the manifest's order.
+   3. within each group, the manifest's order: the table's, kept as the pilot's `order` in
+      `eval/sim/queue.json` (#80), since the manifest file is written with sorted keys.
 3. `reversed` once with A, as the last unit of the session, because the free plug can leave
    the sim in a state that later trials would inherit.
 
