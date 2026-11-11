@@ -30,7 +30,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from adapters.aic.manifest import scene_digest
+from adapters.aic.manifest import TASK_FIELDS, Family, Manifest, SceneId, scene_digest
 
 # aic_engine.cpp:1791-1796: the trial's own `task_board_limits` would replace these; the sample
 # config's root-level block is never read.
@@ -55,16 +55,7 @@ BOARD_KEYS = frozenset({"pose", *NIC_RAILS, *SC_RAILS, *MOUNT_RAILS})
 BOARD_POSE_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
 ENTITY_POSE_KEYS = ("translation", "roll", "pitch", "yaw")
 CABLE_POSE_KEYS = ("gripper_offset", "roll", "pitch", "yaw")
-TASK_KEYS = (
-    "cable_type",
-    "cable_name",
-    "plug_type",
-    "plug_name",
-    "port_type",
-    "port_name",
-    "target_module_name",
-    "time_limit",
-)
+TASK_KEYS = TASK_FIELDS  # the keys `Trial::Trial` reads in a task are the ones a scene fixes
 _TILT_EPS = 1e-12
 
 
@@ -78,10 +69,10 @@ class Scene(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    scene_id: str = Field(pattern=r"^[a-z0-9_]{1,56}$")
-    family: str = Field(pattern=r"^[a-z0-9_]{1,40}$")
+    scene_id: SceneId  # the manifest's own field types (adapters/aic/manifest.py)
+    family: Family
     hypothesis: str = Field(default="", max_length=300)
-    expected_class: str = Field(default="unknown", pattern=r"^[a-z0-9_]{1,40}$")
+    expected_class: Family = "unknown"
     trial: dict[str, Any]
 
     @property
@@ -112,7 +103,13 @@ def scene_from_trial(scene_id: str, family: str, trial: Mapping[str, Any]) -> Sc
 
 def load_template(path: Path) -> dict[str, Any]:
     """The engine sections every config starts from: `scoring` and `robot`, and no trials."""
-    template = yaml.safe_load(read_bounded(path))
+    return parse_template(read_bounded(path))
+
+
+def parse_template(text: str) -> dict[str, Any]:
+    """`load_template` on a template's text already read, so a caller that also hashes the
+    file hashes the very bytes it checked."""
+    template = yaml.safe_load(text)
     if not isinstance(template, dict) or set(template) != {"scoring", "robot"}:
         raise EngineConfigError("template: must hold exactly the keys scoring and robot")
     return template
@@ -136,11 +133,21 @@ def engine_config(
     return config
 
 
-def build_manifest(name: str, scenes: Sequence[Scene], *, repeats: int) -> dict[str, Any]:
-    """The manifest (ADR 027) for `scenes`, each with repeats 0 to `repeats` - 1."""
-    if repeats < 1:
+def build_manifest(
+    name: str, scenes: Sequence[Scene], *, repeats: int | Mapping[str, int]
+) -> dict[str, Any]:
+    """The manifest (ADR 027) for `scenes`, each with repeats 0 to n - 1: n is `repeats`, or
+    `repeats[scene_id]` when it is a map. The result is checked by the policy's own model
+    (`Manifest`), so a manifest written here is one the policy loads."""
+    ids = [s.scene_id for s in scenes]
+    if len(set(ids)) != len(ids):
+        raise ValueError("two scenes share a scene id")
+    if not isinstance(repeats, int) and set(repeats) != set(ids):
+        raise ValueError("repeats must name exactly the manifest's scenes")
+    counts = {i: repeats if isinstance(repeats, int) else repeats[i] for i in ids}
+    if any(n < 1 for n in counts.values()):
         raise ValueError("repeats must be at least 1")
-    return {
+    manifest = {
         "name": name,
         "version": 1,
         "scenes": {
@@ -154,9 +161,34 @@ def build_manifest(name: str, scenes: Sequence[Scene], *, repeats: int) -> dict[
             for s in scenes
         },
         "units": {
-            s.task_id(k): {"scene": s.scene_id, "seed": k} for s in scenes for k in range(repeats)
+            s.task_id(k): {"scene": s.scene_id, "seed": k}
+            for s in scenes
+            for k in range(counts[s.scene_id])
         },
     }
+    Manifest.model_validate(manifest)
+    return manifest
+
+
+def scenes_of(manifest: Mapping[str, Any]) -> dict[str, Scene]:
+    """A manifest's scenes by id, as the runner renders them (ADR 028: an engine config is
+    rendered from the manifest's own scene entries). The manifest is checked by the policy's
+    own model first (ValueError if it fails), so each scene's trial has the digest the manifest
+    holds, and an entry without a hypothesis or an expected class gets the model's default."""
+    checked = Manifest.model_validate(manifest)
+    scenes = {
+        scene_id: Scene(
+            scene_id=scene_id,
+            family=entry.family,
+            hypothesis=entry.hypothesis,
+            expected_class=entry.expected_class,
+            trial=entry.trial,
+        )
+        for scene_id, entry in checked.scenes.items()
+    }
+    if any(scene.digest != checked.scenes[i].digest for i, scene in scenes.items()):
+        raise ValueError("a scene's trial does not have the digest its manifest holds")
+    return scenes
 
 
 def read_bounded(path: Path, limit: int = MAX_CONFIG_BYTES) -> str:
@@ -172,8 +204,12 @@ def write_yaml(path: Path, data: Mapping[str, Any]) -> None:
     """Keys in the order given and LF line endings, so the same config is the same file on every
     OS. Never sorted: aic_engine runs the trials in file order (aic_engine.cpp:410-416), and a
     sort would put trial_10 before trial_2."""
-    text = yaml.safe_dump(_plain(data), sort_keys=False, default_flow_style=False)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    path.write_text(yaml_text(data), encoding="utf-8", newline="\n")
+
+
+def yaml_text(data: Mapping[str, Any]) -> str:
+    """The text `write_yaml` writes, so a reader can check a file is the one written."""
+    return yaml.safe_dump(_plain(data), sort_keys=False, default_flow_style=False)
 
 
 # --- validation ------------------------------------------------------------------------------

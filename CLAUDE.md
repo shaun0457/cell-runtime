@@ -85,9 +85,12 @@ adapters/
                ADR 027); ROS is imported only in RuntimePolicy.py and ros_port.py
 tools/
   sim/         the VM batch runner, outside config_hash (ADR 028): scenes.py (engine configs),
-               batch.py (one engine run), report.py, in_container/bag_dump.py (eval container)
+               generate.py (the scene manifests, #80), batch.py (one engine run), report.py,
+               in_container/bag_dump.py (eval container)
 eval/scenarios/   *.yaml
-eval/sim/         engine_template.yaml (the engine sections of our engine configs)
+eval/sim/         engine_template.yaml (the engine sections of our engine configs); the
+                  pre-registered scene manifests pilot-v1, tune-v1 and heldout-v1 (.json),
+                  queue.json and SHA256SUMS, written by tools/sim/generate.py (ADR 026, ADR 030)
 docs/decisions/   NNN-title.md (design decision records)
 tests/
 ```
