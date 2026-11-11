@@ -1,0 +1,79 @@
+total: 188.55078019435663
+trial_1:
+  tier_1:
+    score: 1
+    message: Model validation succeeded.
+  tier_2:
+    score: 17.859139818693926
+    message: Scoring succeeded.
+    categories:
+      contacts:
+        score: 0
+        message: No contact detected.
+      duration:
+        score: 6.4944000000000006
+        message: "Task duration: 30.23 seconds."
+      insertion force:
+        score: 0
+        message: No excessive force detected
+      trajectory efficiency:
+        score: 5.9340167597115094
+        message: "Total end-effector path length: 0.14 m, initial plug-port distance: 0.13 m"
+      trajectory smoothness:
+        score: 5.430723058982414
+        message: "Average linear jerk magnitude of the end effector: 4.74 m/s^3"
+  tier_3:
+    score: 75
+    message: Cable insertion successful.
+trial_2:
+  tier_1:
+    score: 1
+    message: Model validation succeeded.
+  tier_2:
+    score: 17.691640375662704
+    message: Scoring succeeded.
+    categories:
+      contacts:
+        score: 0
+        message: No contact detected.
+      duration:
+        score: 6.4900363636363627
+        message: "Task duration: 30.25 seconds."
+      insertion force:
+        score: 0
+        message: No excessive force detected
+      trajectory efficiency:
+        score: 5.8352804645159129
+        message: "Total end-effector path length: 0.17 m, initial plug-port distance: 0.14 m"
+      trajectory smoothness:
+        score: 5.3663235475104303
+        message: "Average linear jerk magnitude of the end effector: 5.28 m/s^3"
+  tier_3:
+    score: 75
+    message: Cable insertion successful.
+trial_3:
+  tier_1:
+    score: 1
+    message: Model validation succeeded.
+  tier_2:
+    score: 0
+    message: Scoring succeeded.
+    categories:
+      contacts:
+        score: 0
+        message: No contact detected.
+      duration:
+        score: 0
+        message: Task not completed.
+      insertion force:
+        score: 0
+        message: No excessive force detected
+      trajectory efficiency:
+        score: 0
+        message: Task not completed.
+      trajectory smoothness:
+        score: 0
+        message: Task not completed.
+  tier_3:
+    score: 0
+    message: Task not completed.

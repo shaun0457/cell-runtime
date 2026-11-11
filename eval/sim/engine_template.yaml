@@ -1,0 +1,47 @@
+# The engine sections of every engine config the batch runner writes (ADR 026, ADR 028): the
+# topics the scorer records and the robot's home pose. Copied unchanged from aic_engine's sample
+# config (intrinsic-dev/aic @ 3ab0653, aic_engine/config/sample_config.yaml:1-45 and :327-334,
+# Apache-2.0). The trials are rendered from the scene manifests (`tools/sim/scenes.py`). The
+# sample's root-level `task_board_limits` is left out: aic_engine never reads it
+# (aic_engine.cpp:1790), so the rail clamp is the engine's default.
+scoring:
+  topics:
+    - topic:
+        name: "/joint_states"
+        type: "sensor_msgs/msg/JointState"
+    - topic:
+        name: "/tf"
+        type: "tf2_msgs/msg/TFMessage"
+    - topic:
+        name: "/tf_static"
+        type: "tf2_msgs/msg/TFMessage"
+        latched: true
+    - topic:
+        name: "/scoring/tf"
+        type: "tf2_msgs/msg/TFMessage"
+    - topic:
+        name: "/aic/gazebo/contacts/off_limit"
+        type: "ros_gz_interfaces/msg/Contacts"
+    - topic:
+        name: "/fts_broadcaster/wrench"
+        type: "geometry_msgs/msg/WrenchStamped"
+    - topic:
+        name: "/aic_controller/joint_commands"
+        type: "aic_control_interfaces/msg/JointMotionUpdate"
+    - topic:
+        name: "/aic_controller/pose_commands"
+        type: "aic_control_interfaces/msg/MotionUpdate"
+    - topic:
+        name: "/scoring/insertion_event"
+        type: "std_msgs/msg/String"
+    - topic:
+        name: "/aic_controller/controller_state"
+        type: "aic_control_interfaces/msg/ControllerState"
+robot:
+  home_joint_positions:
+    shoulder_pan_joint: -0.1597
+    shoulder_lift_joint: -1.3542
+    elbow_joint: -1.6648
+    wrist_1_joint: -1.6933
+    wrist_2_joint: 1.5710
+    wrist_3_joint: 1.4110
