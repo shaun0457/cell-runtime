@@ -13,7 +13,7 @@ verdict on (one failure, counted once). Each verdict at run time t is counted:
 |---|---|
 | Inserted at or before t + τ | a false alarm; within τ of t it is also a tie |
 | Inserted after t + τ, a `recovery_started` after the verdict, over τ before it | recovered |
-| Inserted after t + τ, no recovery in between | a false alarm, and a late insertion |
+| Inserted after t + τ, no such recovery | a false alarm, and a late insertion |
 | Never inserted, or into another port | a real failure; unconfirmed when the run stopped at it |
 
 The insertion's time is known only to within τ, so a recovery must start more than τ before it
@@ -22,9 +22,9 @@ is). "Inserted" means into the target port. When the insertion's time cannot be 
 (no mapping in the bag, or no `world_ready` origin), the trial falls back to ADR 015's rule and
 is judged as a whole: every verdict of an inserted trial is a false alarm.
 
-A real failure is unconfirmed when no recovery started after it: the run stopped there (in A,
-always), so whether the plug would have gone in was never observed. ADR 026 names A; a B run
-whose budget is spent stops the same way, and is marked the same way.
+A real failure is unconfirmed when no recovery started after it: nothing acted on it, so whether
+the plug would have gone in was never observed. In A that is every real failure; in B or C, a
+spent budget, a class with no recovery, or a planner that did not act (ADR 026).
 
 The trial's class is the first row of ADR 026's table that fits: false success, compensated,
 adapter abort, then by its first verdict. A real failure is of a known class, UNKNOWN (the
