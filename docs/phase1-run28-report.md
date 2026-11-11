@@ -130,14 +130,16 @@ This report stays as it was measured. What changed because of it:
 - **Ground truth's roles are written down** in ADR 015, which was prompted by this run.
 - **Later sim runs:** #61 ran settings A, B and C under an injected command dropout, and a rerun
   followed a review fix (`docs/sim-results.md`).
-- **Still open:** the SC jam at the port entrance, the align/insert boundary, and acting on
-  `hold_unconfirmed`. The 3/3 criterion above has not been met yet.
+- **Still open:** acting on `hold_unconfirmed`. Two of three clean runs after #73 passed all
+  three tasks. Phase 1 closed on a revised criterion: a recorded run that passes all three,
+  plus the rate over three clean runs (`docs/roadmap.md`).
 - **The SC jam, read again (ADR 024):** across the 13 goal3 runs on record, the plug's distance
   from the port axis as it reached the entrance sorts the outcomes. Every plug 0.5 mm or more
   off stuck on the rim, and 3 of 4 within 0.18 mm went in. The outcome is settled during
   align's descent. Align now stops once where the arm is, 3 mm above the entrance, until the plug is within
-  0.15 mm of the axis (at most 3 s), and the seated band is per port type (#70). A clean
-  setting-A sim run is needed to show whether that meets the criterion.
+  0.15 mm of the axis (at most 3 s), and the seated band is per port type (#70). In the sim the
+  arm sank on through the entrance during most stops, slowly. Three clean runs seated SC twice;
+  the third stuck on the rim, the align/insert boundary's open case (`docs/sim-results.md`).
 - **A count that does not add up:** section 6's "11 of 12 runs" does not match the
   RuntimePolicy goals of the engine runs above: 3 each in the main, cancel and diagnostic runs
   (the cancel run's goal 1 cancelled on purpose) and `diag_nostuck`'s goal 1, stopped part-way,
