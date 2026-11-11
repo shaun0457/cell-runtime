@@ -43,6 +43,9 @@ as the scene `nominal_sfp`, once, then dumps its bag and copies the store. It fi
 guard power-off (`shutdown -h +TRACER_GUARD_MIN`, ADR 028), and refuses to run without it.
 SIGHUP and SIGTERM become an ordinary exit there, so a dropped SSH session still tears down
 and writes its row.
+
+`python -m tools.sim.batch session ...` runs a session's queue (#81), one engine run at a time,
+with the same signal handling: `tools/sim/queue.py`.
 """
 
 from __future__ import annotations
@@ -128,6 +131,9 @@ _COMMIT = re.compile(r"[0-9a-f]{40}|unknown")
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _UNSAFE_PATH = re.compile(r"[\s'\"`$;|&<>()*?!{}\[\]#]|[\x00-\x1f\x7f]")
 _DBX = ["env", "DBX_CONTAINER_MANAGER=docker", "distrobox"]
+REPO = Path(__file__).resolve().parents[2]  # the checkout this runner runs from
+BAG_DUMP_SCRIPT = Path(__file__).resolve().parent / "in_container" / "bag_dump.py"
+ROS_SETUP = Path("/opt/ros/kilted/setup.bash")
 
 
 class Runner(Protocol):
@@ -311,7 +317,7 @@ def run_engine(plan: EnginePlan, runner: Runner) -> EngineResult:
                 # The ledger lives on the results disk: with the disk unmounted, a row would
                 # land on the boot disk and hide under the mount. The caller has the code.
                 if code != "results_not_mounted":
-                    _append_ledger(plan, started, ended, code, config_sha, image)
+                    append_ledger(plan, started, ended, code, config_sha, image)
     return EngineResult(tag=plan.tag, exit=code, started_wall=started, ended_wall=ended)
 
 
@@ -450,7 +456,7 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _append_ledger(
+def append_ledger(
     plan: EnginePlan, started: float, ended: float, code: str, config_sha: str, image: str
 ) -> None:
     row = {
@@ -618,7 +624,7 @@ def arm_guard(runner: Runner, minutes: int) -> bool:
     return runner.call(argv, timeout_s=CALL_TIMEOUT_S) == 0
 
 
-def _commit(runner: Runner, repo: Path) -> str:
+def checkout_commit(runner: Runner, repo: Path) -> str:
     """The checkout's commit, or "unknown"; never the command's output otherwise."""
     out = runner.output(["git", "-C", str(repo), "rev-parse", "HEAD"], timeout_s=CALL_TIMEOUT_S)
     commit = "" if out is None else out.strip()
@@ -647,7 +653,7 @@ def tracer(argv: Sequence[str], runner: Runner) -> int:
     parser.add_argument("--base-env", type=Path, required=True)
     parser.add_argument("--results-mount", type=Path, default=Path.home() / "results")
     parser.add_argument("--setting", default="A", choices=SETTINGS)
-    parser.add_argument("--ros-setup", type=Path, default=Path("/opt/ros/kilted/setup.bash"))
+    parser.add_argument("--ros-setup", type=Path, default=ROS_SETUP)
     args = parser.parse_args(argv)
 
     out: Path = args.out
@@ -674,9 +680,9 @@ def tracer(argv: Sequence[str], runner: Runner) -> int:
             setting=args.setting,
             units=(scene.task_id(0),),
             time_limit_s=float(scene.trial["task"]["time_limit"]),
-            commit=_commit(runner, Path(__file__).resolve().parents[2]),
+            commit=checkout_commit(runner, REPO),
         )
-        script = Path(__file__).resolve().parent / "in_container" / "bag_dump.py"
+        script = BAG_DUMP_SCRIPT
         for path in (script, args.ros_setup):
             check_path(path)
         config = engine_config([(scene, 0)], load_template(args.template))
@@ -715,7 +721,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args[:1] == ["tracer"]:
         exit_on_hangup()
         return tracer(args[1:], TmuxRunner())
-    print("usage: python -m tools.sim.batch tracer --help", file=sys.stderr)
+    if args[:1] == ["session"]:
+        from tools.sim.queue import main_session  # it imports this module
+
+        exit_on_hangup()
+        return main_session(args[1:], TmuxRunner())
+    print("usage: python -m tools.sim.batch {tracer,session} --help", file=sys.stderr)
     return 2
 
 

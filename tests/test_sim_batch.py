@@ -667,7 +667,7 @@ def test_a_guard_out_of_its_range_is_refused(minutes: int) -> None:
 def test_the_commit_is_read_or_unknown_never_the_commands_text(
     out: str | None, commit: str
 ) -> None:
-    assert batch._commit(FakeRunner(log_of={}, commit_out=out), REPO) == commit
+    assert batch.checkout_commit(FakeRunner(log_of={}, commit_out=out), REPO) == commit
 
 
 # --- after the run: the bags and the store ------------------------------------------------------

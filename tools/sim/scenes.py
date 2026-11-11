@@ -204,8 +204,12 @@ def write_yaml(path: Path, data: Mapping[str, Any]) -> None:
     """Keys in the order given and LF line endings, so the same config is the same file on every
     OS. Never sorted: aic_engine runs the trials in file order (aic_engine.cpp:410-416), and a
     sort would put trial_10 before trial_2."""
-    text = yaml.safe_dump(_plain(data), sort_keys=False, default_flow_style=False)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    path.write_text(yaml_text(data), encoding="utf-8", newline="\n")
+
+
+def yaml_text(data: Mapping[str, Any]) -> str:
+    """The text `write_yaml` writes, so a reader can check a file is the one written."""
+    return yaml.safe_dump(_plain(data), sort_keys=False, default_flow_style=False)
 
 
 # --- validation ------------------------------------------------------------------------------
