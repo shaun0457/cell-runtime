@@ -111,8 +111,10 @@ Option B for each question.
     policy returns False and logs a fixed code. The batch runner sees no finished run and
     records the code in its ledger.
   - So is a goal whose task fields (cable, plug, port, target module, time limit) differ from
-    its scene's task in the manifest: a stale manifest that reuses an id cannot put the wrong
-    digest on a run.
+    its scene's task in the manifest: a stale manifest that reuses an id for another task
+    cannot put the wrong digest on a run. One that reuses a scene id for another scene with
+    the same task is not caught by the policy. The runner rules it out instead: it renders
+    each engine config from the manifest it names in `CELLRT_MANIFEST` (ADR 028).
   - A manifest that fails to load refuses every goal in the same way.
 - Without `CELLRT_MANIFEST`, nothing changes: ADR 010's goal counting stays for engine runs
   started by hand.
