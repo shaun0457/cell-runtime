@@ -4,9 +4,11 @@ What happened when setting C asked a model on NVIDIA NIM about the failures the 
 classify, next to the simple policies. Run on 2026-11-09.
 
 **Short answer: the model beat B and C-fixed (62.2% against 33.3%) but not the rule planner
-(66.7%).** The gap to the rule planner is within the spread of three repeats (56.7-66.7%). The
-model picked the right skill every time it answered on the fixable fault, and never stopped
-early on the unfixable one. About 1 call in 4 gave no usable answer: 17 came back empty and 6
+(66.7%).** These rates pool the three scenarios, the no-fault baseline that every setting
+passes among them. On the two faults alone they are 43.3% (26 of 60) for the model, 50% for the
+rule planner and 0% for B and C-fixed. The gap to the rule planner is within the spread of
+three repeats (56.7-66.7%). The model picked the right skill every time it answered on the
+fixable fault, and never stopped early on the unfixable one. About 1 call in 4 gave no usable answer: 17 came back empty and 6
 were cut at the deadline.
 
 **Update, 2026-11-10:** a smaller follow-up run with the token budget and reasoning as settings
@@ -144,7 +146,8 @@ CheatCode task of about 32 s.
 
 - **The model beat the policies that do not read the evidence, but not the rule planner.** C-llm
   reached 62.2% (56.7-66.7% over three repeats) against 33.3% for B and C-fixed. C-rule reached
-  66.7% at no cost; the gap is within the spread of three repeats.
+  66.7% at no cost; the gap is within the spread of three repeats. Over the three scenarios,
+  the baseline among them; on the two faults alone, 43.3% against 0% and 50%.
 - **What the model did right:** it read the evidence on `yaw_mismatch` and picked the skill that
   twists.
 - **What it missed:** it did not see that `damaged_port` cannot be fixed, which is the one

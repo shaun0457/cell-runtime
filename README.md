@@ -46,22 +46,27 @@ the design, and `docs/decisions/` the decision records.
 
 ## Results in three numbers
 
-1. **Mock eval, two UNKNOWN faults we designed:** the model planner reached 62.2% task success
-   (56.7-66.7% over three repeats). That beats Behavior Tree recovery alone at 33.3%, but not a
-   hand-written rule planner at 66.7%. At 1024 tokens about 1 call in 4 gave no usable answer
-   (empty, or cut at the deadline); each was recorded as an event, and nothing ran from it.
+1. **Mock eval, two UNKNOWN faults we designed plus a no-fault baseline:** over the three
+   scenarios the model planner reached 62.2% task success (56.7-66.7% over three repeats),
+   against 33.3% for Behavior Tree recovery alone and 66.7% for a hand-written rule planner.
+   Every setting passes the baseline, so on the two faults alone it is 26 of 60 (43.3%) for the
+   model, 10 of 20 (50%) for the rule planner and none for B. The model fixed the fixable fault
+   in 26 of 30 runs; no planner could fix the other, by design. At 1024 tokens about 1 call in
+   4 gave no usable answer (empty, or cut at the deadline); each was recorded as an event, and
+   nothing ran from it.
    [`docs/phase3-llm-results.md`](docs/phase3-llm-results.md)
 2. **The AIC sim, no faults:** three clean runs of the sample config on the merged code passed
-   3/3, 3/3 and 2/3 tasks (an earlier version of align's stop failed SC once before them): SFP 6 of 6, SC 2 of 3, each seated plug scoring 75 with the AIC scorer. The runtime's
+   3/3, 3/3 and 2/3 tasks (an earlier version of align's stop failed SC once before them):
+   SFP 6 of 6, SC 2 of 3, each seated plug scoring 75 with the AIC scorer. The runtime's
    verdicts and the scorer's agree on every task of that session.
    [`docs/sim-results.md`](docs/sim-results.md)
 3. **The AIC sim, an unknown fault:** a command dropout the runtime cannot see stalls the
    insertion, and the Monitor calls it UNKNOWN. The rule planner has no rule and aborts in
-   0.05 s. With 4096 tokens the model answered `retry` in 3 of 4 runs, and each retry seated
-   the plug (75); in each of those the dropout had already ended during the model's call, which
-   it cannot know. The fourth time it escalated to a human, with a reason. The first sim retry,
-   in #61, threw the plug 12 mm down in 0.15 s; the runtime now takes the descent up from where
-   the arm is measured. [`docs/sim-results.md`](docs/sim-results.md)
+   0.05 s. With 4096 tokens the model was called in 4 runs. It answered `retry` in 3, and
+   each retry seated the plug (75); in each of those the dropout had already ended during the
+   model's call, which it cannot know. The fourth time it escalated to a human, with a reason.
+   The first sim retry, in #61, threw the plug 12 mm down in 0.15 s; the runtime now takes the
+   descent up from where the arm is measured. [`docs/sim-results.md`](docs/sim-results.md)
 
 Every sim result uses ground-truth poses in place of perception (oracle mode, ADR 015), which
 AIC's own evaluation does not allow. Large-N numbers come from the mock; the sim runs are a
@@ -345,7 +350,8 @@ the AIC repository).
 - **Forking a run** from step N. `state_at` already rebuilds the state at any step.
 - **ACT as `insert_act`** in the sim (the policy is reused, not retrained).
 - **Setting D:** the model writes a short program of bounded motion primitives, checked before
-  it runs ([ADR 025](docs/decisions/025-llm-primitive-program.md), proposed, not built).
+  it runs, for an UNKNOWN or a known failure whose recovery ran out, such as the SC rim jam
+  ([ADR 025](docs/decisions/025-llm-primitive-program.md), proposed, not built).
 
 ## License
 
