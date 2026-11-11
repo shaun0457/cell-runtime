@@ -156,7 +156,8 @@ def xy_integrator_at(port: Pose, plug: Pose, gripper: Pose) -> XYIntegrator:
 def z_offset_at(port: Pose, plug: Pose, gripper: Pose) -> float:
     """The z_offset whose `gripper_target` is the gripper's own height: its target z,
     port z + z_offset - (gripper z - plug z), solved for z_offset. Where the arm is, as a
-    z_offset: in free space the one last commanded; pressed on something, higher by the
-    force over the controller's stiffness."""
+    z_offset: in free space the one last commanded once the arm has caught up (the sim's arm
+    trails a descent by 6-7 mm, #73); pressed on something, higher by the force over the
+    controller's stiffness."""
     gz, pz = gripper.position[2], plug.position[2]
     return gz - port.position[2] + (gz - pz)

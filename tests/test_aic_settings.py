@@ -21,6 +21,7 @@ from adapters.aic.geometry import gripper_target, xy_integrator_at, z_offset_at
 from adapters.aic.run import PolicySetupError, policy_setup, run_goal
 from adapters.aic.skills import (
     ALIGN_HEIGHT_M,
+    PORT_PROFILES,
     RETRACT_M,
     descent_from,
     descent_offsets,
@@ -47,7 +48,11 @@ from cellrt.runtime.store import EventStore
 from cellrt.runtime.task import Task
 
 TASK = Task(id="trial_1_task_1", time_limit=180.0)
+SC_TASK = Task(
+    id="trial_3_task_1", time_limit=180.0, cable_type="sc", plug_type="sc", port_type="sc"
+)
 SC_JAM_M = 0.01346  # #28: the SC plug stuck at its entrance
+SC_SEAT_M = 0.00007  # an SC plug on its seat, above the port frame (#28)
 BLOCKED_M = 0.006  # a plug that stops 6 mm above the port, under no force to speak of
 
 
@@ -115,9 +120,9 @@ def test_setting_b_recovers_a_stuck_insert_with_retract_align_and_insert_again(
 ) -> None:
     # #28's SC plug jammed at its entrance under 12.5 N: INSERT_STUCK, whose plan runs retract
     # and align before the insert again, as often as its budget (2) allows; then the step fails.
-    node = FakeNode(task=TASK, seat_height_m=SC_JAM_M, raw_force=(0.0, 0.0, 13.5))
+    node = FakeNode(task=SC_TASK, seat_height_m=SC_JAM_M, raw_force=(0.0, 0.0, 13.5))
 
-    assert run_goal(node, TASK, store, setting="B") is False
+    assert run_goal(node, SC_TASK, store, setting="B") is False
 
     (started,) = _payloads(store, RunStarted)
     assert started.setting == "B"
@@ -134,6 +139,57 @@ def test_setting_b_recovers_a_stuck_insert_with_retract_align_and_insert_again(
     assert _end(store).reason == (
         "insert_scripted failed: INSERT_STUCK (INSERT_STUCK recovery budget used up)"
     )
+
+
+@dataclass
+class _JamsOnTheRimOnce(FakeNode):
+    """The SC plug rests on its entrance rim (#28's 13.46 mm) and holds the arm up there: a
+    target that would take the tip lower leaves the TCP where the tip sits on the rim, as a
+    pressed plug holds the sim's arm. Once the arm has been sent up (a retract) the plug finds
+    the bore and goes on down to its seat."""
+
+    rim_m: float = SC_JAM_M
+    retracted: bool = False
+
+    def send(self, motion: MotionCommand) -> None:
+        before = self.tcp.position
+        super().send(motion)
+        if motion.mode != "position":
+            return
+        x, y, z = self.tcp.position
+        if z > before[2] + 1e-6:
+            self.retracted = True
+        floor = self.port.position[2] + self.rim_m + self.plug_below_tcp_m
+        if not self.retracted and z < floor:
+            self.tcp = Pose(position=(x, y, floor), orientation=motion.orientation)
+
+
+def test_a_realign_after_a_retract_from_the_sc_rim_stops_above_the_entrance_again(
+    store: EventStore,
+) -> None:
+    # The SC plug jams on the rim: INSERT_STUCK, and setting B retracts and aligns again. The
+    # retract lifts the tip 5 mm, to 18.46 mm, above the SC hold point (16.64 mm), so the
+    # realign stops there again before the plug meets the entrance (ADR 024); then it goes in.
+    # The fake jams the first time whatever the XY error, so this shows that the realign
+    # stops, not that stopping helps: that is for the sim to show.
+    node = _JamsOnTheRimOnce(task=SC_TASK, seat_height_m=SC_SEAT_M, raw_force=(0.0, 0.0, 13.5))
+    hold_at_mm = PORT_PROFILES["sc"].hold_at_mm
+
+    assert run_goal(node, SC_TASK, store, setting="B") is True
+
+    recoveries = [(r.failure_class, r.action) for r in _payloads(store, RecoveryStarted)]
+    assert recoveries == [("INSERT_STUCK", "retract_realign")]
+    skills = [s.skill for s in _payloads(store, SkillStarted)]
+    assert skills == [
+        "approach",
+        *["align", "insert_scripted", "retract"],
+        *["align", "insert_scripted", "verify"],
+    ]
+    first, second = [f.detail for f in _payloads(store, SkillFinished) if f.skill == "align"]
+    for detail in (first, second):
+        assert detail["entry_converged"] is True
+        assert isinstance(detail["entry_height_mm"], float)
+        assert hold_at_mm - 0.5 < detail["entry_height_mm"] <= hold_at_mm
 
 
 def test_setting_b_runs_align_again_at_half_speed_after_a_force_limit(store: EventStore) -> None:
@@ -169,9 +225,14 @@ def test_setting_b_runs_align_again_at_half_speed_after_a_force_limit(store: Eve
     drops = [a - b for a, b in itertools.pairwise(heights)]
     assert len(drops) > 10
     # From where the retract left the plug, with no jump (down to where align had got to, or
-    # back up to the approach height): the first step may come a tick late, then 0.25 mm each.
+    # back up to the approach height): the first step may come a tick late, then 0.25 mm each,
+    # but for the samples the slow align holds still above the entrance (ADR 024): it starts
+    # above the hold point, so it stops there once.
+    held = events[slow_to].payload.detail["entry_held_s"]
     assert -0.01 <= drops[0] <= 0.26
-    assert all(d == pytest.approx(0.25, abs=0.01) for d in drops[1:])
+    still = [d for d in drops[1:] if abs(d) < 0.01]
+    assert len(still) == round(held / 0.05) and still
+    assert all(d == pytest.approx(0.25, abs=0.01) for d in drops[1:] if abs(d) >= 0.01)
 
 
 def test_the_z_offset_at_a_pose_commands_that_pose() -> None:

@@ -208,17 +208,19 @@ goal before it (a trial it skips shifts the later ones). `cellrt replay` reads t
 runs like any other.
 
 By default (setting A) the policy runs CheatCode's two phases split into skills: `approach`, `align`
-(down to z_offset 0.01 with CheatCode's XY correction), `insert_scripted` (on to z_offset
--0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then the
-tip's height and offset from ground truth, against the seated band measured in the #28 sim
-run); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
+(down to z_offset 0.01 with CheatCode's XY correction, stopping once where the arm is, 3 mm
+above the port's entrance, until the plug is on the port axis, at most 3 s; ADR 024), `insert_scripted` (on to
+z_offset -0.015, ending as soon as the plug rests on its seat) and `verify` (5 s settle, then
+the tip's height and offset from ground truth, against its port type's seated band, measured
+in the sim; #70); `retract` is there for recovery. z_offset is CheatCode's height above the port; where
 the plug tip actually ends depends on CheatCode's tip-offset quirk
 (`adapters/aic/geometry.py`): in #28 it seated two of the three plugs during align. Skill
 starts, ends and progress (at most once per sim second) go out as `InsertCable` feedback.
 `CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
 wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
 at half speed. After a retract or a broken descent run, align and insert go on down from where
-the arm is measured, not where it was last sent: a plug pressed on something holds the TCP far
+the arm is measured, not where it was last sent, as align does from where its stop above the
+entrance began: a plug pressed on something holds the TCP far
 above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the arm is then below
 z_offset 0.01, align first comes back up to it. `retract`
 always rises 5 mm: the mock's retract height above the port does not carry over, since the

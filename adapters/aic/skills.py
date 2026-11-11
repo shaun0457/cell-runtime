@@ -18,14 +18,21 @@ is. An align or insert_scripted that starts after a broken descent (a run that d
 or a retract) goes on from the measured pose (`Descent`), not from targets the arm may never
 have reached: after a retract, from the retracted pose, not from below it (a pressed plug
 holds the TCP far above its target) or from the approach pose; align first comes back up to
-z_offset 0.01 if the arm is below that. Run once at full speed, every skill commands exactly
-what CheatCode does.
+z_offset 0.01 if the arm is below that.
+
+Run once at full speed, every skill commands what CheatCode does, with one addition (ADR 024):
+align stops its descent once, just above the port's entrance, where the arm is measured to be,
+and corrects XY there until the plug is on the port axis (at most `ENTRY_HOLD_S`), then goes on
+down from there in CheatCode's 0.5 mm steps. The skills judge a seat and place that hold by the
+port type's measured geometry (`PortProfile`).
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass
+from types import MappingProxyType
 from typing import ClassVar
 
 from adapters.aic.convert import Pose, plug_to_port_mm, to_pose_target
@@ -90,19 +97,17 @@ class _AicSkill:
         except ValueError:
             return self.timeout_s
 
-    @classmethod
-    def config(cls) -> dict[str, object]:
+    def config(self) -> dict[str, object]:
         """What defines the skill's behaviour, for the run's config hash."""
         return {
-            "type": cls.__qualname__,
-            "timeout_s": cls.timeout_s,
-            "timeout_scales_with_speed": cls.scales_with_speed,
-            "monitor_profile": cls.monitor_profile,
-            **cls._parameters(),
+            "type": type(self).__qualname__,
+            "timeout_s": self.timeout_s,
+            "timeout_scales_with_speed": self.scales_with_speed,
+            "monitor_profile": self.monitor_profile,
+            **self._parameters(),
         }
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
+    def _parameters(self) -> dict[str, object]:
         return {}
 
 
@@ -120,8 +125,7 @@ class AicApproach(_AicSkill):
     def __init__(self, geometry: Callable[[], Geometry]) -> None:
         self._geometry = geometry
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
+    def _parameters(self) -> dict[str, object]:
         return {"steps": APPROACH_STEPS, "height_m": APPROACH_HEIGHT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:
@@ -154,27 +158,79 @@ ALIGN_HEIGHT_M = 0.010
 INSERT_END_M = -0.015
 ALIGN_XY_MM = 1.0  # align is done once the plug is this close to the port axis
 VERIFY_SETTLE_S = 5.0  # CheatCode's wait for the connector to settle
-# A plug is on its seat when its tip is within this band around the port frame and this close
-# to the port axis. #28 measured one seat per port type: -0.98 mm (SFP, three runs) and
-# +0.07 mm (SC, one run), 0.37-0.62 mm off the axis; the SC plug jammed at its entrance read
-# 13.46 mm. One band serves both types: 1 mm over the higher seat, 2 mm under the lower one
-# (a tip further down is not in a port). 2 mm off the axis is well inside the spacing of
-# neighbouring ports. It reads ground-truth geometry, so it holds only where ground truth is
+# A plug is on its seat when its tip is in its port type's band around the port frame
+# (`PortProfile`) and this close to the port axis: well inside the spacing of neighbouring
+# ports. The skills read ground-truth geometry, so this holds only where ground truth is
 # available (local development, not the submission).
-SEATED_MAX_HEIGHT_MM = 1.0
-SEATED_MIN_HEIGHT_MM = -3.0
 SEATED_MAX_XY_MM = 2.0
 # Insertion stops at the seat: in the band and no longer moving, by less than this either way
 # since the previous command (one commanded step is 0.5 mm). A plug still going down, or
 # springing back up, is pushed on.
 SEATED_STILL_MM = 0.1
-SEATED = {
-    "max_height_mm": SEATED_MAX_HEIGHT_MM,
-    "min_height_mm": SEATED_MIN_HEIGHT_MM,
-    "max_xy_mm": SEATED_MAX_XY_MM,
-}
+# Align's hold above the entrance (ADR 024): the first time the tip is at most this far above
+# its port's entrance, the descent stops and corrects XY until the plug has been this close to
+# the port axis for this many samples in a row (one dip under the threshold is not enough),
+# for at most this long of the run's clock, then goes on. In the 13 SC runs on record, every
+# plug that met the entrance 0.5 mm or more off the axis stuck on its rim, and three of the
+# four that met it within 0.18 mm went in.
+ENTRY_HOLD_ABOVE_MM = 3.0
+ENTRY_XY_MM = 0.15
+ENTRY_SAMPLES = 3
+ENTRY_HOLD_S = 3.0
 RETRACT_M = 0.005
 RETRACT_STEPS = 10
+
+
+@dataclass(frozen=True)
+class PortProfile:
+    """A port type's geometry as the sim measured it, in mm of plug-tip height above the port
+    frame: where its entrance is and the band a seated tip is in."""
+
+    entrance_mm: float
+    seated_min_mm: float
+    seated_max_mm: float
+
+    @property
+    def hold_at_mm(self) -> float:
+        """Where align stops to correct XY before the plug meets the entrance."""
+        return self.entrance_mm + ENTRY_HOLD_ABOVE_MM
+
+    def as_dict(self) -> dict[str, float]:
+        return asdict(self)
+
+
+# The sample config's two port types. Entrances from the port models (#28). Seats: an SFP tip
+# on its seat read -0.97 to -0.98 mm in every run, and one that stopped at -0.24 mm the scorer
+# called a partial insertion (#70), so the band is about 0.4 mm either side of the seat; an SC
+# tip on its seat read +0.05 to +0.07 mm, against 5.15 mm for one stopped in the bore and
+# 13.5 mm on the entrance rim, so the band is 0.5 mm either side of the frame.
+PORT_PROFILES: Mapping[str, PortProfile] = MappingProxyType(
+    {
+        "sfp": PortProfile(entrance_mm=45.8, seated_min_mm=-1.5, seated_max_mm=-0.6),
+        "sc": PortProfile(entrance_mm=13.64, seated_min_mm=-0.5, seated_max_mm=0.5),
+    }
+)
+
+
+class UnknownPortType(ValueError):
+    """The task's port type has no measured profile. The message is fixed and safe to log."""
+
+
+def port_profile(port_type: str) -> PortProfile:
+    """The profile of `port_type`. Raises UnknownPortType, without repeating the value, for a
+    type with no measured profile: no seat or entrance to judge it by."""
+    profile = PORT_PROFILES.get(port_type)
+    if profile is None:
+        raise UnknownPortType(f"port_type must be one of: {', '.join(sorted(PORT_PROFILES))}")
+    return profile
+
+
+def ports_config() -> dict[str, dict[str, float]]:
+    """Every port type's profile, for a skill's config. A skill records the whole table, not
+    the profile it was built with: which one a run uses follows from its task's port type, in
+    the scenario part of the config hash, so the goals of one engine run (SFP and SC in the
+    sample config) stay one configuration for the agent report."""
+    return {name: PORT_PROFILES[name].as_dict() for name in sorted(PORT_PROFILES)}
 
 
 def descent_offsets() -> tuple[list[float], list[float]]:
@@ -270,48 +326,117 @@ class Descent:
             self.integrator = xy_integrator_at(g.port, g.plug, g.gripper)
 
 
-def seated(g: Geometry) -> tuple[bool, float]:
-    """Whether the plug tip is in the seated band and near the port axis, and its height
-    above the port frame in mm."""
+def seated(g: Geometry, port: PortProfile) -> tuple[bool, float]:
+    """Whether the plug tip is in its port type's seated band and near the port axis, and its
+    height above the port frame in mm."""
     height_mm, (dx, dy) = plug_to_port_mm(g.port, g.plug)
-    in_band = SEATED_MIN_HEIGHT_MM <= height_mm <= SEATED_MAX_HEIGHT_MM
+    in_band = port.seated_min_mm <= height_mm <= port.seated_max_mm
     return in_band and math.hypot(dx, dy) <= SEATED_MAX_XY_MM, height_mm
+
+
+def _off_axis_mm(g: Geometry) -> float:
+    _, (dx, dy) = plug_to_port_mm(g.port, g.plug)
+    return math.hypot(dx, dy)
 
 
 class AicAlign(_AicSkill):
     """Descend to 10 mm above the port (z_offset 0.01) with CheatCode's XY correction, then
-    keep correcting there until the plug is within 1 mm of the port axis."""
+    keep correcting there until the plug is within 1 mm of the port axis. On the way down it
+    stops once just above the port's entrance (ADR 024), where the arm is measured to be: there
+    it corrects XY until the plug has been within ENTRY_XY_MM of the axis for ENTRY_SAMPLES
+    samples in a row, for at most ENTRY_HOLD_S, then goes on down from there in CheatCode's
+    steps. An align that starts under that point (in the port, after a retract) does not
+    stop."""
 
     description: ClassVar[str] = (
-        "Descends to 10 mm above the port while correcting XY, then holds there until the "
-        "plug is within 1 mm of the port axis."
+        "Descends to 10 mm above the port while correcting XY, stopping just above the port's "
+        "entrance until the plug is on the port axis, then holds at 10 mm until the plug is "
+        "within 1 mm of the axis."
     )
     name = "align"
     monitor_profile: MonitorProfile = "motion"
+    # Twice the descent's 19 s at full speed; the hold above the entrance, at most 3 s, fits in.
     timeout_s = 2 * ALIGN_STEPS * STEP_S
     scales_with_speed = True
 
-    def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
+    def __init__(
+        self, geometry: Callable[[], Geometry], descent: Descent, port: PortProfile
+    ) -> None:
         self._geometry = geometry
         self._descent = descent
+        self._port = port
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
-        return {"steps": ALIGN_STEPS, "height_m": ALIGN_HEIGHT_M, "xy_mm": ALIGN_XY_MM}
+    def _parameters(self) -> dict[str, object]:
+        return {
+            "steps": ALIGN_STEPS,
+            "height_m": ALIGN_HEIGHT_M,
+            "xy_mm": ALIGN_XY_MM,
+            "entry": {
+                "above_entrance_mm": ENTRY_HOLD_ABOVE_MM,
+                "xy_mm": ENTRY_XY_MM,
+                "samples": ENTRY_SAMPLES,
+                "max_hold_s": ENTRY_HOLD_S,
+            },
+            "ports": ports_config(),
+        }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         scale = speed_scale(ctx)
-        self._descent.begin(self._geometry())
+        g = self._geometry()
+        self._descent.begin(g)
         align = descent_from(descent_offsets()[0], self._descent.z_offset_m, scale)
-        for i, z in enumerate(align):
-            self._descent.command(ctx, self._geometry(), z)
+        above_entry = plug_to_port_mm(g.port, g.plug)[0] > self._port.hold_at_mm
+        entry: dict[str, object] = {}
+        i = 0
+        while i < len(align):  # bounded: each pass sends one offset, and the list is replaced once
+            g = self._geometry()
+            if above_entry and plug_to_port_mm(g.port, g.plug)[0] <= self._port.hold_at_mm:
+                above_entry = False
+                entry, held_m = await self._hold_at_entry(ctx)
+                # Go on from where the arm stopped: the offsets sent before the stop are below it.
+                align = align[:i] + descent_from(descent_offsets()[0], held_m, scale)
+                g = self._geometry()
+            self._descent.command(ctx, g, align[i])
             ctx.progress((i + 1) / len(align))
             await ctx.clock.sleep(ctx.period_s)
+            i += 1
         while ctx.world.signals().xy_error_mm >= ALIGN_XY_MM:  # bounded by the timeout
             self._descent.command(ctx, self._geometry(), ALIGN_HEIGHT_M)
             await ctx.clock.sleep(ctx.period_s)
         self._descent.finished()
-        return SkillResult(ok=True, detail={"xy_error_mm": ctx.world.signals().xy_error_mm})
+        detail = {"xy_error_mm": ctx.world.signals().xy_error_mm, **entry}
+        return SkillResult(ok=True, detail=detail)
+
+    async def _hold_at_entry(self, ctx: SkillContext) -> tuple[dict[str, object], float]:
+        """Stop where the arm is: command the z_offset measured at the hold point
+        (`z_offset_at`), correcting XY with the integrator, until the plug has been within
+        ENTRY_XY_MM of the axis for ENTRY_SAMPLES samples in a row (counting the one at the hold
+        point) or ENTRY_HOLD_S of the run's clock has passed. Not the z_offset last sent: the
+        sim's arm trails its targets by 6-7 mm while it descends (#73's first clean run), and
+        holding that target let the plug slide on into the port. Returns what it reached and
+        the z_offset it held. Each sleep lasts at least the period of that clock (`SimClock`),
+        and every world step moves the clock on (the runner stops a run whose step comes back
+        short), so the hold ends; align's timeout bounds it too."""
+        start_s = ctx.clock.now()
+        g = self._geometry()
+        z = z_offset_at(g.port, g.plug, g.gripper)
+        start_mm = plug_to_port_mm(g.port, g.plug)[0]
+        off_mm = _off_axis_mm(g)
+        on_axis = 1 if off_mm < ENTRY_XY_MM else 0
+        while on_axis < ENTRY_SAMPLES and ctx.clock.now() - start_s < ENTRY_HOLD_S - 1e-9:
+            self._descent.command(ctx, g, z)
+            await ctx.clock.sleep(ctx.period_s)
+            g = self._geometry()
+            off_mm = _off_axis_mm(g)
+            on_axis = on_axis + 1 if off_mm < ENTRY_XY_MM else 0
+        entry: dict[str, object] = {
+            "entry_start_mm": round(start_mm, 3),
+            "entry_xy_mm": round(off_mm, 3),
+            "entry_height_mm": round(plug_to_port_mm(g.port, g.plug)[0], 3),
+            "entry_held_s": round(ctx.clock.now() - start_s, 3),
+            "entry_converged": on_axis >= ENTRY_SAMPLES,
+        }
+        return entry, z
 
 
 class AicInsertScripted(_AicSkill):
@@ -328,17 +453,20 @@ class AicInsertScripted(_AicSkill):
     timeout_s = 2 * INSERT_STEPS * STEP_S
     scales_with_speed = True
 
-    def __init__(self, geometry: Callable[[], Geometry], descent: Descent) -> None:
+    def __init__(
+        self, geometry: Callable[[], Geometry], descent: Descent, port: PortProfile
+    ) -> None:
         self._geometry = geometry
         self._descent = descent
+        self._port = port
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
+    def _parameters(self) -> dict[str, object]:
         return {
             "steps": INSERT_STEPS,
             "end_m": INSERT_END_M,
-            "seated": SEATED,
+            "seated_max_xy_mm": SEATED_MAX_XY_MM,
             "still_mm": SEATED_STILL_MM,
+            "ports": ports_config(),
         }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
@@ -347,7 +475,7 @@ class AicInsertScripted(_AicSkill):
         insert = descent_from(descent_offsets()[1], self._descent.z_offset_m, scale)
         for i, z in enumerate(insert):
             g = self._geometry()
-            on_seat, height_mm = seated(g)
+            on_seat, height_mm = seated(g, self._port)
             before = self._descent.last_height_mm
             if on_seat and before is not None and abs(before - height_mm) < SEATED_STILL_MM:
                 self._descent.finished()
@@ -357,7 +485,7 @@ class AicInsertScripted(_AicSkill):
             ctx.progress((i + 1) / len(insert))
             await ctx.clock.sleep(ctx.period_s)
         self._descent.finished()
-        on_seat, height_mm = seated(self._geometry())
+        on_seat, height_mm = seated(self._geometry(), self._port)
         return SkillResult(ok=True, detail={"height_mm": round(height_mm, 3), "seated": on_seat})
 
 
@@ -372,19 +500,23 @@ class AicVerify(_AicSkill):
     monitor_profile: MonitorProfile = "motion"
     timeout_s = 2 * VERIFY_SETTLE_S
 
-    def __init__(self, geometry: Callable[[], Geometry]) -> None:
+    def __init__(self, geometry: Callable[[], Geometry], port: PortProfile) -> None:
         self._geometry = geometry
+        self._port = port
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
-        return {"settle_s": VERIFY_SETTLE_S, "seated": SEATED}
+    def _parameters(self) -> dict[str, object]:
+        return {
+            "settle_s": VERIFY_SETTLE_S,
+            "seated_max_xy_mm": SEATED_MAX_XY_MM,
+            "ports": ports_config(),
+        }
 
     async def run(self, ctx: SkillContext) -> SkillResult:
         steps = round(VERIFY_SETTLE_S / ctx.period_s)
         for i in range(steps):
             ctx.progress(i / steps)
             await ctx.clock.sleep(ctx.period_s)
-        on_seat, height_mm = seated(self._geometry())
+        on_seat, height_mm = seated(self._geometry(), self._port)
         ctx.progress(1.0)
         detail: dict[str, object] = {"height_mm": round(height_mm, 3)}
         if not on_seat:
@@ -409,8 +541,7 @@ class AicRetract(_AicSkill):
         self._geometry = geometry
         self._descent = descent
 
-    @classmethod
-    def _parameters(cls) -> dict[str, object]:
+    def _parameters(self) -> dict[str, object]:
         return {"steps": RETRACT_STEPS, "distance_m": RETRACT_M}
 
     async def run(self, ctx: SkillContext) -> SkillResult:

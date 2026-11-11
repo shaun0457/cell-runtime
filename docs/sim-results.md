@@ -185,11 +185,15 @@ run; goal2 and goal3 raised no UNKNOWN. The scorer agrees with the runtime on 8 
   passed, because the runtime's seated band is -3 to +1 mm, one band for both port types
   (`adapters/aic/skills.py`, set from #28's SFP seats at -0.98 mm and an SC seat at +0.07 mm).
   The scorer called it a partial insertion (50, "distance of -0.00m"). The band is too wide for
-  an SFP plug; a band per port type is a change to the skills, left for a later PR.
+  an SFP plug; a band per port type is a change to the skills, left for a later PR. (Since
+  then each port type has its own band: SFP -1.5 to -0.6 mm, SC -0.5 to +0.5 mm, #70.)
 - **goal2 #2:** the dropout began at 14.9 s in align (15.7 mm) and the plug went on down to its
   seat (-0.97 mm), as in #61's goal2 under A: a fault with no effect.
 - **goal3 (SC, no fault):** seated during align in all three runs (75 each). In the F1 rerun it
-  jammed at the entrance in two of three.
+  jammed at the entrance in two of three. Across the 13 goal3 runs on record, the plug's
+  distance from the port axis as it reached the entrance sorts the outcomes. Here it was
+  0.10-0.18 mm in each run; every plug 0.5 mm or more off stuck on the rim. That reading led to
+  align's hold above the entrance (ADR 024).
 
 ## Media
 

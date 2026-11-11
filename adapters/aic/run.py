@@ -49,6 +49,8 @@ from adapters.aic.skills import (
     AicRetract,
     AicVerify,
     Descent,
+    PortProfile,
+    port_profile,
 )
 from adapters.aic.world import POLL_WALL_S, SIM_STALL_WALL_S, AicWorld, Geometry
 from cellrt.eval.runner import (
@@ -169,17 +171,17 @@ def fault_setup(environ: Mapping[str, str]) -> FaultSpec | None:
         raise PolicySetupError(str(exc)) from None
 
 
-def aic_registry(geometry: Callable[[], Geometry]) -> SkillRegistry:
+def aic_registry(geometry: Callable[[], Geometry], port: PortProfile) -> SkillRegistry:
     """The AIC skills under the names the trees use: CheatCode's phases sharing one descent,
-    the retract, and the mock's wait for the F/T sensor, which only holds and reads whether
-    the wrench is valid, as `AicWorld` reports it."""
+    for the task's port type, the retract, and the mock's wait for the F/T sensor, which only
+    holds and reads whether the wrench is valid, as `AicWorld` reports it."""
     descent = Descent()
     return SkillRegistry(
         [
             AicApproach(geometry),
-            AicAlign(geometry, descent),
-            AicInsertScripted(geometry, descent),
-            AicVerify(geometry),
+            AicAlign(geometry, descent, port),
+            AicInsertScripted(geometry, descent, port),
+            AicVerify(geometry, port),
             AicRetract(geometry, descent),
             WaitSensor(),
         ]
@@ -225,13 +227,15 @@ def run_goal(
     """Run `task` to its end in the calling thread and record it; True if the run succeeded.
     The calling thread must not be running an event loop. `planner` is setting C's (the rule
     planner if None) and is ignored in A and B. `fault` is injected into the cell (#60).
-    A recovery slower than the skills allow raises ValueError before anything runs."""
+    A recovery slower than the skills allow, or a port type with no measured profile, raises
+    ValueError before anything runs."""
     if setting not in SETTINGS:
         raise ValueError(f"setting must be one of: {', '.join(SETTINGS)}")
     recovery = recovery or RecoveryConfig()
     if not SLOWEST_SCALE <= recovery.slow_speed_scale <= 1.0:
         raise ValueError(f"slow_speed_scale must be from {SLOWEST_SCALE} to 1")
     goal = _Goal(
+        port=port_profile(task.port_type),
         setting=setting,
         planner=(planner or RulePlanner()) if setting == "C" else None,
         recovery=recovery,
@@ -246,8 +250,10 @@ def run_goal(
 
 @dataclasses.dataclass(frozen=True)
 class _Goal:
-    """How a goal runs: its setting, planner, recovery and Monitor, and the world's waits."""
+    """How a goal runs: its port type's profile, setting, planner, recovery and Monitor, and
+    the world's waits."""
 
+    port: PortProfile
     setting: Setting
     planner: Planner | None
     recovery: RecoveryConfig
@@ -379,12 +385,12 @@ def _confirm_hold(world: AicWorld, clock: SimClock, *, wait: bool) -> HoldChecke
 
 def _tree(world: AicWorld, env: ExecEnv, goal: _Goal) -> py_trees.behaviour.Behaviour:
     """The mock's tree for the goal's setting, from the AIC skills."""
-    registry = aic_registry(world.geometry)
+    registry = aic_registry(world.geometry, goal.port)
     return build_tree(goal.setting, registry, env, goal.recovery, goal.planner)
 
 
 def _no_geometry() -> Geometry:
-    raise RuntimeError("the config is read from the skills' classes, not from a world")
+    raise RuntimeError("the config is read from the skills' parameters, not from a world")
 
 
 def _config_parts(task: Task, goal: _Goal) -> dict[str, str]:
@@ -393,7 +399,7 @@ def _config_parts(task: Task, goal: _Goal) -> dict[str, str]:
     fault is part of the scenario, as a mock scenario holds its faults, so runs of one
     setting stay one configuration for the agent report; without one the scenario part is
     the task alone, as before #60."""
-    registry = aic_registry(_no_geometry)
+    registry = aic_registry(_no_geometry, goal.port)
     planner = goal.planner
     config = {
         "scenario": task.model_dump(mode="json")
