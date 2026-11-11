@@ -3,7 +3,7 @@
 Date: 2026-11-11
 Status: accepted
 Revised: 2026-11-11, after the first clean sim run with the stop: it now holds where the arm
-is measured, not the z_offset last sent (Why, last bullet).
+is measured when it stops, not the z_offset last sent (Why, "It stops where the arm is").
 
 ## Context
 
@@ -90,8 +90,9 @@ Option B.
   below that point does not stop. That covers one already in the port, such as a realign after
   a retract from inside the bore.
 - **What the stop does.** It stops where the arm is: it commands the z_offset measured at the
-  stop (`z_offset_at`), not the one last sent, so the arm stays where it is while the
-  integrator keeps correcting XY. It stops waiting once the plug has been within `ENTRY_XY_MM`
+  stop (`z_offset_at`), not the one last sent, so it sends the arm no lower while the
+  integrator keeps correcting XY (in the sim the arm still sank 3-5 mm in 8 of 9 stops; Why).
+  It stops waiting once the plug has been within `ENTRY_XY_MM`
   (0.15 mm) of the axis for `ENTRY_SAMPLES` (3) samples in a row, counting the one at the stop,
   so one dip under the threshold does not end it. Otherwise it stops after `ENTRY_HOLD_S`
   (3 s) of the run's clock. Either way align then goes on down from the held z_offset in
@@ -123,9 +124,9 @@ Option B.
   The Monitor and recovery still own the failure.
 - **The thresholds are read from 13 runs, not tuned.** 0.15 mm sits inside the band
   (0.10-0.18 mm) where 3 of 4 plugs went in; the fourth, at 0.15 mm, stopped in the bore, which
-  this does not claim to fix. 3 mm above the entrance keeps the plug in free space while it
-  moves sideways. The port models' entrance geometry was not measured, so this is a margin,
-  not a clearance.
+  this does not claim to fix. 3 mm above the entrance was meant to keep the plug in free space
+  while it moves sideways; in the sim the arm sank through it (the last bullet). The port
+  models' entrance geometry was not measured, so this is a margin, not a clearance.
 - **It is checked where it matters.** The fix is only proven by a clean setting-A sim run. If
   SC still fails, Phase 1's criterion is revised and the rate recorded, rather than tuned
   further: the time box Shaun set on 2026-11-11.
@@ -137,9 +138,27 @@ Option B.
   entrance: at 10.07 mm for SC (entrance 13.64 mm), at 41.9 and 43.5 mm for the two SFP tasks
   (45.8 mm). The SFP plugs still seated (scorer 75 each); the SC plug converged in 1.27 s to
   0.069 mm off the axis, but it had crossed the entrance during the stop 0.27 mm off, and it
-  stopped in the bore at 5.15 mm (INSERT_STUCK, scorer 1). Holding the measured z_offset keeps
-  the plug 3 mm above the entrance whatever the lag; a test drives an arm that trails its
-  targets as the sim's did. The run after this revision checks it.
+  stopped in the bore at 5.15 mm (INSERT_STUCK, scorer 1). Holding the measured z_offset
+  removes the part of that slide the trailing explains; a test drives an arm that trails its
+  targets, with momentum, as the sim's did.
+- **In the sim it slows the plug through the entrance rather than stopping it above.** The
+  three clean setting-A runs after this revision (code of `0014a07`, same session; each
+  align's `entry_*` fields and the samples during its stop) give these results:
+  - In 8 of 9 stops the arm still sank while held at its own pose, by 3.1-5.1 mm over
+    1.9-3.0 s, and the stop ended under the entrance. In those stops the plug went through
+    the entrance while XY was corrected, sinking at 1-2.3 mm/s on average over the stop,
+    against CheatCode's 10 mm/s. The ninth sank 1.1 mm in 0.1 s.
+  - All six SFP plugs and two of three SC plugs seated (scorer 75 each). One SC plug
+    crossed its entrance 0.97 mm off the axis and seated anyway.
+  - The one SC plug that stuck is the one stop that ended above the entrance. It converged
+    in 0.1 s at 15.5 mm, went on at full speed, was 0.36 mm off at the entrance, and stuck
+    on the rim 0.70 mm off (13.46 mm, INSERT_STUCK). The error at the stop did not stay
+    small over the last 3 mm, which the first Why bullet left open.
+
+  So the stop does not do what the Decision set out to do in the sim. Why the arm sinks
+  under a target at its own pose was not read from the controller (#73 review, F11).
+  Three runs do not show which part helps. They are Phase 1's record, not a tuning set (the
+  time box above).
 
 ## Consequences
 

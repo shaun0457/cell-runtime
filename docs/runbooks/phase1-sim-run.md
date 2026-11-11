@@ -234,9 +234,11 @@ For each of the 3 tasks of the first run, kept apart:
   (`PORT_PROFILES` in `adapters/aic/skills.py`: SFP -1.5 to -0.6 mm, SC -0.5 to +0.5 mm, both
   within 2 mm of the axis; #70), and whether `insert_scripted` ended on a plug that was still
   moving (the rest rule compares one 50 ms step against `SEATED_STILL_MM`, 0.1 mm);
-- align's hold above the entrance (ADR 024): `entry_start_mm`, `entry_height_mm` (both above
-  the entrance: 13.64 mm for SC, 45.8 mm for SFP), `entry_xy_mm`, `entry_held_s` and
-  `entry_converged` in each `skill_finished` of align; the plug's distance from the axis at
+- align's hold above the entrance (ADR 024): `entry_start_mm`, `entry_height_mm`,
+  `entry_xy_mm`, `entry_held_s` and `entry_converged` in each `skill_finished` of align, with
+  the lowest `height_mm` sampled during the hold, against the entrance (13.64 mm for SC,
+  45.8 mm for SFP; in #73's runs the arm sank 3-5 mm while held, so 8 of 9 stops ended under
+  it); the plug's distance from the axis at
   contact, the `xy_error_mm` of the first `signal_sampled` at or under the entrance height
   (14 mm for SC, 46 mm for SFP); and the plug's height when insertion starts (seated, in the
   bore, or on the entrance rim).

@@ -219,7 +219,8 @@ starts, ends and progress (at most once per sim second) go out as `InsertCable` 
 `CELLRT_SETTING=B` or `C` runs the mock's recovery trees on these skills, with `retract` and a
 wait for the F/T sensor as helpers. A recovery's slow variant runs approach, align and insert
 at half speed. After a retract or a broken descent run, align and insert go on down from where
-the arm is measured, not where it was last sent: a plug pressed on something holds the TCP far
+the arm is measured, not where it was last sent, as align does from where its stop above the
+entrance began: a plug pressed on something holds the TCP far
 above its target (the stiffness is 90 N/m, so 10 N is 111 mm). If the arm is then below
 z_offset 0.01, align first comes back up to it. `retract`
 always rises 5 mm: the mock's retract height above the port does not carry over, since the
