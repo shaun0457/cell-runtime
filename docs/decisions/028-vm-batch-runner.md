@@ -3,6 +3,10 @@
 Date: 2026-11-11
 Status: accepted
 
+**This decision changes what eval results mean.** For sim runs it changes which attempt of a
+unit is counted: the first finished one that also has referee data (question 3). It amends
+ADR 010's completion rule for the sim only.
+
 ## Context
 
 Phase 1's sim runs were driven by shell scripts kept outside the repository
@@ -89,34 +93,43 @@ Option C for the place, 6 trials per engine run, and Option B for completion.
   bag reader runs with the eval container's Python and `rosbag2_py`, so the repository gains no
   dependency.
 - Nothing under `cellrt/` or `adapters/` imports from `tools/`.
-- What Gazebo spawns is covered by the scene digest, which is taken over the rendered trial
-  (ADR 027). A runner change that alters the rendering changes the digest, and so the
-  configuration.
+- What Gazebo spawns is covered by the scene digest, which is taken over the trial node the
+  engine reads, without its task id (ADR 027). A runner change that alters a trial changes the
+  digest, and so the configuration. The shared template is outside the digest; the ledger's
+  engine-config hash covers it.
 
 **One engine run** (`run_engine(plan, runner)`, behind a `Runner` protocol so that tests use a
 fake process runner):
 1. **Guards.** `~/results` must be a mount point (`os.path.ismount`) with at least 10 GB free
    (`shutil.disk_usage`); otherwise the run is refused.
-2. **Config.** Write the engine config for up to 6 unfinished units of one setting, and
-   validate it (ADR 026).
-3. **Sim.** Start the sim with `aic_engine_config_file:=<abs path>` and the env for the policy
-   (`CELLRT_SETTING`, `CELLRT_MANIFEST`, `CELLRT_STORE`).
+2. **Config.** Render the engine config for up to 6 unfinished units of one setting from the
+   manifest's own scene entries, validate it (ADR 026), and check that every trial's digest is
+   the one its manifest holds. Each engine run has its own tag and a results directory of its
+   own, which must not exist yet; `trial_<n>` is mapped back to its unit through that run's
+   engine config only, so a `scoring.yaml` or a bag of another run is never read.
+3. **Sim.** Start the sim with `aic_engine_config_file:=<abs path>` and the env for the policy.
+   The env file sets every policy variable `adapters/aic/run.py` reads, from the plan, and
+   unsets the rest, so a variable left in the operator's shell (a `CELLRT_FAULT` from a
+   Phase 1 runbook step) cannot reach a scene run. Logs from an earlier run under the same
+   tag are removed first.
 4. **Wait, with a bound for each wait.**
 
    | Wait | Bound |
    |---|---|
-   | Sim ready | 300 s |
+   | Sim ready | 900 s, the Phase 1 scripts' bound for a cold start on the VM |
    | Policy ready | 180 s |
    | All trials processed | trials × (time_limit / 0.43 + 60 s) |
 
    With the 180 s limit, the last bound is 479 s per trial, about 48 min for 6 trials.
 5. **Fail fast.** Any of the three engine error lines ends the run at once, with a reason code.
-6. **Teardown.** On every exit path, stop the policy and the sim.
-7. **Snapshot.** Copy the store (`.sqlite`, `-wal`, `-shm`) once no writer is running, and dump
-   each trial's bag to JSON. Reports read only the copies, through
+6. **Teardown.** On every exit path, stop the policy and the sim. SIGHUP and SIGTERM are turned
+   into an ordinary exit, so a dropped SSH session still tears down and writes the ledger row.
+7. **Snapshot.** Copy the store (`.sqlite`, `-wal`, `-shm`) once no writer is running, after
+   removing any `-wal` or `-shm` an earlier copy left at the target, and dump each trial's bag
+   to JSON (written to a temporary file, then renamed). Reports read only the copies, through
    `EventStore(read_only=True)`.
 8. **Ledger.** Append one row to `ledger.jsonl`: the start and end times, the units, the exit
-   code and the VM hours.
+   code, the VM hours, the commit, and the SHA-256 of the engine config.
 
 **The queue** (#81):
 - The unit is one trial (ADR 027). The next engine config is built from the units still
@@ -124,16 +137,45 @@ fake process runner):
 - A unit is finished when it has a finished attempt with the current `config_hash` **and** its
   referee data: its `scoring.yaml` entry and its bag dump. The report counts the first attempt
   that has both.
+- **Attempts are counted by the runner's ledger, not by `run_started`**, because most ways an
+  engine run fails happen before any run starts:
+  - an engine run that ends badly charges one attempt to the unit whose trial was running
+    then (the last `run_started`, or the task id in the engine log), and none to the units it
+    had finished or not reached;
+  - a failure before any trial (no sim ready, no policy ready, an engine error at start)
+    charges the engine run, not a unit; two in a row stop the queue with that code;
+  - a goal the policy refuses (a manifest code, ADR 027) stops the queue at once: the
+    manifest and the engine config disagree, and no rerun can fix that.
 - A unit gets at most 3 attempts (ADR 010). One that runs out is reported as infrastructure.
 
 **Cost guards.**
-- The guard power-off is opt-in: `shutdown -h +N` at the start of the session, with N the
-  smaller of the session's ceiling in minutes at US$0.9 an hour, and twice the estimate.
-  For the pilot that is min(400, 300) = 300 minutes.
-- Before each engine run, the runner adds the hours already spent (from the ledger) to that
-  run's worst-case wait. If the sum would pass the session's ceiling, it stops the queue.
-- C-LLM units stop once the session's snapshots count 50 model calls (D6).
+- **The guard power-off is set for every session (D8)**: `shutdown -h +N` at its start, with N
+  the smaller of the session's ceiling in minutes at US$0.9 an hour, and twice the estimate.
+  There is no flag to skip it.
+
+  | Session | Ceiling | Estimate | Guard |
+  |---|---|---|---|
+  | Tracer (#78) | US$1 | 30 min | 60 min |
+  | Pilot (#84) | US$6 (D8) | 149 min | min(400, 298) = 298 min |
+  | Tuning (#85) | US$6 | 210 min | min(400, 420) = 400 min |
+  | Held-out (#86), with C-LLM's hour | US$11 | 420 min | min(733, 840) = 733 min |
+
+  The ceilings sum to US$24, under the phase's US$25 (D8).
+- Before each engine run, the runner adds the hours already spent in the session and in the
+  phase (from the ledger) to that run's worst-case wait. If either sum would pass its ceiling,
+  it stops the queue.
+- **Model calls (D6).** A C-LLM engine run starts only if the calls counted so far in the
+  session's snapshots, plus its trials times the per-task planner budget (2,
+  `cellrt/executor/recovery.py:81`), stay within 50. A run can therefore never take the session
+  past the cap.
 - With the opt-in flag, the VM powers off when the queue is empty (CLAUDE.md).
+
+**Judging code is hashed, and that is safe.** `cellrt/eval/referee.py` and the other judging
+modules (#82, #83) are under `cellrt/`, so a fix to them changes `config_hash`. They run only
+on snapshots, after a session. The queue's finished check runs on the VM at the session's
+commit (the tag `phase2-heldout` for the held-out), and the report never filters runs by the
+current `config_hash`. A fix to the judge after the held-out therefore reruns the judge on the
+snapshots, and no trial.
 
 ## Why
 
@@ -141,7 +183,8 @@ fake process runner):
   The hash exists so that a changed Monitor rule can never reuse old results (ADR 010). A fixed
   typo in a log path should not cost a rerun of every finished trial. The weakness to name
   first: a runner change can still alter results by changing what is spawned. That is why the
-  digest is taken over the rendered trial, not over the parameters.
+  digest is taken over the trial the engine reads, not over the generator's parameters, and
+  why the ledger records the commit and the engine config's hash.
 - **Six trials** keeps the start overhead near a fifth while bounding the loss from a stop to
   about ten minutes. More trials per run would also make one malformed trial, which stops the
   engine at parse, cost more.

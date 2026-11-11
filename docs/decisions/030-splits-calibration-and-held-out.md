@@ -70,6 +70,13 @@ Time: the interview is around 2026-11-16, and the freeze point is 2026-11-15 mor
 - Pros: simple.
 - Cons: unreadable at n = 12.
 
+#### Option D: one pooled claim, needing both Option A's non-overlap and a sign test over scenes
+- Pros: the scene is the unit the sign test counts, so the 3 correlated repeats of a scene
+  cannot pass for independent evidence; one comparison, so no family can be picked after the
+  fact; stdlib only (`math.comb`).
+- Cons: stricter than Option A; with many tied scenes (both settings always succeed or always
+  fail) it needs a clear gain on the scenes that differ.
+
 ### 4. Order of the runs
 
 #### Option A: all of A, then all of B
@@ -86,8 +93,10 @@ Time: the interview is around 2026-11-16, and the freeze point is 2026-11-15 mor
 <!-- Decision and Why drafted by Claude from the option chosen in plan mode. Shaun delegated these
 sections to Claude on 2026-11-09 and accepts them by merging; he may rewrite any of it. -->
 
-Option A for the splits, Option A for the checkpoint, Option A for the interval, and Option B for
-the order.
+Option A for the splits, Option A for the checkpoint, Option D for the interval, and Option B for
+the order. The plan had Option A for the interval; the gate review of this ADR (F15) found that it
+treats the repeats of a scene as independent and allows a claim in every family, and Shaun
+chose Option D on 2026-11-11.
 
 **Families.**
 - A family is a scene family of ADR 026 for one port type. Ten families can be drawn:
@@ -99,28 +108,32 @@ the order.
 `random.Random(f"{split}:{family}:{i}")`:
 - `inrange` families draw as in ADR 026.
 - Families with a fixed value keep it and draw the rest:
-  - `yaw_edge` draws the sign; `trans_edge` draws the clamp end; `beyond` draws which of its
-    values;
+  - `yaw_edge` draws the sign; `beyond` draws which of its values; `trans_edge` keeps ADR 026's
+    end, the one its base does not sit at, on the base's rail;
   - each also draws the board pose within ADR 026's ranges.
 - `tilt` draws its roll uniformly in [2°, 4°], plus the board pose.
-- `empty_rail` draws which rail is left empty.
+- `empty_rail` draws which rail is left empty, plus the board pose, so that its scenes differ
+  between splits.
 
 The rules:
-- `pilot-v1` keeps ADR 026's 25 scenes.
+- `pilot-v1` keeps ADR 026's 23 scenes.
 - No scene digest appears in two splits, except the two `nominal` scenes, which are the sample's
   own trials; they appear in the pilot and in tuning, never in the held-out.
 - The three manifests, their engine configs and an interleaved `queue.json` are committed with
   their SHA-256 before any VM run.
 
-**The checkpoint rule**, applied to the pilot's table:
-1. A family qualifies if at least one of its pilot trials was not compensated. Scenes marked
-   "not applied", and infrastructure trials, are left out first.
-2. `inrange_sfp` (the control) and `empty_rail_sfp` (B cannot help) are always included.
-3. At most 6 families in all. If more than 4 qualify besides those two, keep the 4 with the
-   most non-compensated pilot trials. Ties go in the order of the list above.
-4. **If none qualifies (D7):** `inrange_sfp`, `inrange_sc`, `tilt_sfp`, `tilt_sc` and
-   `empty_rail_sfp`.
-5. ADR 031 records the result and the pilot rows it was computed from.
+**The checkpoint rule**, applied to the pilot's A trials. The pilot's B trials are picked by A's
+outcome (ADR 026), so they do not count here.
+1. Scenes marked "not applied", and infrastructure trials, are left out first.
+2. A family qualifies if at least one of its remaining A trials was not compensated.
+3. `inrange_sfp` (the control) and `empty_rail_sfp` (B cannot help) are always included, and
+   do not count as qualifying: `empty_rail_sfp` can never be compensated.
+4. Besides those two, at most 4 families. If more qualify, keep the 4 with the highest share of
+   non-compensated A trials among their remaining A trials, so a family with more pilot scenes
+   gains nothing from its size. Ties go in the order of the list above.
+5. **If no other family qualifies (D7):** add `inrange_sc`, `tilt_sfp` and `tilt_sc`, the
+   families of the natural SC jams and of tilt.
+6. ADR 031 records the result and the pilot rows it was computed from.
 
 **Tuning session** (#85):
 - the selected families' `tune-v1` scenes, once with A and once with B: at most 6 × 4 × 2 = 48
@@ -136,8 +149,10 @@ The rules:
 - No change means no ADR 032, and the report says that nothing changed.
 
 **Freeze.**
-- The held-out session runs at the tag `phase2-heldout`, set after tuning. Any code change
-  after it changes `config_hash`, so no held-out trial can run on other code.
+- The held-out session runs from a checkout of the tag `phase2-heldout`, set after tuning. A
+  change under `cellrt/` or `adapters/` changes `config_hash`; a change under `tools/sim/` does
+  not. So the ledger records the commit of every engine run (ADR 028), and the report refuses a
+  held-out row from any commit other than the tag's.
 - It must start by 2026-11-14 18:00. Otherwise it moves to after 2026-11-16, and nothing partial
   is reported as the eval.
 
@@ -163,8 +178,17 @@ The rules:
   - the confusion matrix.
 - **Wilson 95% intervals** (z = 1.96) per setting, pooled and per family. An undefined rate
   (n = 0) is shown as `-`.
-- **A gain is claimed only** where A's and B's intervals do not overlap. Everywhere else the
-  table reads "no detectable gain at this n".
+- **One claim, pooled over the selected families.** B is said to beat A on the primary metric
+  only if both hold:
+  1. A's and B's pooled trial-level Wilson intervals do not overlap;
+  2. an exact two-sided sign test over the held-out scenes gives p < 0.05. A scene where B
+     succeeded in more of its 3 repeats than A counts for B, one where it succeeded in fewer
+     counts for A, and ties are dropped.
+
+  The same rule, the other way round, says A beat B. Otherwise the table reads "no detectable
+  gain at this n".
+- **Per family, and C against B, the numbers are descriptive.** Their intervals are shown, and
+  no gain is claimed from them.
 - **The budget:** tuning about 3.5 h (US$3.2); held-out about 6 h (US$5.4); C-LLM at most 1 h.
   The phase total is about US$12, under the US$25 ceiling (D8).
 
@@ -181,9 +205,11 @@ a draft PR, out of the README, until Shaun reviews them.
 - **Families, not scenes**, because a scene that happened to fail is noise, while a family that
   fails is a finding. The fixed controls make sure the eval always contains a case that should
   pass and a case B cannot fix.
-- **A conservative claim rule.** At these n a lenient rule would find gains in noise. The
-  weakness to name first: non-overlap can miss a real but small gain. The report then says "no
-  detectable gain at this n", which is true, instead of "no gain".
+- **A conservative claim rule, counted in scenes.** At these n a lenient rule would find gains
+  in noise. The 3 repeats of a scene share its geometry, so they are not 3 independent pieces
+  of evidence; the sign test counts each scene once. One pooled claim leaves no family to pick
+  after the fact. The weakness to name first: the rule can miss a real but small gain. The
+  report then says "no detectable gain at this n", which is true, instead of "no gain".
 - **A deadline for the held-out**, because a half-run eval read as the result would be worse
   than none.
 

@@ -54,8 +54,11 @@ is the exception:
 - if the bore is tilted by θ, the entrance, at height h above the port frame, is h·tanθ to the
   side of that vertical line;
 - SC (h = 13.64 mm): 0.48 mm at 2°, 0.95 mm at 4°. SFP (h = 45.8 mm): 1.6 mm at 2°;
-- the SC rim jams seen so far were 0.35 and 0.97 mm off the axis at the entrance
-  (`docs/sim-results.md`).
+- in the 13 SC runs on record before align's entry hold, the plug's distance from the port axis
+  at the entrance sorted the outcomes: 0.10-0.18 mm seated, and every plug 0.5 mm or more off
+  stuck on the rim (`docs/sim-results.md:192-196`). After the hold, one plug stuck 0.70 mm off
+  while another seated 0.97 mm off (ADR 024, Why). The boundary is not sharp, but 2-4° of tilt
+  lands in that range.
 
 **What bounds the pilot.**
 - One malformed trial stops the whole engine at parse time (`aic_engine.cpp:414-424`).
@@ -136,14 +139,14 @@ Option B for the recording (4).
 
 The single-parameter families change one value of their base scene.
 
-**The pilot manifest `pilot-v1`: 25 scenes.**
+**The pilot manifest `pilot-v1`: 23 scenes.**
 
 | Family | SFP | SC | Values |
 |---|---|---|---|
 | `nominal` | 1 | 1 | The base scene |
-| `inrange` | 4 | 4 | Uniform draws of every parameter at once: board x ±0.02 m, y ±0.05 m and yaw ±0.14 rad around the base; grasp offset ±2 mm per axis and roll, pitch, yaw ±0.04 rad. SFP adds the NIC rail (0-4), the port (0 or 1), the translation inside the clamp and the yaw within ±10°. SC adds the rail (0 or 1) and the translation inside the clamp |
+| `inrange` | 4 | 4 | Uniform draws of every parameter at once: board x ±0.02 m, y ±0.05 m and yaw ±0.15 rad around the base; grasp offset ±2 mm per axis and roll, pitch, yaw ±0.04 rad. SFP adds the NIC rail (0-4), the port (0 or 1), the translation inside the clamp and the yaw within ±10°. SC adds the rail (0 or 1) and the translation inside the clamp |
 | `yaw_edge` | 2 | - | NIC yaw -10° and +10° |
-| `trans_edge` | 2 | 2 | SFP: NIC translation -0.048 and +0.036 m. SC: `sc_rail_1` at +0.055 m, and `sc_rail_0` at -0.055 m, because the base already sits at -0.055 m on `sc_rail_1` |
+| `trans_edge` | 1 | 1 | The clamp end the base does not already sit at, on the base's own rail: SFP NIC -0.048 m (the base is at +0.036 m); SC `sc_rail_1` at +0.055 m (the base is at -0.055 m). The other end is the `nominal` scene itself |
 | `beyond` | 3 | 1 | SFP: NIC yaw +20°; grasp offset x +5 mm; grasp roll +0.12 rad. SC: grasp offset x +5 mm |
 | `tilt` | 1 | 2 | Roll of the target entity: SFP 2°; SC 2° and 4° |
 | `empty_rail` | 1 | - | The target NIC rail left empty, the card on another rail |
@@ -156,67 +159,76 @@ trials, whose board x is 0.15 or 0.17 m and whose yaw is 3.0 or 3.1415 rad.
 `validate_engine_config()`, #78):
 - every translation lies inside the effective clamp, so the engine never moves a value silently;
 - no trial carries its own `task_board_limits`, so the clamp stays the one above;
-- the roll and pitch of every entity are at most 4°, and the board's are 0;
+- the roll and pitch of every rail entity (card, port, mount) are at most 4°, and the board's
+  are 0. The cable's pose in the gripper is not covered: the sample's own cables have a yaw of
+  1.33 rad. The grasp families bound it instead (at most 0.12 rad from the base);
 - every key that `Trial::Trial` reads is present (`aic_engine.cpp:41-240`).
 
-**Runs.**
-- A runs twice on every scene except `reversed`.
-- `reversed` runs once with A, as the last unit of the queue, because the free plug can leave
-  the sim in a state that later trials would inherit.
-- That gives 49 A trials.
-- B then runs once on each scene where A ended on a verdict that was not a false alarm
-  (ADR 029). If more than 12 scenes qualify, the order is:
-  1. scenes where both A trials qualify;
-  2. scenes where one does;
-  3. within each group, the manifest's order.
+**Runs**, in this order within the pilot session:
+1. A twice on every scene except `reversed`: 44 trials.
+2. B once on each scene where A ended on a verdict that was not a false alarm (ADR 029; a late
+   insertion is a false alarm), never on `reversed` (D3). If more than 12 scenes qualify, the
+   order is:
+   1. scenes where both A trials qualify;
+   2. scenes where one does;
+   3. within each group, the manifest's order.
+3. `reversed` once with A, as the last unit of the session, because the free plug can leave
+   the sim in a state that later trials would inherit.
 
-**Outcome classes, per trial**, using the counting of ADR 029:
+That gives 45 A trials and at most 12 B trials.
 
-| Class | The runtime | The scorer's insertion event |
+**Outcome classes, per trial**, using the counting of ADR 029. The first row that fits is the
+class:
+
+| # | Class | When |
 |---|---|---|
-| Compensated (on `nominal`: success) | Success, with no verdict | Inserted |
-| Recovered | A verdict, then success | Inserted after the verdict |
-| Natural failure, known class | A verdict of a known class; the run fails | Not inserted |
-| Natural failure, UNKNOWN | An UNKNOWN verdict; the run fails | Not inserted |
-| False alarm | A verdict | Inserted before the verdict |
-| Adapter abort | Stopped by the adapter, with no verdict (`ground_truth_unavailable`, `hold_unconfirmed`) | Either |
-| False success | Success | Not inserted |
-| Infrastructure | No finished run | Rerun, as an attempt of the same unit |
+| 1 | Infrastructure | No attempt has both a finished run and referee data (ADR 028). It reruns as an attempt of the same unit; a unit that runs out of attempts stays here and is reported |
+| 2 | False success | The runtime says success; the scorer saw no insertion. Any verdicts before it are listed |
+| 3 | Compensated (on `nominal`: success) | No verdict; the runtime says success; inserted |
+| 4 | Adapter abort | No verdict; the run ended without success: an adapter stop (`ground_truth_unavailable`, `hold_unconfirmed`) or a cancel. Inserted or not |
+| 5 | False alarm | The trial's first verdict counts as a false alarm: inserted before it, or a late insertion |
+| 6 | Recovered | The first verdict counts as recovered |
+| 7 | Natural failure, known class | The first verdict is a real failure, of a known class |
+| 8 | Natural failure, UNKNOWN | The first verdict is a real failure, and UNKNOWN |
 
-- A verdict is a Monitor verdict or a skill's own failed result.
+- A verdict is a Monitor verdict or a skill's own failed result. "Inserted" means into the
+  target port; a wrong-port insertion is not, and the report names it (ADR 029).
+- Classes 5-8 hold whatever the runtime's own outcome was. Where it disagrees with the scorer
+  (a failure reported on a seated plug), the reconciliation table shows it.
 - An A run that stopped at a verdict, with no insertion, is a natural failure marked
   **unconfirmed**: A stopped, so nobody knows whether the plug would have gone in. The pilot's
   false-alarm count is therefore a lower bound.
 - A scene whose two A trials fall in different classes is **mixed**.
-- An insertion into the wrong port counts as not inserted, and the report names it.
 
 **Recording.** A scene is not an injected fault: no `fault_injected` event. Its digest is part
 of the run's scenario configuration, and the manifest holds its parameters (ADR 027).
 
 **A perturbation that did not take effect.** `world_ready` (#79) reads back the spawned poses.
-A single-parameter scene is checked against the nominal scene of its port type:
+Every scene, in every split (ADR 030), is checked on the value its family fixes, against the
+`nominal` scene of its port type. The check is made in the frame the family sets the value in,
+so a board pose drawn alongside it does not count as a change:
 
 | Family | Check | Tolerance |
 |---|---|---|
-| `tilt` | The port's tilt from vertical equals the requested roll | 0.25° |
-| `yaw_edge`, `beyond` yaw | The port's yaw changed by the request | 0.5° |
-| `trans_edge` | The port moved by the request's magnitude | 1 mm |
+| `tilt` | The port's tilt from vertical equals the requested roll. The board is flat, so its pose does not enter | 0.25° |
+| `yaw_edge`, `beyond` yaw | The port's yaw relative to the board changed by the request, with the board's yaw taken from the scene | 0.5° |
+| `trans_edge` | The port's position relative to the board moved along the rail by the requested change, with the board's pose taken from the scene | 1 mm |
 | Grasp scenes | The plug's pose in the gripper frame changed by the request | 1 mm, 0.02 rad |
 
-A scene outside its tolerance is "not applied", reported, and left out of every rate. The
-`inrange` scenes combine several changes, so their readback is recorded but not checked.
+A scene outside its tolerance is "not applied", reported, and left out of every rate. The board
+pose itself, the `inrange` draws and the `empty_rail` placement are recorded, not checked.
 
 **Cost ceiling.** US$6 for the pilot session (D8). The estimate:
 
 | Item | Minutes |
 |---|---|
-| 49 A trials × 1.6 | 78 |
+| 45 A trials × 1.6 | 72 |
 | 12 B trials × 2.5 | 30 |
-| About 10 engine starts × 2 | 20 |
+| About 11 engine starts × 2 (one setting per engine run, `reversed` alone) | 22 |
 | VM setup | 15 |
 | Bag dumps | 10 |
 
-That is about 2.5 hours, or US$2.3. The runner refuses to start an engine run whose worst case
+That is about 2.5 hours, or US$2.2. The runner refuses to start an engine run whose worst case
 would pass the ceiling (ADR 028).
 
 ## Why

@@ -82,9 +82,9 @@ the id.
 - Cons: two scenes with the same task would share a configuration, so a finished run of one
   would count for the other.
 
-#### Option B: the task plus a digest of the scene's rendered trial
-- Pros: any change to the scene, or to how it is rendered (the template, the generator), is a
-  new configuration, and finished units of the old one are not reused.
+#### Option B: the task plus a digest of the scene's trial node
+- Pros: any change to the trial node, from a parameter or from the generator, is a new
+  configuration, and finished units of the old one are not reused.
 - Cons: the parameters live in the manifest, not in the event log; the log holds only the
   digest.
 
@@ -110,6 +110,9 @@ Option B for each question.
   - A goal whose task id is not in the manifest is refused before any command is sent: the
     policy returns False and logs a fixed code. The batch runner sees no finished run and
     records the code in its ledger.
+  - So is a goal whose task fields (cable, plug, port, target module, time limit) differ from
+    its scene's task in the manifest: a stale manifest that reuses an id cannot put the wrong
+    digest on a run.
   - A manifest that fails to load refuses every goal in the same way.
 - Without `CELLRT_MANIFEST`, nothing changes: ADR 010's goal counting stays for engine runs
   started by hand.
@@ -120,9 +123,17 @@ Option B for each question.
 **Seed.** `run_goal(..., seed=k, scene_digest=...)` records k as the run's seed. Nothing in the
 AIC path draws from it; in the sim it only names the repeat.
 
-**Scenario part.** It holds the task and the scene digest: the SHA-256 of the scene's rendered
-trial node (sorted keys, compact JSON). This is the same way an injected fault joins the
-scenario part today (`run.py:395-407`).
+**Scenario part.** It holds the task and the scene digest: the SHA-256 of the trial's `scene`
+node and its one task, without the task id (sorted keys, compact JSON; `scene_digest` in
+`adapters/aic/manifest.py`). The id carries the repeat, so leaving it out gives every repeat
+of a scene the same digest, and ADR 030's check that no digest appears in two splits compares
+scenes, not repeats. This is the same way an injected fault joins the scenario part today
+(`run.py:395-407`).
+
+The engine sections every config shares (`eval/sim/engine_template.yaml`: the scoring topics
+and the robot's home pose) are not in the digest. They are one committed file for the whole
+phase; the ledger records the SHA-256 of every engine config it starts, and the report refuses
+a set of runs whose engine configs do not share those sections (ADR 028).
 
 **Unit.** One trial: one (scenario, setting, seed), with ADR 010's completion rule unchanged in
 the core. The batch runner adds one condition for the sim: the trial's referee data must also
@@ -139,8 +150,10 @@ have been collected (ADR 028).
   distinct units, and interruptions are attempts. The weakness to name first: "seed" no longer
   means a random seed in the sim. The results document says so, because a reader of the mock's
   "same seed, same result" would expect it.
-- **The digest of the rendered trial, not of the parameters**, because the template and the
-  renderer can change what Gazebo spawns without any parameter changing.
+- **The digest of the trial as the engine reads it, not of the generator's parameters**,
+  because the generator can change what Gazebo spawns without any parameter changing. The
+  weakness to name first: the shared template is outside the digest, so a change to it is
+  caught by the ledger and the report, not by `config_hash`.
 
 ## Consequences
 

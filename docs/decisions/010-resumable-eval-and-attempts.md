@@ -1,7 +1,7 @@
 # 010: How the eval resumes after it is killed
 
 Date: 2026-11-08
-Status: accepted; question 6 amended by 027 (engine runs from the batch runner name their scenes)
+Status: accepted; question 6 amended by 027 (engine runs from the batch runner name their scenes); the completion rule for sim units amended by 028 (a counted attempt also needs its referee data)
 
 ## Context
 

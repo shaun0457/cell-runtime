@@ -24,7 +24,7 @@ often B recovers, the worse the Monitor would look.
 
 | Data | Where it is | Time it carries |
 |---|---|---|
-| Insertion: `/scoring/insertion_event`, a `std_msgs/String` naming the port; the scorer keeps the first one (`ScoringTier2.cc:444-447`) and scores +75 for the right port, -12 for a wrong one (`:805-837`) | The trial's bag only; the YAML hides it when the policy returns False (#28) | The bag's receive time only: the message has no header |
+| Insertion: `/scoring/insertion_event`, a `std_msgs/String` naming the port. The scorer stores each one it receives, so the last one counts; its own comment assumes one per task (`ScoringTier2.cc:444-447`). It splits the name on `/`, drops empty parts, and scores +75 when the first two parts are the target module and port, -12 otherwise (`:812-837`) | The trial's bag only; the YAML hides it when the policy returns False (#28) | The bag's receive time only: the message has no header |
 | Off-limit contacts: `/aic/gazebo/contacts/off_limit` | The bag (`sample_config.yaml:22-24`) | Receive time |
 | Force penalty, tier scores | `scoring.yaml`, per trial | None |
 | Wrench and joint states | The bag | A header stamp in sim time, plus the receive time |
@@ -110,22 +110,31 @@ run-clock time t:
 | The scorer | The verdict counts as |
 |---|---|
 | Inserted at or before t + τ | A **false alarm**. A tie within τ counts here, and ties are counted |
-| Inserted after t + τ | **Recovered**: the verdict was right, and what came after it fixed the failure |
+| Inserted after t + τ, with a `recovery_started` after the verdict and before the insertion | **Recovered**: the verdict was right, and what came after it fixed the failure |
+| Inserted after t + τ, with no recovery in between | A **false alarm**, also counted as a **late insertion**: nothing acted on the verdict, and the plug went in anyway |
 | Never inserted, or inserted into the wrong port | A **real failure**. When A stopped at that verdict, it is marked **unconfirmed** |
 
+- "Inserted" means into the target port, here and in ADR 026's classes. A wrong-port insertion
+  is never "inserted", and the report names it.
+- **Late insertion.** The typical case is A: it holds the arm after its verdict, and the plug
+  slides in during the hold. Without the rule, A would show recoveries it cannot make. Shaun
+  decided on 2026-11-11 (gate review of this ADR, F1) to count it against the Monitor, like a
+  tie. A scene whose A trial ends this way gets no B run in the pilot (D2).
 - **Unconfirmed.** A stops at its first verdict, so whether the plug would have gone in is never
-  observed. The false-alarm count is therefore a lower bound, and the report says so.
-- **Fallback, when the time mapping fails:**
-  - an A trial with an insertion counts its verdict as a false alarm, because A holds the arm
-    after its verdict;
-  - a B or C trial with an insertion after a recovery is **unresolved**, in its own row;
-  - a trial with no insertion counts as above.
-
-  The report lists every trial that fell back.
+  observed when it did not. The false-alarm count is therefore a lower bound, and the report
+  says so.
+- **Fallback, when the time mapping fails** (D1): the trial is judged as a whole, by ADR 015's
+  rule. Every verdict in a trial the scorer saw inserted counts as a false alarm; every verdict
+  in a trial it did not counts as a real failure, unconfirmed in A as above. This is
+  conservative against the Monitor: it counts a recovered verdict as a false alarm. The report
+  lists every trial that fell back, and gives the false-alarm count with and without them.
 - **Trials with no verdict:**
   - runtime success with an insertion: success or compensated (ADR 026);
   - runtime success without one: a **false success**;
-  - an adapter stop with no verdict: an **adapter abort**.
+  - any other end with no verdict (an adapter stop such as `ground_truth_unavailable`, or a
+    cancel): an **adapter abort**.
+- **Per trial**, ADR 026's class follows the trial's first verdict; the per-verdict counts above
+  feed the Monitor's rates.
 - **The mock keeps its own rule.** It has no scorer. Its metrics and the committed baseline do
   not change.
 
@@ -134,8 +143,11 @@ run-clock time t:
   `judge(events, referee)`.
 - `adapters/aic/scoring.py` parses the scorer's files.
 - `tools/sim/in_container/bag_dump.py` writes the bag JSON: insertion events, contact messages,
-  and wrench time pairs. It keeps at most 100,000 pairs per trial, enough for a 500 Hz stream
-  over the whole 180 s time limit, and refuses a bag with more.
+  and wrench time pairs. It keeps at most 100,000 pairs per trial and refuses a bag with more:
+  the broadcaster publishes at 50 Hz (`aic_bringup/config/aic_ros2_controllers.yaml:16-20`), so
+  a 180 s trial gives about 9,000.
+- The judge splits an insertion's port name as the scorer does, so a leading `/` does not
+  matter.
 
 ## Why
 
@@ -148,8 +160,8 @@ run-clock time t:
   trusting anything the runtime computed. The weakness to name first: the mapping is only as
   good as the receive jitter, so it is checked per trial, and a trial without a good mapping
   falls back to a coarser rule instead of a guessed time.
-- **Ties against the Monitor**, because a reported improvement must not depend on the benefit
-  of the doubt.
+- **Ties and late insertions against the Monitor**, because a reported improvement must not
+  depend on the benefit of the doubt.
 
 ## Consequences
 
@@ -158,7 +170,8 @@ run-clock time t:
 - The reconciliation table (#82) shows, per trial, our outcome against the insertion, our time
   over 20 N against the scorer's force penalty, and the bag's contact messages against the
   scorer's contact score.
-- Tests (#82): one per class, a tie within τ, a failed mapping, and a wrong-port insertion.
+- Tests (#82): one per class, a tie within τ, a late insertion with and without a recovery, a
+  failed mapping, and a wrong-port insertion, with and without a leading `/`.
 - A run without `world_ready` (any run recorded before #79) can only be counted by the
   fallback.
 - To revisit: if the scorer ever stamps its insertion event, take that time directly.
