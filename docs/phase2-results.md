@@ -91,14 +91,13 @@ scorer's 1 s. It fired in five trials across the three sessions:
   0.64 s.
 - The penalty does not follow the setting: A 2 of 3, B 1 of 2. So "A's abort leaves the plug
   pressed" does not explain it alone.
-- Two causes are open:
-  - **Sampling.** The runtime sums force over the Observation stream, which reaches it at the
-    camera rate (50 ms). The scorer reads the F/T topic itself. A short spike between two
-    Observations counts for the scorer only.
-  - **Timing.** The scorer may keep counting after the runtime's last sample, while the
-    task winds down.
-- Neither has been checked. Until one is, the runtime's FORCE_LIMIT margin is smaller than
-  the 0.5 s it was set to keep.
+- **Sampling is not the cause.** The runtime does not take force from the Observation. It
+  subscribes to the F/T topic itself and sums every reading by the scorer's rule (ADR 013).
+- **One cause is open: timing.** The runtime counts only the readings it drains during a
+  goal's steps. Readings from before its subscription starts and after its last step are left
+  out, while the scorer counts the whole trial.
+- This has not been checked. Until it is, the runtime's FORCE_LIMIT margin is smaller than the
+  0.5 s it was set to keep.
 - The report's A/B table shows `unsafe` 0 throughout, because that column counts trials where
   the runtime's own sum passed 1 s. The scorer's penalty is in the reconciliation table.
 
