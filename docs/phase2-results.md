@@ -20,6 +20,9 @@ By the rule fixed before the run (ADR 030), the result is **no detectable gain a
   Tuning had 2 such false successes (below).
 - The Monitor raised no false alarm in 125 verdicts. That is a lower bound: 58 of them ended
   their run, so they could not be confirmed.
+- The scorer's force penalty hit three trials whose runtime sum was at most 0.64 s.
+  - The extra time came after the runtime's final FORCE_LIMIT verdict.
+  - The force stayed over 20 N after the task stopped, and the runtime had stopped counting.
 - The phase used at most 11 VM hours, about US$10, against a US$25 ceiling.
 
 ## What ran
@@ -71,7 +74,8 @@ Success means the scorer's insertion into the target port (ADR 029).
 - **No trial was lost to infrastructure.**
 - **Applied scenes:** 12 of the 24 scenes were read back as applied, and none as not applied.
   The other 12 could not be checked. The report's Applied section lists them.
-- **Safety:** no off-limit contact and no false success in either setting. One trial took the
+- **Safety:** in the held-out session, no off-limit contact and no false success in either
+  setting. One trial took the
   scorer's force penalty (below).
 
 ### The scorer counts more time over 20 N than the runtime does
@@ -87,17 +91,53 @@ scorer's 1 s. It fired in five trials across the three sessions:
 | held-out | `inrange_sfp_0_r1` | A | 0.520 s | −12 |
 | held-out | `tilt_sfp_2_r1` | B | 0.520 s | none |
 
-- In three of the five, the scorer counted more than 1 s while the runtime counted at most
-  0.64 s.
-- The penalty does not follow the setting: A 2 of 3, B 1 of 2. So "A's abort leaves the plug
-  pressed" does not explain it alone.
-- **Sampling is not the cause.** The runtime does not take force from the Observation. It
-  subscribes to the F/T topic itself and sums every reading by the scorer's rule (ADR 013).
-- **One cause is open: timing.** The runtime counts only the readings it drains during a
-  goal's steps. Readings from before its subscription starts and after its last step are left
-  out, while the scorer counts the whole trial.
-- This has not been checked. Until it is, the runtime's FORCE_LIMIT margin is smaller than the
-  0.5 s it was set to keep.
+In three of the five, the scorer counted more than 1 s while the runtime counted at most 0.64 s.
+
+**The cause is force after the runtime's last sample** (checked on 2026-11-13):
+- **How it was checked:** the scorer's rule was replayed on the five trials' bags with a one-off
+  script, outside the repository. The script takes the newest tare in bag order and sums the
+  time between readings over 20 N. Each reading was then placed against the run's own times,
+  mapped to sim time through `world_ready`.
+- **The replay matches:** its totals equal the scorer's to 0.01 s, in these five trials and in
+  four more.
+
+Seconds over 20 N, by when the reading came:
+
+| trial | before the goal | up to the runtime's last sample | after it, goal still running | after the goal | scorer's total |
+|---|---|---|---|---|---|
+| pilot `inrange_sc_2_r0`, A | 0.10 | 0.56 | 1.01 | 0.55 | 2.22 |
+| tuning `nominal_sc_r0`, A | 0 | 0.52 | 0 | 0 | 0.52 |
+| tuning `tilt_sc_3_r0`, B | 0 | 0.64 | 0.40 | 0.06 | 1.10 |
+| held-out `inrange_sfp_0_r1`, A | 0 | 0.52 | 0.70 | 0.10 | 1.32 |
+| held-out `tilt_sfp_2_r1`, B | 0 | 0.52 | 0 | 0 | 0.52 |
+
+- **Up to the runtime's last `signal_sampled`, the scorer's time matches the runtime's sum,**
+  within 0.06 s.
+  - The runtime subscribes to the F/T topic itself and sums every reading by the scorer's rule
+    (ADR 013).
+  - The replay tares each reading with the newest `fts_tare_offset` in bag order, as the scorer
+    does.
+  - The two agree in that window, so the gap does not come from how the runtime samples or tares
+    the force.
+- **What happens after the last sample:**
+  - In all five trials, the last sample is the run's final FORCE_LIMIT verdict. After it, the
+    runtime drains no more readings.
+  - In the three penalised trials:
+    - the goal took 0.7 to 1.0 s more to return;
+    - the force was over 20 N for 0.40 to 1.01 s of that time;
+    - it was over 20 N for 0.06 to 0.55 s more after the goal ended;
+    - it reached 346 N in the held-out one.
+  - In the two without a penalty:
+    - the goal returned 0.15 s after the verdict;
+    - the force fell under 20 N at the verdict.
+- **Counted only up to the verdict, all three stay under 1 s.** The verdict stops the task, but
+  the force does not go away with it. The scorer sums every wrench reading in the trial's bag
+  (`ScoringTier2.cc:205-243`, `:875-883`), including the ones after the goal.
+- **In the pilot trial the force was over 20 N, at about 24 N, before the goal started.**
+- **Not changed in Phase 2:**
+  - backing off before the goal returns on a final FORCE_LIMIT;
+  - draining the F/T readings until the goal returns, so the runtime's sum covers what the
+    scorer counts.
 - The report's A/B table shows `unsafe` 0 throughout, because that column counts trials where
   the runtime's own sum passed 1 s. The scorer's penalty is in the reconciliation table.
 
@@ -202,6 +242,36 @@ ADR 031 turns these rows into the held-out selection.
 - **Forced stop.** The VM was stopped in the middle of `tune1-007`:
   - its ledger row reads `interrupted` (0.03 h), and no session lock was left;
   - its units were rerun from the start in later engine runs and counted once (ADR 028).
+- **A failed bag dump hid off-limit contacts, in the pilot and in tuning.** Checked on
+  2026-11-13.
+  - `bag_dump.py` ran with only ROS's own setup sourced. The contact topic's type
+    (`ros_gz_interfaces/msg/Contacts`) comes from the AIC overlay (`/ws_aic/install/setup.bash`).
+  - **What the files show:** the five attempts the scorer gave −24 for a contact are exactly the
+    five failed dumps. One more failed dump is left out of that count: `tune1-007`'s first
+    trial, from the run the forced stop cut short, which has no scorer file.
+  - **Why the dumps failed:**
+    - in the nine bags replayed above, the contact topic is present in the four with a contact
+      and absent in the five without;
+    - in the eval container, the type loads only with the overlay sourced. This was checked by
+      hand and not kept in a file.
+  - A unit is complete only with its bag dump (ADR 028), so the runner reran each of those
+    units:
+    - **pilot:** both runs of `reversed_sfp_0` (A), where the wrist touched the enclosure. The
+      pilot report lists the unit as "infrastructure (2 runs)", not as a contact.
+    - **tuning, `inrange_sc_0_r0` B:**
+      - attempt 1 (`tune1-006`): inserted, with a gripper finger on the SC port;
+      - attempt 2 (`tune1-008`): failed, and also −12 for force;
+      - attempt 3 (`tune1-010`) was counted: a success.
+    - **tuning, `inrange_sc_1_r0` B:**
+      - attempt 1 (`tune1-008`): failed, and also −12 for force;
+      - attempt 2 (`tune1-010`) was counted: recovered.
+  - **The held-out numbers are not affected:**
+    - no held-out dump failed;
+    - no held-out scorer file reports a contact.
+  - **Tuning is descriptive:** one of its B successes (`inrange_sc_1_r0`) replaced a failed
+    attempt.
+  - **Not fixed in Phase 2:** sourcing the overlay for the dump, and keeping a failed dump as a
+    result to look at instead of rerunning the unit.
 - **Disk guard.**
   - The pilot's raw bags filled the 50 GB results disk.
   - The guard refused `tune1-002` and `heldout1-001` before either started, so no trial was lost.
@@ -219,10 +289,9 @@ ADR 031 turns these rows into the held-out selection.
 - **No model calls in Phase 2.** C = B, and the LLM's evidence is Phase 3's.
 - **The n is small.** Per-family intervals overlap, so the tilt and `inrange_sc` gains are
   descriptive.
-- **Not checked yet:**
-  - Why the scorer counts more time over 20 N than the runtime does (above).
-  - Why the bag of `reversed_sfp_0` (pilot only) could not be read, twice.
-  - The 127.4 N sample above.
+- **The pilot and tuning reports leave out their five contacts.** A failed dump made the
+  runner rerun those units (Infrastructure).
+- **Not checked yet:** the 127.4 N sample above.
 - **Deferred from the brief (#42):** a Spot preemption test (the forced stop above was on an
   on-demand VM), and ACT as `insert_act`.
 - **Suggested by the tilt result, not in the brief:** descending along the port's axis.
@@ -246,4 +315,5 @@ python -m tools.sim.report --manifest eval/sim/heldout-v1.json \
 
 Their output is committed as `docs/phase2/{pilot1,tune1,heldout1}.md`. The run directories,
 which hold the stores, ledgers, scorer files and referee JSON but not the raw bags, are kept
-outside the repository.
+outside the repository. So are the force replay script and its output (2026-11-13). The raw
+bags stay on the VM's results disk.
